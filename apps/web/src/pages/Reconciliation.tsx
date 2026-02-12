@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GitMerge, Zap, Link2, Unlink, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { GitMerge, Zap, Link2, Unlink, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react';
 import {
   getBankStatements,
   uploadBankStatement,
@@ -10,6 +10,8 @@ import {
   unmatch,
   getReconciliationStatus,
   exportReconciliation,
+  deleteBankStatement,
+  batchDeleteBankStatements,
 } from '../api/client';
 import type { BankStatement, BankTransaction, Transaction, ReconciliationStatus } from '../api/types';
 import { Button } from '../components/ui/button';
@@ -17,6 +19,7 @@ import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { FileUploader } from '../components/FileUploader';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { formatCurrency, formatDate, cn } from '../lib/utils';
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -38,6 +41,11 @@ export function Reconciliation() {
   const [uploading, setUploading] = useState(false);
   const [matching, setMatching] = useState(false);
   const [selectedBankTx, setSelectedBankTx] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<BankStatement | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [showBatchConfirm, setShowBatchConfirm] = useState(false);
 
   useEffect(() => {
     getBankStatements().then(setStatements);
@@ -91,6 +99,53 @@ export function Reconciliation() {
     if (selected) await loadStatement(selected);
   };
 
+  const handleDeleteStatement = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteBankStatement(deleteTarget.id);
+      const updated = await getBankStatements();
+      setStatements(updated);
+      if (selected?.id === deleteTarget.id) {
+        setSelected(null);
+        setBankTxs([]);
+        setStatus(null);
+      }
+      setCheckedIds((prev) => { const next = new Set(prev); next.delete(deleteTarget.id); return next; });
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (checkedIds.size === 0) return;
+    setBatchDeleting(true);
+    try {
+      await batchDeleteBankStatements([...checkedIds]);
+      const updated = await getBankStatements();
+      setStatements(updated);
+      if (selected && checkedIds.has(selected.id)) {
+        setSelected(null);
+        setBankTxs([]);
+        setStatus(null);
+      }
+      setCheckedIds(new Set());
+    } finally {
+      setBatchDeleting(false);
+      setShowBatchConfirm(false);
+    }
+  };
+
+  const toggleCheck = (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
   const handleExport = async (format: 'csv' | 'pdf') => {
     if (!selected) return;
     const blob = await exportReconciliation(selected.id, format);
@@ -102,6 +157,25 @@ export function Reconciliation() {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Clear reconciliation?"
+        description={`This will permanently delete the "${deleteTarget?.bank_name}" statement and all its bank transactions. Transactions you already saved to your records will not be affected.`}
+        confirmLabel="Clear"
+        loading={deleting}
+        onConfirm={handleDeleteStatement}
+        onCancel={() => setDeleteTarget(null)}
+      />
+      <ConfirmDialog
+        open={showBatchConfirm}
+        title={`Clear ${checkedIds.size} statement${checkedIds.size !== 1 ? 's' : ''}?`}
+        description={`This will permanently delete ${checkedIds.size} bank statement${checkedIds.size !== 1 ? 's' : ''} and all their bank transactions. Transactions you already saved to your records will not be affected.`}
+        confirmLabel="Clear All"
+        loading={batchDeleting}
+        onConfirm={handleBatchDelete}
+        onCancel={() => setShowBatchConfirm(false)}
+      />
+
       <h1 className="text-2xl font-bold">Bank Statement Reconciliation</h1>
 
       <div className="grid grid-cols-3 gap-6">
@@ -127,25 +201,63 @@ export function Reconciliation() {
           </Card>
 
           <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Statements</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Statements</p>
+              {checkedIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowBatchConfirm(true)}
+                  className="flex items-center gap-1 text-xs text-destructive hover:underline"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Clear {checkedIds.size} selected
+                </button>
+              )}
+            </div>
             {statements.length === 0 && (
               <p className="text-sm text-muted-foreground">No statements imported yet</p>
             )}
             {statements.map((s) => (
-              <button
+              <div
                 key={s.id}
-                onClick={() => loadStatement(s)}
                 className={cn(
-                  'w-full text-left rounded-lg border p-3 text-sm transition-colors',
-                  selected?.id === s.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                  'group relative rounded-lg border p-3 text-sm transition-colors cursor-pointer',
+                  selected?.id === s.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50',
+                  checkedIds.has(s.id) && 'border-destructive/40 bg-destructive/5'
                 )}
+                onClick={() => loadStatement(s)}
               >
-                <div className="font-medium">{s.bank_name}</div>
-                <div className="text-xs text-muted-foreground">{s.file_type.toUpperCase()} · {formatDate(s.created_at)}</div>
-                <Badge variant={s.status === 'reconciled' ? 'income' : 'outline'} className="mt-1 text-xs">
-                  {s.status}
-                </Badge>
-              </button>
+                <div className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    title={`Select ${s.bank_name}`}
+                    checked={checkedIds.has(s.id)}
+                    onClick={(e) => toggleCheck(s.id, e)}
+                    onChange={() => {}}
+                    className="mt-0.5 shrink-0 accent-destructive"
+                  />
+                  <div className="flex-1 min-w-0 pr-6">
+                    <div className="font-medium truncate">{s.bank_name}</div>
+                    <div className="text-xs text-muted-foreground">{s.file_type.toUpperCase()} · {formatDate(s.created_at)}</div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Badge variant={s.status === 'reconciled' ? 'income' : 'outline'} className="text-xs">
+                        {s.status}
+                      </Badge>
+                      {s.transaction_count !== undefined && (
+                        <span className="text-xs text-muted-foreground">{s.transaction_count} txns</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(s); }}
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                  title="Clear reconciliation"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -248,7 +360,7 @@ export function Reconciliation() {
                         <div className="flex items-center justify-between">
                           <span className="font-medium truncate max-w-[60%]">{tx.description}</span>
                           <span className={`font-semibold ${tx.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                            {formatCurrency(tx.amount, tx.currency)}
+                            {formatCurrency(tx.amount, tx.currency ?? 'NGN')}
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground mt-1">{tx.vendor} · {formatDate(tx.date)}</div>

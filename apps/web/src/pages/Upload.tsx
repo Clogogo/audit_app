@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   CheckCircle, Sparkles, Zap, AlertCircle, Trash2, Plus, Save,
-  FileSpreadsheet, Upload as UploadIcon,
+  FileSpreadsheet, Upload as UploadIcon, GitMerge,
 } from 'lucide-react';
 import {
   uploadBatch, confirmBatch, getFilePreviewUrl,
@@ -11,6 +12,7 @@ import {
 import type {
   BatchItem, BatchConfirmItem, BatchUploadResult,
   BankTransaction, BankStatement, StatementImportItem, BankAccount,
+  StatementImportResult,
 } from '../api/types';
 import { FileUploader } from '../components/FileUploader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
@@ -38,18 +40,62 @@ interface StmtRow extends BankTransaction {
   _key: number;
   _selected: boolean;
   _category: string;
-  _type: 'expense' | 'income';
+  _type: 'expense' | 'income' | 'transfer';
   _vendor: string;
   _description: string;
 }
 
 const ALL_CATEGORIES = [...new Set([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES])];
+const TRANSFER_CATEGORIES = ['Internal Transfer', 'Bank Charges & Fees', 'Other'];
 
 type Tab = 'ai' | 'statement';
+
+/**
+ * Detect whether a bank statement row should be classified as income, expense,
+ * or transfer.  Transfer is used for internal/inter-account movements that should
+ * NOT inflate the income or expense totals on the dashboard.
+ *
+ * Patterns detected:
+ *  - OPay Auto-save to OWealth (wallet → savings sub-account)
+ *  - OWealth Withdrawal / Transaction Payment (savings → wallet)
+ *  - Own-account / inter-bank transfers the user controls
+ */
+function detectTransactionType(
+  description: string,
+  txType: 'credit' | 'debit',
+): 'income' | 'expense' | 'transfer' {
+  const desc = description.toLowerCase();
+
+  const TRANSFER_PATTERNS = [
+    // OPay internal movements
+    'auto-save to owealth',
+    'auto save to owealth',
+    'owealth withdrawal',
+    'owealth balance',
+    // Generic inter-account / own-account transfers
+    'transfer to own',
+    'own account transfer',
+    'internal transfer',
+    'inter-bank transfer',
+    'intrabank transfer',
+    // Moniepoint ↔ OPay cross-bank sweeps
+    'transfer to opay',
+    'transfer to moniepoint',
+    'received from moniepoint',
+    'received from opay',
+  ];
+
+  if (TRANSFER_PATTERNS.some((p) => desc.includes(p))) {
+    return 'transfer';
+  }
+
+  return txType === 'credit' ? 'income' : 'expense';
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function Upload() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('ai');
 
   // ── AI tab state ────────────────────────────────────────────────
@@ -70,6 +116,7 @@ export function Upload() {
   const [stmtRows, setStmtRows] = useState<StmtRow[]>([]);
   const [stmtSaving, setStmtSaving] = useState(false);
   const [stmtSaved, setStmtSaved] = useState(false);
+  const [stmtImportResult, setStmtImportResult] = useState<StatementImportResult | null>(null);
   const [stmtError, setStmtError] = useState<string | null>(null);
   const stmtKeyRef = useRef(0);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
@@ -136,7 +183,7 @@ export function Upload() {
     const today = new Date().toISOString().split('T')[0];
     setRows((prev) => [
       ...prev,
-      { _key: keyRef.current++, _selected: true, type: 'expense', amount: undefined, currency: 'USD', date: today, vendor: '', category: '', description: '', reference: '' },
+      { _key: keyRef.current++, _selected: true, type: 'expense', amount: undefined, currency: 'NGN', date: today, vendor: '', category: '', description: '', reference: '' },
     ]);
   };
 
@@ -183,15 +230,24 @@ export function Upload() {
       setStmtStatement(stmt);
       const txs = await getBankTransactions(stmt.id);
       setStmtRows(
-        txs.map((tx) => ({
-          ...tx,
-          _key: stmtKeyRef.current++,
-          _selected: true,
-          _category: tx.transaction_type === 'credit' ? 'Other' : 'Other',
-          _type: tx.transaction_type === 'credit' ? 'income' : 'expense',
-          _vendor: '',
-          _description: tx.description,
-        }))
+        txs.map((tx) => {
+          // Use API-provided suggestions (keyword + AI) when available;
+          // fall back to frontend transfer-detection for anything not resolved.
+          const apiType = tx.suggested_type ?? null;
+          const apiCategory = tx.suggested_category ?? null;
+          const frontendType = detectTransactionType(tx.description, tx.transaction_type);
+          const finalType = (apiType as 'expense' | 'income' | 'transfer' | null) ?? frontendType;
+          const finalCategory = apiCategory ?? (finalType === 'transfer' ? 'Internal Transfer' : 'Other');
+          return {
+            ...tx,
+            _key: stmtKeyRef.current++,
+            _selected: true,
+            _category: finalCategory,
+            _type: finalType,
+            _vendor: '',
+            _description: tx.description,
+          };
+        })
       );
     } catch {
       setStmtError('Failed to parse statement. Check the file format and try again.');
@@ -207,15 +263,17 @@ export function Upload() {
     setStmtRows((prev) => prev.map((r) => (r._key === key ? { ...r, _selected: !r._selected } : r)));
 
   const toggleAllStmt = () => {
-    const allSelected = stmtRows.every((r) => r._selected);
-    setStmtRows((prev) => prev.map((r) => ({ ...r, _selected: !allSelected })));
+    const selectableRows = stmtRows.filter((r) => r.match_status !== 'matched');
+    const allSelected = selectableRows.every((r) => r._selected);
+    setStmtRows((prev) => prev.map((r) => r.match_status === 'matched' ? r : { ...r, _selected: !allSelected }));
   };
 
   const deleteStmtRow = (key: number) => setStmtRows((prev) => prev.filter((r) => r._key !== key));
 
   const handleStmtSave = async () => {
     if (!stmtStatement) return;
-    const selected = stmtRows.filter((r) => r._selected);
+    // Exclude rows that are already matched (auto-matched or manually matched in Reconciliation)
+    const selected = stmtRows.filter((r) => r._selected && r.match_status !== 'matched');
     if (!selected.length) { alert('Select at least one row to save.'); return; }
     const invalid = selected.filter((r) => !r._category);
     if (invalid.length) { alert(`${invalid.length} row(s) missing a category.`); return; }
@@ -225,14 +283,15 @@ export function Upload() {
       const items: StatementImportItem[] = selected.map((r) => ({
         bank_transaction_id: r.id,
         amount: r.amount,
-        currency: 'USD',
+        currency: 'NGN',
         category: r._category,
         description: r._description || r.description,
         date: r.date,
         vendor: r._vendor || undefined,
         type: r._type,
       }));
-      await importStatementTransactions(stmtStatement.id, items);
+      const result = await importStatementTransactions(stmtStatement.id, items);
+      setStmtImportResult(result);
       setStmtSaved(true);
       setStmtStatement(null);
       setStmtRows([]);
@@ -254,20 +313,48 @@ export function Upload() {
   // ── Render ────────────────────────────────────────────────────────
 
   if (saved || stmtSaved) {
+    const hasReconciled = stmtImportResult && stmtImportResult.reconciled > 0;
+    const hasSaved      = stmtImportResult ? stmtImportResult.saved > 0 : saved;
+
     return (
-      <div className="space-y-6 max-w-4xl">
+      <div className="space-y-4 max-w-2xl">
         <Card className="border-green-200 bg-green-50">
-          <CardContent className="flex items-center gap-3 py-8">
-            <CheckCircle className="h-10 w-10 text-green-600 shrink-0" />
-            <div>
-              <p className="font-semibold text-green-800 text-lg">Transactions saved!</p>
-              <p className="text-sm text-green-700 mt-1">Go to Transactions to view them.</p>
+          <CardContent className="flex items-start gap-4 py-6">
+            <CheckCircle className="h-10 w-10 text-green-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-semibold text-green-800 text-lg">Import complete!</p>
+              {stmtImportResult ? (
+                <ul className="text-sm text-green-700 mt-1.5 space-y-0.5">
+                  {stmtImportResult.saved > 0 && (
+                    <li>✓ <strong>{stmtImportResult.saved}</strong> new transaction{stmtImportResult.saved !== 1 ? 's' : ''} saved</li>
+                  )}
+                  {stmtImportResult.reconciled > 0 && (
+                    <li>⟳ <strong>{stmtImportResult.reconciled}</strong> duplicate{stmtImportResult.reconciled !== 1 ? 's' : ''} found — sent to Reconciliation</li>
+                  )}
+                </ul>
+              ) : (
+                <p className="text-sm text-green-700 mt-1">Transactions saved successfully.</p>
+              )}
             </div>
-            <Button className="ml-auto" onClick={() => { setSaved(false); setStmtSaved(false); }}>
-              Upload Another
-            </Button>
           </CardContent>
         </Card>
+
+        <div className="flex gap-3">
+          {hasSaved && (
+            <Button variant="outline" onClick={() => navigate('/transactions')}>
+              View Transactions
+            </Button>
+          )}
+          {hasReconciled && (
+            <Button onClick={() => navigate('/reconciliation')} className="gap-2">
+              <GitMerge className="h-4 w-4" />
+              Review in Reconciliation
+            </Button>
+          )}
+          <Button variant="ghost" className="ml-auto" onClick={() => { setSaved(false); setStmtSaved(false); setStmtImportResult(null); }}>
+            Upload Another
+          </Button>
+        </div>
       </div>
     );
   }
@@ -580,10 +667,15 @@ export function Upload() {
                         </tr>
                       </thead>
                       <tbody>
-                        {stmtRows.map((row) => (
-                          <tr key={row._key} className={`border-b last:border-0 ${row._selected ? 'bg-white' : 'bg-muted/30 opacity-60'}`}>
+                        {stmtRows.map((row) => {
+                          const isMatched = row.match_status === 'matched';
+                          return (
+                          <tr key={row._key} className={`border-b last:border-0 ${isMatched ? 'bg-green-50 opacity-60' : row._selected ? 'bg-white' : 'bg-muted/30 opacity-60'}`}>
                             <td className="p-2 text-center">
-                              <input type="checkbox" aria-label="Select row" checked={row._selected} onChange={() => toggleStmtRow(row._key)} className="rounded" />
+                              {isMatched
+                                ? <span title="Already reconciled" className="text-green-600 text-xs">✓</span>
+                                : <input type="checkbox" aria-label="Select row" checked={row._selected} onChange={() => toggleStmtRow(row._key)} className="rounded" />
+                              }
                             </td>
                             <td className="p-2 text-xs text-muted-foreground whitespace-nowrap">{row.date}</td>
                             <td className="p-1">
@@ -591,6 +683,7 @@ export function Upload() {
                                 value={row._description}
                                 onChange={(e) => updateStmtRow(row._key, '_description', e.target.value)}
                                 className="h-7 text-xs px-1.5 min-w-[150px]"
+                                disabled={isMatched}
                               />
                             </td>
                             <td className="p-1">
@@ -599,10 +692,11 @@ export function Upload() {
                                 onChange={(e) => updateStmtRow(row._key, '_vendor', e.target.value)}
                                 placeholder="Vendor"
                                 className="h-7 text-xs px-1.5 min-w-[100px]"
+                                disabled={isMatched}
                               />
                             </td>
                             <td className="p-2 text-xs font-medium whitespace-nowrap">
-                              {row.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              ₦{row.amount.toLocaleString('en-NG', { minimumFractionDigits: 2 })}
                             </td>
                             <td className="p-2">
                               <Badge variant={row.transaction_type === 'credit' ? 'default' : 'secondary'} className="text-[10px]">
@@ -610,34 +704,57 @@ export function Upload() {
                               </Badge>
                             </td>
                             <td className="p-1">
-                              <select
-                                title="Category"
-                                value={row._category}
-                                onChange={(e) => updateStmtRow(row._key, '_category', e.target.value)}
-                                className="h-7 text-xs px-1.5 rounded border border-input bg-background w-28"
-                              >
-                                <option value="">Pick…</option>
-                                {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                              </select>
+                              {isMatched
+                                ? <span className="text-xs text-green-600">reconciled</span>
+                                : (
+                                <select
+                                  title="Category"
+                                  value={row._category}
+                                  onChange={(e) => updateStmtRow(row._key, '_category', e.target.value)}
+                                  className="h-7 text-xs px-1.5 rounded border border-input bg-background w-28"
+                                >
+                                  <option value="">Pick…</option>
+                                  {(row._type === 'transfer' ? TRANSFER_CATEGORIES : ALL_CATEGORIES).map((c) => (
+                                    <option key={c} value={c}>{c}</option>
+                                  ))}
+                                </select>
+                              )}
                             </td>
                             <td className="p-1">
-                              <select
-                                title="Transaction type"
-                                value={row._type}
-                                onChange={(e) => updateStmtRow(row._key, '_type', e.target.value as 'expense' | 'income')}
-                                className="h-7 text-xs px-1.5 rounded border border-input bg-background w-24"
-                              >
-                                <option value="expense">Expense</option>
-                                <option value="income">Income</option>
-                              </select>
+                              {isMatched
+                                ? null
+                                : (
+                                <select
+                                  title="Transaction type"
+                                  value={row._type}
+                                  onChange={(e) => {
+                                    const newType = e.target.value as 'expense' | 'income' | 'transfer';
+                                    updateStmtRow(row._key, '_type', newType);
+                                    // Reset category when switching to/from transfer
+                                    if (newType === 'transfer') {
+                                      updateStmtRow(row._key, '_category', 'Internal Transfer');
+                                    } else if (row._type === 'transfer') {
+                                      updateStmtRow(row._key, '_category', 'Other');
+                                    }
+                                  }}
+                                  className="h-7 text-xs px-1.5 rounded border border-input bg-background w-24"
+                                >
+                                  <option value="expense">Expense</option>
+                                  <option value="income">Income</option>
+                                  <option value="transfer">Transfer</option>
+                                </select>
+                              )}
                             </td>
                             <td className="p-1 text-center">
+                              {!isMatched && (
                               <button type="button" aria-label="Delete row" onClick={() => deleteStmtRow(row._key)} className="text-muted-foreground hover:text-destructive transition-colors">
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
+                              )}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

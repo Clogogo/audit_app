@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Pencil, Building2 } from 'lucide-react';
-import { getTransactions, createTransaction, updateTransaction, deleteTransaction } from '../api/client';
+import { Plus, Trash2, Pencil, Building2, Tag } from 'lucide-react';
+import { getTransactions, createTransaction, updateTransaction, deleteTransaction, batchUpdateCategory } from '../api/client';
 import type { Transaction, TransactionCreate } from '../api/types';
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../api/types';
 import { Button } from '../components/ui/button';
 import { TypeBadge, CategoryBadge } from '../components/CategoryBadge';
 import { TransactionForm } from '../components/TransactionForm';
@@ -24,6 +25,7 @@ export function Transactions() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Transaction | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [filterType, setFilterType] = useState('all');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterBank, setFilterBank] = useState('');
@@ -31,6 +33,8 @@ export function Transactions() {
   const [endDate, setEndDate] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [batchCategory, setBatchCategory] = useState('');
+  const [batchCategoryApplying, setBatchCategoryApplying] = useState(false);
 
   // Confirm dialog state
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -52,8 +56,22 @@ export function Transactions() {
 
   useEffect(() => { load(); }, [filterType, filterCategory, startDate, endDate]);
 
-  const handleSubmit = async (data: TransactionCreate) => {
+  const handleSubmit = async (rawData: TransactionCreate) => {
     setSaving(true);
+    setSaveError(null);
+    // Strip extra Transaction fields (id, created_at, updated_at, etc.) that
+    // react-hook-form picks up from defaultValues when editing.
+    const data: TransactionCreate = {
+      type: rawData.type,
+      amount: rawData.amount,
+      currency: rawData.currency ?? 'NGN',
+      category: rawData.category,
+      description: rawData.description,
+      date: rawData.date,
+      vendor: rawData.vendor || undefined,
+      bank: rawData.bank || undefined,
+      file_id: rawData.file_id ?? undefined,
+    };
     try {
       if (editTarget) {
         await updateTransaction(editTarget.id, data);
@@ -63,6 +81,29 @@ export function Transactions() {
       setDialogOpen(false);
       setEditTarget(null);
       load();
+    } catch (err: unknown) {
+      const res = (err as { response?: { data?: unknown; status?: number } })?.response;
+      const body = res?.data;
+      let msg = `Error ${res?.status ?? '?'}: `;
+      if (typeof body === 'string') {
+        msg += body;
+      } else if (body && typeof body === 'object') {
+        const detail = (body as { detail?: unknown }).detail;
+        if (typeof detail === 'string') {
+          msg += detail;
+        } else if (Array.isArray(detail)) {
+          msg += detail.map((d: { msg?: string; loc?: unknown[] }) => {
+            const loc = (d.loc ?? []).filter((l) => l !== 'body').join('.');
+            return loc ? `${loc}: ${d.msg}` : d.msg ?? JSON.stringify(d);
+          }).join('; ');
+        } else {
+          msg += JSON.stringify(body);
+        }
+      } else {
+        msg = 'Failed to save transaction. Please try again.';
+      }
+      setSaveError(msg);
+      console.error('Save transaction error:', err);
     } finally {
       setSaving(false);
     }
@@ -140,6 +181,19 @@ export function Transactions() {
     }
   };
 
+  const handleBatchCategory = async () => {
+    if (!batchCategory || selected.size === 0) return;
+    setBatchCategoryApplying(true);
+    try {
+      await batchUpdateCategory([...selected], batchCategory);
+      setBatchCategory('');
+      setSelected(new Set());
+      load();
+    } finally {
+      setBatchCategoryApplying(false);
+    }
+  };
+
   const toggleOne = (id: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -169,12 +223,36 @@ export function Transactions() {
         <h1 className="text-2xl font-bold">Transactions</h1>
         <div className="flex items-center gap-2">
           {selected.size > 0 && (
-            <Button variant="destructive" size="sm" onClick={askBatchDelete} disabled={deleting}>
-              <Trash2 className="h-4 w-4" />
-              Delete {selected.size} selected
-            </Button>
+            <>
+              <span className="text-sm text-muted-foreground">{selected.size} selected</span>
+              <Select value={batchCategory} onValueChange={setBatchCategory}>
+                <SelectTrigger className="w-44 h-8 text-xs">
+                  <SelectValue placeholder="Set category…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_header_expense" disabled className="text-xs font-semibold text-muted-foreground">— Expense —</SelectItem>
+                  {EXPENSE_CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  <SelectItem value="_header_income" disabled className="text-xs font-semibold text-muted-foreground">— Income —</SelectItem>
+                  {INCOME_CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!batchCategory || batchCategoryApplying}
+                onClick={handleBatchCategory}
+                className="h-8 text-xs"
+              >
+                <Tag className="h-3.5 w-3.5" />
+                {batchCategoryApplying ? 'Applying…' : `Apply to ${selected.size}`}
+              </Button>
+              <Button variant="destructive" size="sm" onClick={askBatchDelete} disabled={deleting} className="h-8 text-xs">
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </Button>
+            </>
           )}
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) setSaveError(null); }}>
             <DialogTrigger asChild>
               <Button onClick={openAdd}>
                 <Plus className="h-4 w-4" />
@@ -185,6 +263,9 @@ export function Transactions() {
               <DialogHeader>
                 <DialogTitle>{editTarget ? 'Edit Transaction' : 'New Transaction'}</DialogTitle>
               </DialogHeader>
+              {saveError && (
+                <p className="text-sm text-destructive bg-destructive/10 rounded px-3 py-2">{saveError}</p>
+              )}
               <TransactionForm
                 defaultValues={editTarget ?? undefined}
                 onSubmit={handleSubmit}
@@ -206,6 +287,7 @@ export function Transactions() {
             <SelectItem value="all">All Types</SelectItem>
             <SelectItem value="income">Income</SelectItem>
             <SelectItem value="expense">Expense</SelectItem>
+            <SelectItem value="transfer">Transfer</SelectItem>
           </SelectContent>
         </Select>
         <Input
@@ -297,7 +379,7 @@ export function Transactions() {
                     )}
                   </td>
                   <td className={`px-4 py-3 text-right font-semibold ${tx.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                    {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount, tx.currency)}
+                    {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount, tx.currency ?? 'NGN')}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 justify-end">

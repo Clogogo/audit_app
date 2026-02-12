@@ -11,6 +11,7 @@ import enum
 class TransactionType(str, enum.Enum):
     expense = "expense"
     income = "income"
+    transfer = "transfer"
 
 
 class MatchStatus(str, enum.Enum):
@@ -80,9 +81,13 @@ class BankTransaction(Base):
     amount: Mapped[float] = mapped_column(Float)
     transaction_type: Mapped[str] = mapped_column(String(10))  # debit | credit
     reference: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    vendor: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # Extracted from description
     matched_transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id"), nullable=True)
     match_status: Mapped[str] = mapped_column(String(20), default="unmatched")
     match_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # AI / keyword-suggested category and type (pre-fills the import review table)
+    suggested_category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    suggested_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     statement: Mapped[BankStatement] = relationship("BankStatement", back_populates="bank_transactions")

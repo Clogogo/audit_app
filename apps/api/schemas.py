@@ -8,7 +8,7 @@ from pydantic import BaseModel
 class TransactionCreate(BaseModel):
     type: str
     amount: float
-    currency: str = "USD"
+    currency: str = "NGN"
     category: str
     description: str
     date: date
@@ -23,7 +23,7 @@ class TransactionUpdate(BaseModel):
     currency: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
-    date: Optional[date] = None
+    date: Optional[str] = None  # accept ISO string; parsed to date in the handler
     vendor: Optional[str] = None
     bank: Optional[str] = None
 
@@ -55,7 +55,9 @@ class TransactionSummary(BaseModel):
     total_income: float
     total_expenses: float
     balance: float
-    by_category: dict[str, float]
+    by_category: dict[str, float]          # kept for compat (all categories)
+    expense_by_category: dict[str, float]  # expenses only
+    income_by_category: dict[str, float]   # income only
     monthly: list[MonthlySummary]
 
 
@@ -106,7 +108,7 @@ class BatchUploadResult(BaseModel):
 
 class BatchConfirmItem(BaseModel):
     amount: float
-    currency: str = "USD"
+    currency: str = "NGN"
     category: str
     description: str
     date: date
@@ -125,7 +127,7 @@ class BatchConfirmRequest(BaseModel):
 class StatementImportItem(BaseModel):
     bank_transaction_id: int
     amount: float
-    currency: str = "USD"
+    currency: str = "NGN"
     category: str
     description: str
     date: date
@@ -135,6 +137,12 @@ class StatementImportItem(BaseModel):
 
 class StatementImportRequest(BaseModel):
     items: list[StatementImportItem]
+
+
+class StatementImportResult(BaseModel):
+    saved: int                   # new transactions created
+    reconciled: int              # duplicates linked to existing transactions
+    statement_id: int
 
 
 # ── Bank Statements ───────────────────────────────────────────────────────────
@@ -163,9 +171,12 @@ class BankTransactionOut(BaseModel):
     amount: float
     transaction_type: str
     reference: Optional[str]
+    vendor: Optional[str] = None  # Extracted recipient/merchant name
     matched_transaction_id: Optional[int]
     match_status: str
     match_confidence: Optional[float]
+    suggested_category: Optional[str] = None
+    suggested_type: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

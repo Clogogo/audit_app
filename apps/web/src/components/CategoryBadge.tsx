@@ -7,17 +7,20 @@ interface CategoryBadgeProps {
 }
 
 export function CategoryBadge({ category, type }: CategoryBadgeProps) {
+  const variant = type === 'income' ? 'income' : type === 'transfer' ? 'secondary' : 'expense';
   return (
-    <Badge variant={type === 'income' ? 'income' : 'expense'}>
+    <Badge variant={variant}>
       {category}
     </Badge>
   );
 }
 
 export function TypeBadge({ type }: { type: TransactionType }) {
+  const variant = type === 'income' ? 'income' : type === 'transfer' ? 'secondary' : 'expense';
+  const label = type === 'income' ? 'Income' : type === 'transfer' ? 'Transfer' : 'Expense';
   return (
-    <Badge variant={type === 'income' ? 'income' : 'expense'}>
-      {type === 'income' ? 'Income' : 'Expense'}
+    <Badge variant={variant}>
+      {label}
     </Badge>
   );
 }

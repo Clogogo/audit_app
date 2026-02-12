@@ -11,7 +11,7 @@ interface StatCardProps {
   className?: string;
 }
 
-export function StatCard({ title, amount, currency = 'USD', icon: Icon, trend, className }: StatCardProps) {
+export function StatCard({ title, amount, currency = 'NGN', icon: Icon, trend, className }: StatCardProps) {
   return (
     <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

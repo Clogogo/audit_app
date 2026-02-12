@@ -1,4 +1,4 @@
-export type TransactionType = 'expense' | 'income';
+export type TransactionType = 'expense' | 'income' | 'transfer';
 
 export type MatchStatus = 'unmatched' | 'matched' | 'discrepancy';
 
@@ -34,6 +34,8 @@ export interface TransactionSummary {
   total_expenses: number;
   balance: number;
   by_category: Record<string, number>;
+  expense_by_category: Record<string, number>;
+  income_by_category: Record<string, number>;
   monthly: Array<{ month: string; income: number; expenses: number }>;
 }
 
@@ -80,6 +82,8 @@ export interface BankTransaction {
   matched_transaction_id?: number;
   match_status: MatchStatus;
   match_confidence?: number;
+  suggested_category?: string;
+  suggested_type?: TransactionType;
   created_at: string;
 }
 
@@ -163,6 +167,12 @@ export interface StatementImportRequest {
   items: StatementImportItem[];
 }
 
+export interface StatementImportResult {
+  saved: number;       // new transactions created
+  reconciled: number;  // duplicates linked to reconciliation
+  statement_id: number;
+}
+
 export const EXPENSE_CATEGORIES = [
   'Food & Dining',
   'Transportation',
@@ -173,6 +183,8 @@ export const EXPENSE_CATEGORIES = [
   'Travel',
   'Education',
   'Housing',
+  'Bank Charges & Fees',
+  'Internal Transfer',
   'Other',
 ];
 

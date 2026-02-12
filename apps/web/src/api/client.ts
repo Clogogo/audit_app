@@ -13,6 +13,7 @@ import type {
   BatchUploadResult,
   BatchConfirmItem,
   StatementImportItem,
+  StatementImportResult,
 } from './types';
 
 const api = axios.create({
@@ -41,6 +42,9 @@ export const updateTransaction = (id: number, body: Partial<TransactionCreate>) 
 
 export const deleteTransaction = (id: number) =>
   api.delete<{ ok: boolean }>(`/transactions/${id}`).then(unwrap);
+
+export const batchUpdateCategory = (ids: number[], category: string) =>
+  api.patch<{ updated: number }>('/transactions/batch-category', { ids, category }).then(unwrap);
 
 // File Upload + AI
 export const uploadFile = (file: File) => {
@@ -86,11 +90,17 @@ export const uploadBankStatement = (file: File, bankName: string) => {
 export const getBankStatements = () =>
   api.get<BankStatement[]>('/bank-statements').then(unwrap);
 
+export const deleteBankStatement = (stmtId: number) =>
+  api.delete(`/bank-statements/${stmtId}`);
+
+export const batchDeleteBankStatements = (ids: number[]) =>
+  api.post<{ deleted: number }>('/bank-statements/batch-delete', { ids }).then(unwrap);
+
 export const getBankTransactions = (statementId: number) =>
   api.get<BankTransaction[]>(`/bank-statements/${statementId}/transactions`).then(unwrap);
 
 export const importStatementTransactions = (stmtId: number, items: StatementImportItem[]) =>
-  api.post<Transaction[]>(`/bank-statements/${stmtId}/import-transactions`, { items }).then(unwrap);
+  api.post<StatementImportResult>(`/bank-statements/${stmtId}/import-transactions`, { items }).then(unwrap);
 
 export const autoMatch = (statementId: number) =>
   api.post<{ matched: number }>(`/reconcile/${statementId}/auto-match`).then(unwrap);

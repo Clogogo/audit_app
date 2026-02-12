@@ -64,30 +64,31 @@ def _gemini_acquire() -> None:
 
 SINGLE_SCHEMA = """\
 Extract financial information from this receipt/invoice and return ONLY a valid JSON object.
-Use null for any field you cannot determine.
+Use null for any field you cannot clearly see in the document — do NOT guess or invent values.
 
 {
   "amount": <total amount as a number, e.g. 42.50>,
-  "currency": "<3-letter ISO code, e.g. USD>",
+  "currency": "<3-letter ISO code, e.g. NGN, USD>",
   "date": "<YYYY-MM-DD>",
   "vendor": "<business or person name>",
   "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
 Bills & Utilities, Healthcare, Travel, Education, Housing, Salary, Freelance, \
 Investment, Business, Other>",
   "type": "<expense or income>",
-  "description": "<one short sentence>"
+  "description": "<one short sentence describing what was paid for>"
 }
 
-Return ONLY the JSON object. No markdown, no explanation."""
+IMPORTANT: Only extract information that is explicitly visible in the document.
+Return ONLY the JSON object. No markdown, no explanation, no extra text."""
 
 BATCH_SCHEMA = """\
 This document may contain MULTIPLE transactions, payments, or line items.
 Extract EVERY row/entry as a separate item. Return ONLY a valid JSON array.
-Use null for any field you cannot determine.
+Use null for any field you cannot clearly see — do NOT guess or invent values.
 
 [
   {
-    "amount": <number>,
+    "amount": <number — must be explicitly visible in the document>,
     "currency": "<3-letter ISO code, e.g. NGN, USD>",
     "date": "<YYYY-MM-DD or null>",
     "vendor": "<payer name, student name, or party name>",
@@ -100,11 +101,12 @@ Investment, Business, Other>",
   }
 ]
 
-Important:
-- Include ALL rows, even if some fields are missing
-- For school fee payments the type is usually "income"
-- If a column has a running date, use the most recent date above each entry
-- Return ONLY the JSON array. No markdown, no explanation."""
+IMPORTANT rules:
+- Only extract data that is explicitly visible in the document. Never hallucinate amounts, dates, or names.
+- Include ALL rows/entries, even if some fields are missing (use null for those fields).
+- For school fee payments the type is usually "income".
+- If a column has a running date, use the most recent date above each entry.
+- Return ONLY the JSON array. No markdown, no explanation, no extra text."""
 
 
 # ── JSON cleanup ─────────────────────────────────────────────────────────────
@@ -123,6 +125,10 @@ def _read_image_b64(file_path: str) -> str:
 
 
 def _extract_pdf_text(file_path: str) -> str:
+    """
+    Extract text from PDF using pdfplumber.
+    Falls back to OCR if no text is found (handles scanned PDFs).
+    """
     try:
         import pdfplumber
         texts = []
@@ -131,9 +137,51 @@ def _extract_pdf_text(file_path: str) -> str:
                 t = page.extract_text()
                 if t:
                     texts.append(t)
-        return "\n".join(texts).strip()
+        
+        result = "\n".join(texts).strip()
+        
+        # If no text found, try OCR (this is a scanned/image PDF)
+        if not result or len(result) < 50:
+            logger.info("pdfplumber found no text, attempting OCR for scanned PDF")
+            result = _extract_pdf_text_ocr(file_path)
+        
+        return result
     except Exception as e:
         logger.error(f"pdfplumber failed: {e}")
+        return ""
+
+
+def _extract_pdf_text_ocr(file_path: str) -> str:
+    """
+    Extract text from scanned PDF using OCR (pytesseract).
+    Falls back silently if tesseract is not installed.
+    """
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+        
+        # Convert PDF pages to images
+        images = convert_from_path(file_path, dpi=300)
+        texts = []
+        
+        for i, image in enumerate(images):
+            logger.info(f"OCR processing page {i+1}/{len(images)}")
+            text = pytesseract.image_to_string(image, lang='eng')
+            if text.strip():
+                texts.append(text.strip())
+        
+        result = "\n".join(texts).strip()
+        logger.info(f"OCR extracted {len(result)} characters from {len(images)} pages")
+        return result
+        
+    except ImportError:
+        logger.warning(
+            "OCR libraries not installed. Install with: "
+            "pip install pytesseract pdf2image && brew install tesseract"
+        )
+        return ""
+    except Exception as e:
+        logger.warning(f"OCR extraction failed: {e}")
         return ""
 
 
@@ -290,6 +338,65 @@ def _call_ai(prompt: str, file_path: str, mime_type: str) -> str:
         "and Gemini API key is not configured. "
         "Set GEMINI_API_KEY in apps/api/.env for complex document fallback."
     )
+
+
+# ── Text-only dispatcher (no file/image) ─────────────────────────────────────
+
+def _call_ai_text(prompt: str) -> str:
+    """
+    Call AI with a plain-text prompt only — no file or image involved.
+    Used for batch categorization and other text-only tasks.
+
+    Tries Ollama text model first (llama3.2:1b), falls back to Gemini.
+    Returns "" if both fail (never raises).
+    """
+    if _ollama_available():
+        try:
+            body = {
+                "model": OLLAMA_TEXT_MODEL,
+                "prompt": prompt,
+                "stream": False,
+            }
+            with httpx.Client(timeout=60.0) as c:
+                resp = c.post(f"{OLLAMA_URL}/api/generate", json=body)
+                resp.raise_for_status()
+                result = resp.json().get("response", "")
+            if result and _contains_json(result):
+                logger.info(f"Ollama text-only call succeeded ({OLLAMA_TEXT_MODEL})")
+                return result
+            logger.warning("Ollama text-only call returned no JSON — falling back to Gemini")
+        except Exception as e:
+            logger.warning(f"Ollama text-only call failed: {e}")
+
+    if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here":
+        logger.warning("Gemini not configured; text-only AI call skipped")
+        return ""
+
+    _gemini_acquire()
+    url = GEMINI_ENDPOINT.format(api_key=GEMINI_API_KEY)
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
+    }
+    try:
+        with httpx.Client(timeout=60.0) as c:
+            resp = c.post(url, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+        return (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            logger.warning("Gemini rate limit on text-only call — skipping AI categorization")
+        else:
+            logger.error(f"Gemini text-only error {e.response.status_code}: {e.response.text[:200]}")
+    except Exception as e:
+        logger.error(f"Gemini text-only call failed: {e}")
+    return ""
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

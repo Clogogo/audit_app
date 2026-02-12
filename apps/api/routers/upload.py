@@ -26,7 +26,12 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_TYPES = {
     "image/jpeg", "image/png", "image/webp", "image/gif",
     "application/pdf",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+    "application/vnd.ms-excel",  # .xls
+    "text/csv",
 }
+
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".xlsx", ".xls", ".csv"}
 
 
 def _save_file(contents: bytes, filename: str) -> Path:
@@ -44,17 +49,46 @@ async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(400, f"Unsupported file type: {file.content_type}")
-
+    """Upload single receipt/invoice for transaction extraction."""
+    # Validate file type
+    file_ext = Path(file.filename or "").suffix.lower()
+    
+    if file.content_type not in ALLOWED_TYPES and file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            400, 
+            detail=f"Unsupported file type: {file.content_type}. "
+                   f"Supported formats: Images (JPG, PNG, WebP, GIF), PDF, Excel (.xlsx/.xls), CSV"
+        )
+    
+    # Check file size (limit to 50MB)
     contents = await file.read()
+    if len(contents) > 50 * 1024 * 1024:
+        raise HTTPException(413, detail="File too large. Maximum size: 50MB")
+    
+    if len(contents) == 0:
+        raise HTTPException(400, detail="Empty file uploaded")
+    
     stored_path = _save_file(contents, file.filename or "file")
     try:
         ocr_text, ai_result = ai_worker.process_file(str(stored_path), file.content_type or "")
+        
+        # Validate AI extraction result
+        if not ai_result or not ai_result.get("amount"):
+            raise HTTPException(
+                422,
+                detail="Could not extract transaction data from this file. "
+                       "Please ensure the file contains a clear receipt or invoice with "
+                       "visible amount, date, and vendor information."
+            )
     except GeminiRateLimitError as e:
         raise HTTPException(429, detail=str(e))
     except AIProviderError as e:
         raise HTTPException(503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            500,
+            detail=f"Error processing file: {str(e)}"
+        )
 
     record = UploadedFile(
         original_name=file.filename or stored_path.name,

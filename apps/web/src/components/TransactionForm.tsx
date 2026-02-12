@@ -19,7 +19,7 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
   const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<TransactionCreate>({
     defaultValues: {
       type: 'expense',
-      currency: 'USD',
+      currency: 'NGN',
       date: new Date().toISOString().split('T')[0],
       ...defaultValues,
     },
@@ -31,8 +31,19 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
     getBankAccounts().then(setBankAccounts).catch(() => {});
   }, []);
 
+  // Sync uncontrolled Select fields into react-hook-form store on mount
+  useEffect(() => {
+    setValue('type', defaultValues?.type ?? 'expense');
+    setValue('currency', defaultValues?.currency ?? 'NGN');
+    if (defaultValues?.category) setValue('category', defaultValues.category);
+    if (defaultValues?.bank) setValue('bank', defaultValues.bank);
+    else setValue('bank', undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const TRANSFER_CATEGORIES = ['Internal Transfer', 'Bank Charges & Fees', 'Other'];
   const type = watch('type') as TransactionType;
-  const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const categories = type === 'income' ? INCOME_CATEGORIES : type === 'transfer' ? TRANSFER_CATEGORIES : EXPENSE_CATEGORIES;
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -49,6 +60,7 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
             <SelectContent>
               <SelectItem value="expense">Expense</SelectItem>
               <SelectItem value="income">Income</SelectItem>
+              <SelectItem value="transfer">Transfer</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -75,20 +87,20 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
         <div className="space-y-2">
           <Label>Currency</Label>
           <Select
-            defaultValue={defaultValues?.currency ?? 'USD'}
+            defaultValue={defaultValues?.currency ?? 'NGN'}
             onValueChange={(v) => setValue('currency', v)}
           >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="USD">USD</SelectItem>
-              <SelectItem value="EUR">EUR</SelectItem>
-              <SelectItem value="GBP">GBP</SelectItem>
-              <SelectItem value="JPY">JPY</SelectItem>
+              <SelectItem value="NGN">NGN (₦)</SelectItem>
+              <SelectItem value="USD">USD ($)</SelectItem>
+              <SelectItem value="EUR">EUR (€)</SelectItem>
+              <SelectItem value="GBP">GBP (£)</SelectItem>
+              <SelectItem value="JPY">JPY (¥)</SelectItem>
               <SelectItem value="CAD">CAD</SelectItem>
               <SelectItem value="AUD">AUD</SelectItem>
-              <SelectItem value="NGN">NGN</SelectItem>
             </SelectContent>
           </Select>
         </div>
