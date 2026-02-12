@@ -910,6 +910,21 @@ def _pdf_text_heuristic(file_path: str) -> list[dict]:
         description = _AMOUNT_RE.sub("", remainder)
         description = re.sub(r"\s{2,}", " ", description).strip()
         description = re.sub(r"^[\s|,;:]+|[\s|,;:]+$", "", description)
+        
+        # Extract vendor from description (same logic as CSV/Excel parser)
+        vendor_name: Optional[str] = None
+        vendor_patterns = [
+            r"Transfer\s+to\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+            r"Payment\s+to\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+            r"Transfer\s+from\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+            r"Received\s+from\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+        ]
+        for pattern in vendor_patterns:
+            vm = re.search(pattern, description, re.IGNORECASE)
+            if vm:
+                vendor_name = vm.group(1).strip()
+                vendor_name = re.sub(r"\s+[A-Z]$", "", vendor_name).strip()
+                break
 
         tx_type = "debit"
         amount  = amounts[0]
@@ -937,6 +952,7 @@ def _pdf_text_heuristic(file_path: str) -> list[dict]:
             "amount":           round(amount, 2),
             "transaction_type": tx_type,
             "reference":        None,
+            "vendor":           vendor_name,
         })
 
     return rows
@@ -1025,6 +1041,21 @@ def _pdf_moniepoint_text(file_path: str) -> list[dict]:
 
                 if not narration:
                     narration = "Credit transaction" if tx_type == "credit" else "Debit transaction"
+                
+                # Extract vendor from narration
+                vendor_name: Optional[str] = None
+                vendor_patterns = [
+                    r"Transfer\s+to\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+                    r"Payment\s+to\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+                    r"Transfer\s+from\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+                    r"Received\s+from\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+                ]
+                for pattern in vendor_patterns:
+                    vm = re.search(pattern, narration, re.IGNORECASE)
+                    if vm:
+                        vendor_name = vm.group(1).strip()
+                        vendor_name = re.sub(r"\s+[A-Z]$", "", vendor_name).strip()
+                        break
 
                 rows.append({
                     "date":             tx_date,
@@ -1032,6 +1063,8 @@ def _pdf_moniepoint_text(file_path: str) -> list[dict]:
                     "amount":           round(amount, 2),
                     "transaction_type": tx_type,
                     "reference":        reference,
+                    "vendor":           vendor_name,
+                })
                 })
 
     return rows
@@ -1169,6 +1202,7 @@ def _parse_pdf_statement(file_path: str) -> list[dict]:
                             "amount":           abs(float(item.get("amount", 0))),
                             "transaction_type": item.get("transaction_type", "debit"),
                             "reference":        None,
+                            "vendor":           None,
                         })
                     except Exception:
                         continue
