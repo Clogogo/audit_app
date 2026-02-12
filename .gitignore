@@ -1,0 +1,51 @@
+# ── Node / Frontend ──────────────────────────────────────────────────────────
+node_modules/
+dist/
+.cache/
+*.local
+
+# Vite
+vite.config.*.timestamp*
+vitest.config.*.timestamp*
+
+# Nx
+.nx/cache
+.nx/workspace-data
+
+# ── Python / Backend ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Database & Uploads ───────────────────────────────────────────────────────
+finance.db
+finance.db-shm
+finance.db-wal
+uploads/
+
+# ── OS & Editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
