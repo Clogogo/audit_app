@@ -159,6 +159,7 @@ _TRANSFER_KEYWORDS = [
     "auto-save to owealth", "auto save to owealth",
     "owealth withdrawal", "owealth balance",
     "own account transfer", "own-account transfer",
+    "own account",  # catches "Transfer to X - own account" style descriptions
     "inter-account", "internal transfer", "self transfer",
     "wallet to wallet", "wallet transfer",
 ]
@@ -166,7 +167,10 @@ _TRANSFER_KEYWORDS = [
 # (category, forced_type) pairs — checked first for income-only categories
 _INCOME_KEYWORD_MAP: list[tuple[str, list[str]]] = [
     ("Salary",     ["salary", "salaries", "payroll", "monthly pay", "remuneration",
-                    "staff pay", "wages", "pay day"]),
+                    "staff pay", "wages", "pay day",
+                    "(salary)", "(january", "(february", "(march", "(april",
+                    "(may", "(june", "(july", "(august", "(september",
+                    "(october", "(november", "(december"]),
     ("Investment", ["interest earn", "owealth interest", "investment income", "dividend",
                     "fixed deposit return", "savings interest", "interest credit",
                     "treasury", "lien release", "yield"]),
@@ -204,9 +208,15 @@ _NEUTRAL_KEYWORD_MAP: list[tuple[str, list[str]]] = [
                               "clinic", "medical", "drug", "treatment", "lab test",
                               "laboratory", "prescription", "health insurance",
                               "health fee"]),
-    ("Education",           ["school fees", "tuition", "school fee", "exam fee",
-                              "university", "college", "academy", "course fee",
-                              "training fee", "tutorial", "lesson"]),
+    ("School Fees",         ["school fees", "school fee", "tuition fee", "sch fees",
+                              "primary school", "secondary school", "nursery school",
+                              "boarding fee", "school levy"]),
+    ("Education",           ["tuition", "exam fee", "university", "college", "academy",
+                              "course fee", "training fee", "tutorial", "lesson",
+                              "educational"]),
+    ("Administration",      ["admin", "administration", "administrative", "office supply",
+                              "stationery", "printing", "photocopying", "secretarial",
+                              "management fee", "office expense", "operational"]),
     ("Travel",              ["hotel", "airbnb", "flight", "airline", "airport",
                               "visa fee", "travel", "booking", "accommodation",
                               "vacation", "holiday"]),
@@ -218,7 +228,7 @@ _NEUTRAL_KEYWORD_MAP: list[tuple[str, list[str]]] = [
                               "transfer fee", "transaction fee", "service charge",
                               "account maintenance", "atm fee", "pos fee",
                               "interbank fee", "vat on", "withholding"]),
-    ("Internal Transfer",   ["auto-save", "owealth", "own account"]),
+    ("Internal Transfer",   ["auto-save", "owealth"]),
 ]
 
 
@@ -280,16 +290,18 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         "For each transaction below, return ONLY a JSON array with objects:\n"
         '  {"i": <index>, "category": "<category>", "type": "<expense|income|transfer>"}\n\n'
         "Valid categories: Food & Dining, Transportation, Shopping, Entertainment, "
-        "Bills & Utilities, Healthcare, Travel, Education, Housing, Salary, Freelance, "
-        "Investment, Business, Bank Charges & Fees, Internal Transfer, Refund, Gift, Other\n\n"
+        "Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, "
+        "Salary, Freelance, Investment, Business, Bank Charges & Fees, Internal Transfer, Refund, Gift, Other\n\n"
         "Rules:\n"
         "- 'salary', 'payroll' → Salary / income\n"
         "- 'electricity', 'nepa', 'dstv', 'airtime', 'internet' → Bills & Utilities / expense\n"
         "- 'uber', 'fuel', 'petrol', 'bolt', 'fare' → Transportation / expense\n"
-        "- 'auto-save', 'owealth', 'own account' → Internal Transfer / transfer\n"
+        "- 'auto-save', 'owealth', 'own account', 'inter-account', 'wallet transfer' → Internal Transfer / transfer\n"
         "- 'refund', 'reversal' → Refund / income\n"
         "- 'bank charge', 'stamp duty', 'commission' → Bank Charges & Fees / expense\n"
+        "- 'Transfer from PERSON_NAME' or 'Received from PERSON_NAME' = payment received from an external person → income (NOT transfer)\n"
         "- Debits (dir=debit) are usually expenses; credits (dir=credit) are usually income\n"
+        "- IMPORTANT: Only use type=transfer for movements between the account owner's OWN accounts (e.g. own account, inter-account, wallet). A credit received from another person is INCOME, not transfer.\n"
         "- Only extract data visible in the description. Do NOT guess.\n\n"
         "Transactions:\n"
         + json.dumps(items, ensure_ascii=False)
@@ -302,16 +314,44 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         arr_match = re.search(r"\[[\s\S]*\]", raw)
         if not arr_match:
             return rows
+        # Own-account patterns that legitimately warrant type=transfer
+        _OWN_ACCT_PATTERNS = [
+            "own account", "inter-account", "owealth", "auto-save",
+            "wallet to wallet", "wallet transfer", "self transfer",
+            "internal transfer",
+        ]
+
+        _VALID_CATEGORIES = {
+            "Food & Dining", "Transportation", "Shopping", "Entertainment",
+            "Bills & Utilities", "Healthcare", "Travel", "Education", "School Fees",
+            "Housing", "Administration",
+            "Salary", "Freelance", "Investment", "Business",
+            "Bank Charges & Fees", "Internal Transfer", "Refund", "Gift", "Other",
+        }
+
         suggestions = json.loads(arr_match.group())
         for s in suggestions:
             idx = int(s.get("i", -1))
-            if 0 <= idx < len(rows):
-                cat = str(s.get("category", "Other")).strip()
-                typ = str(s.get("type", "")).strip().lower()
-                if cat and cat != "Other":
-                    rows[idx]["suggested_category"] = cat
-                if typ in ("expense", "income", "transfer"):
-                    rows[idx]["suggested_type"] = typ
+            # Only update rows we actually asked about — prevents the AI
+            # hallucinating items for indices it was never given
+            if idx not in undecided_idx:
+                continue
+            cat = str(s.get("category", "Other")).strip()
+            typ = str(s.get("type", "")).strip().lower()
+            # Validate category against known list to reject malformed values
+            # like "Bills & Utilities / expense" that the AI sometimes returns
+            if cat in _VALID_CATEGORIES and cat != "Other":
+                rows[idx]["suggested_category"] = cat
+            if typ in ("expense", "income", "transfer"):
+                # Guard: don't let AI reclassify a received-from-person credit as
+                # "transfer". Only honour type=transfer when the description clearly
+                # signals an own-account movement.
+                if typ == "transfer":
+                    desc_lower = rows[idx]["description"].lower()
+                    if not any(p in desc_lower for p in _OWN_ACCT_PATTERNS):
+                        # Fall back to direction-based default
+                        typ = "income" if rows[idx]["transaction_type"] == "credit" else "expense"
+                rows[idx]["suggested_type"] = typ
     except Exception as e:
         logger.warning(f"AI batch categorization failed: {e}")
 
@@ -480,6 +520,13 @@ def _normalize_df(df: pd.DataFrame) -> list[dict]:
             # ── Amount & direction ────────────────────────────────────
             amount  = 0.0
             tx_type = "debit"
+            # Track whether amount came from a dedicated split column or a
+            # shared single-amount column. The balance==amount sanity check
+            # should only fire for the shared-column case, because when
+            # separate Debit/Credit columns exist the amounts are correct
+            # and coincidentally matching the running balance is expected
+            # (especially on the opening rows of a statement).
+            _amount_from_split_col = False
 
             if debit_col and credit_col:
                 debit  = _parse_amount(row.get(debit_col,  0))
@@ -494,18 +541,21 @@ def _normalize_df(df: pd.DataFrame) -> list[dict]:
                     amount, tx_type = debit, "debit"
                 else:
                     continue  # Both zero → skip (likely a header or total row)
+                _amount_from_split_col = True
 
             elif credit_col and not debit_col:
                 credit = _parse_amount(row.get(credit_col, 0))
                 if credit <= 0:
                     continue
                 amount, tx_type = credit, "credit"
+                _amount_from_split_col = True
 
             elif debit_col and not credit_col:
                 debit = _parse_amount(row.get(debit_col, 0))
                 if debit <= 0:
                     continue
                 amount, tx_type = debit, "debit"
+                _amount_from_split_col = True
 
             elif amount_col:
                 raw_val = str(row.get(amount_col, "") or "").strip()
@@ -572,10 +622,11 @@ def _normalize_df(df: pd.DataFrame) -> list[dict]:
                 description = "Credit transaction" if tx_type == "credit" else "Debit transaction"
 
             # ── Sanity: reject rows where amount == running balance ───────
-            # If the parsed amount exactly matches the current running
-            # balance it almost certainly means the balance column was
-            # mistakenly read as the transaction amount.
-            if balance_col:
+            # Only apply when the amount came from a shared single-amount
+            # column (not from split Debit/Credit columns), because with split
+            # columns the amounts are definitively correct and coincidentally
+            # equalling the running balance is expected on the opening rows.
+            if balance_col and not _amount_from_split_col:
                 curr_bal_check = _parse_amount(row.get(balance_col, 0))
                 if curr_bal_check > 0 and abs(amount - curr_bal_check) < 0.02:
                     logger.warning(
@@ -1064,7 +1115,6 @@ def _pdf_moniepoint_text(file_path: str) -> list[dict]:
                     "transaction_type": tx_type,
                     "reference":        reference,
                     "vendor":           vendor_name,
-                })
                 })
 
     return rows

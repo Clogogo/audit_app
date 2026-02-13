@@ -35,6 +35,7 @@ class AIProviderError(Exception):
 
 OLLAMA_URL         = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "llama3.2-vision")  # for images
+OLLAMA_VISION_FALLBACK = "moondream"  # smaller, faster fallback for vision
 OLLAMA_TEXT_MODEL   = os.getenv("OLLAMA_TEXT_MODEL", "llama3.2:1b")    # for PDF text
 
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "")
@@ -72,8 +73,8 @@ Use null for any field you cannot clearly see in the document — do NOT guess o
   "date": "<YYYY-MM-DD>",
   "vendor": "<business or person name>",
   "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
-Bills & Utilities, Healthcare, Travel, Education, Housing, Salary, Freelance, \
-Investment, Business, Other>",
+Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, \
+Salary, Freelance, Investment, Business, Other>",
   "type": "<expense or income>",
   "description": "<one short sentence describing what was paid for>"
 }
@@ -93,8 +94,8 @@ Use null for any field you cannot clearly see — do NOT guess or invent values.
     "date": "<YYYY-MM-DD or null>",
     "vendor": "<payer name, student name, or party name>",
     "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
-Bills & Utilities, Healthcare, Travel, Education, Housing, Salary, Freelance, \
-Investment, Business, Other>",
+Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, \
+Salary, Freelance, Investment, Business, Other>",
     "type": "<expense or income>",
     "description": "<brief description of this specific entry>",
     "reference": "<receipt number, transaction ID, or row reference if visible>"
@@ -112,9 +113,19 @@ IMPORTANT rules:
 # ── JSON cleanup ─────────────────────────────────────────────────────────────
 
 def _clean_json(raw: str) -> str:
+    """Remove common non-JSON artifacts from AI responses."""
+    # Remove thinking/reasoning tags
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
+    raw = re.sub(r"<reasoning>.*?</reasoning>", "", raw, flags=re.DOTALL)
+    
+    # Remove markdown code blocks
     raw = re.sub(r"```(?:json)?\s*", "", raw)
     raw = re.sub(r"```", "", raw)
+    
+    # Remove common prefix phrases
+    raw = re.sub(r"^(?:Here's|Here is|The|This is)\s+(?:the|a)?\s+(?:JSON|json|extracted)?.*?[:\n]", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"^(?:Based on|From|According to)\s+(?:the|this)?.*?[:\n]", "", raw, flags=re.IGNORECASE)
+    
     return raw.strip()
 
 
@@ -196,11 +207,24 @@ def _ollama_available() -> bool:
         return False
 
 
-def _call_ollama(prompt: str, file_path: str, mime_type: str) -> str:
+def _ollama_model_exists(model_name: str) -> bool:
+    """Check if a specific Ollama model is available."""
+    try:
+        with httpx.Client(timeout=3.0) as c:
+            r = c.get(f"{OLLAMA_URL}/api/tags")
+            if r.status_code == 200:
+                models = r.json().get("models", [])
+                return any(model_name in m.get("name", "") for m in models)
+    except Exception:
+        pass
+    return False
+
+
+def _call_ollama(prompt: str, file_path: str, mime_type: str, retry_with_fallback: bool = True) -> str:
     """
     Route to the right Ollama model based on file type:
-      - Images → OLLAMA_VISION_MODEL (moondream) with base64 image
-      - PDFs   → OLLAMA_TEXT_MODEL   (llama3.2:1b) with extracted text
+      - Images → OLLAMA_VISION_MODEL with base64 image (with moondream fallback)
+      - PDFs   → OLLAMA_TEXT_MODEL with extracted text
     Returns raw text response or "" on failure.
     """
     is_pdf = "pdf" in mime_type.lower()
@@ -215,16 +239,42 @@ def _call_ollama(prompt: str, file_path: str, mime_type: str) -> str:
             "model": model,
             "prompt": f"{prompt}\n\nDocument text:\n{text[:4000]}",
             "stream": False,
+            "options": {"temperature": 0.1, "num_predict": 2048}
         }
         logger.info(f"Ollama PDF → text model ({model})")
     else:
+        # Try primary vision model first
         b64 = _read_image_b64(file_path)
         model = OLLAMA_VISION_MODEL
+        
+        # Enhanced prompt with clearer formatting instructions
+        enhanced_prompt = f"""You are analyzing a financial document image that may contain handwritten or printed text.
+
+STEPS:
+1. Examine the ENTIRE image carefully
+2. Identify if this is a TABLE with multiple rows
+3. For handwritten text, read each character slowly and carefully
+4. Extract ALL visible data by scanning from top to bottom
+
+{prompt}
+
+FORMATTING REQUIREMENTS:
+- Output MUST be valid JSON only
+- Start your response with [ for arrays or {{ for objects
+- End with ] or }}
+- No text before the JSON
+- No text after the JSON
+- No markdown code blocks like ```json
+- No explanations
+
+Start your response now:"""
+        
         body = {
             "model": model,
-            "prompt": prompt,
+            "prompt": enhanced_prompt,
             "images": [b64],
             "stream": False,
+            "options": {"temperature": 0.1, "num_predict": 2048}
         }
         logger.info(f"Ollama image → vision model ({model})")
 
@@ -232,7 +282,22 @@ def _call_ollama(prompt: str, file_path: str, mime_type: str) -> str:
         with httpx.Client(timeout=120.0) as c:
             resp = c.post(f"{OLLAMA_URL}/api/generate", json=body)
             resp.raise_for_status()
-            return resp.json().get("response", "")
+            result = resp.json().get("response", "")
+            
+            # Log first 200 chars for debugging
+            logger.info(f"Ollama response preview: {result[:200]}...")
+            
+            # If response is empty or doesn't contain JSON markers, try fallback for images
+            if not is_pdf and retry_with_fallback and (not result or not _contains_json(result)):
+                if _ollama_model_exists(OLLAMA_VISION_FALLBACK):
+                    logger.warning(f"{model} produced no JSON, trying {OLLAMA_VISION_FALLBACK}")
+                    body["model"] = OLLAMA_VISION_FALLBACK
+                    resp = c.post(f"{OLLAMA_URL}/api/generate", json=body)
+                    resp.raise_for_status()
+                    result = resp.json().get("response", "")
+                    logger.info(f"Fallback model response preview: {result[:200]}...")
+            
+            return result
     except Exception as e:
         logger.error(f"Ollama call failed: {e}")
         return ""
@@ -428,14 +493,31 @@ def process_file(file_path: str, mime_type: str) -> tuple[str, dict]:
     ocr_text = _extract_pdf_text(file_path) if is_pdf else f"[Image — {Path(file_path).stat().st_size:,} bytes]"
 
     raw = _call_ai(SINGLE_SCHEMA, file_path, mime_type)
-    raw = _clean_json(raw)
-    match = re.search(r"\{[\s\S]*\}", raw)
+    logger.info(f"Raw AI response length: {len(raw)} chars")
+    
+    cleaned = _clean_json(raw)
+    logger.info(f"Cleaned response preview: {cleaned[:300]}")
+    
+    # Try to extract JSON object with more lenient pattern
+    match = re.search(r"\{[\s\S]*?\}", cleaned, re.DOTALL)
     result = {}
     if match:
         try:
             result = json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
+            logger.info(f"Successfully parsed JSON with keys: {list(result.keys())}")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error: {e}. Matched text: {match.group()[:200]}")
+            # Try to fix common JSON issues
+            try:
+                fixed = match.group().replace("\n", " ").replace("\r", "")
+                fixed = re.sub(r",\s*([}\]])", r"\1", fixed)  # Remove trailing commas
+                result = json.loads(fixed)
+                logger.info(f"Successfully parsed JSON after fixes")
+            except:
+                pass
+    else:
+        logger.warning(f"No JSON object found in response. Full cleaned text: {cleaned[:500]}")
+    
     return ocr_text, result
 
 
@@ -448,22 +530,59 @@ def process_file_batch(file_path: str, mime_type: str) -> tuple[str, list[dict]]
     ocr_text = _extract_pdf_text(file_path) if is_pdf else f"[Image — {Path(file_path).stat().st_size:,} bytes]"
 
     raw = _call_ai(BATCH_SCHEMA, file_path, mime_type)
-    raw = _clean_json(raw)
+    logger.info(f"Batch extraction raw response length: {len(raw)} chars")
+    
+    cleaned = _clean_json(raw)
+    logger.info(f"Batch cleaned response preview: {cleaned[:500]}")
 
-    arr_match = re.search(r"\[[\s\S]*\]", raw)
+    # Strategy 1: Try to find and parse JSON array
+    arr_match = re.search(r"\[[\s\S]*?\]", cleaned, re.DOTALL)
     if arr_match:
+        json_text = arr_match.group()
+        # Try multiple parsing strategies
+        for attempt, fixer in enumerate([
+            lambda x: x,  # As-is
+            lambda x: x.replace("\n", " ").replace("\r", ""),  # Remove line breaks
+            lambda x: re.sub(r",\s*([}\]])", r"\1", x),  # Remove trailing commas
+            lambda x: re.sub(r",\s*([}\]])", r"\1", x.replace("\n", " ")),  # Both fixes
+            lambda x: re.sub(r"([}\]])\s*([{\[])", r"\1,\2", x),  # Add missing commas between objects
+        ], start=1):
+            try:
+                fixed = fixer(json_text)
+                items = json.loads(fixed)
+                if isinstance(items, list) and items:
+                    logger.info(f"Successfully parsed {len(items)} items (attempt {attempt})")
+                    return ocr_text, items
+            except json.JSONDecodeError as e:
+                if attempt <= 5:
+                    logger.debug(f"Parse attempt {attempt} failed: {e}")
+                continue
+    
+    # Strategy 2: Try to extract multiple objects and combine into array
+    obj_matches = re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", cleaned)
+    objects = []
+    for match in obj_matches:
         try:
-            items = json.loads(arr_match.group())
-            if isinstance(items, list):
-                return ocr_text, items
+            obj = json.loads(match.group())
+            if isinstance(obj, dict) and obj:  # Valid non-empty dict
+                objects.append(obj)
         except json.JSONDecodeError:
-            pass
+            continue
+    
+    if objects:
+        logger.info(f"Extracted {len(objects)} objects from response")
+        return ocr_text, objects
 
-    obj_match = re.search(r"\{[\s\S]*\}", raw)
+    # Strategy 3: Fall back to single object wrapped in array
+    obj_match = re.search(r"\{[\s\S]*?\}", cleaned, re.DOTALL)
     if obj_match:
         try:
-            return ocr_text, [json.loads(obj_match.group())]
+            obj = json.loads(obj_match.group())
+            if isinstance(obj, dict) and obj:
+                logger.info(f"Parsed single object as batch, wrapping in array")
+                return ocr_text, [obj]
         except json.JSONDecodeError:
             pass
 
+    logger.warning(f"No valid JSON found in batch response. Full cleaned: {cleaned[:800]}")
     return ocr_text, []

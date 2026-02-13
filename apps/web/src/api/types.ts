@@ -182,7 +182,9 @@ export const EXPENSE_CATEGORIES = [
   'Healthcare',
   'Travel',
   'Education',
+  'School Fees',
   'Housing',
+  'Administration',
   'Bank Charges & Fees',
   'Internal Transfer',
   'Other',
@@ -195,5 +197,6 @@ export const INCOME_CATEGORIES = [
   'Business',
   'Gift',
   'Refund',
+  'Internal Transfer',
   'Other',
 ];

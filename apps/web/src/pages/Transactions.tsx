@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Plus, Trash2, Pencil, Building2, Tag } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, Trash2, Pencil, Building2, Tag, ChevronDown, X } from 'lucide-react';
 import { getTransactions, createTransaction, updateTransaction, deleteTransaction, batchUpdateCategory } from '../api/client';
 import type { Transaction, TransactionCreate } from '../api/types';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../api/types';
@@ -27,8 +27,13 @@ export function Transactions() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [filterType, setFilterType] = useState('all');
-  const [filterCategory, setFilterCategory] = useState('');
+  const [filterCategories, setFilterCategories] = useState<string[]>([]);
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const categoryDropdownRef = useRef<HTMLDivElement>(null);
   const [filterBank, setFilterBank] = useState('');
+  const [filterYear, setFilterYear] = useState('all');
+  const [filterMonth, setFilterMonth] = useState('all');
+  const [filterVendor, setFilterVendor] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -41,20 +46,35 @@ export function Transactions() {
   const [confirmTarget, setConfirmTarget] = useState<'single' | 'batch'>('single');
   const [confirmId, setConfirmId] = useState<number | null>(null);
 
+  // Derive API date range from year/month pickers or manual date inputs
+  const _apiDates = (): { start_date?: string; end_date?: string } => {
+    if (filterYear !== 'all' || filterMonth !== 'all') {
+      const y = filterYear !== 'all' ? parseInt(filterYear) : new Date().getFullYear();
+      if (filterMonth !== 'all') {
+        const m = parseInt(filterMonth);
+        const last = new Date(y, m, 0).getDate(); // last day of month
+        return {
+          start_date: `${y}-${String(m).padStart(2, '0')}-01`,
+          end_date:   `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`,
+        };
+      }
+      return { start_date: `${y}-01-01`, end_date: `${y}-12-31` };
+    }
+    return { start_date: startDate || undefined, end_date: endDate || undefined };
+  };
+
   const load = () => {
     setLoading(true);
     setSelected(new Set());
     getTransactions({
       type: filterType !== 'all' ? filterType : undefined,
-      category: filterCategory || undefined,
-      start_date: startDate || undefined,
-      end_date: endDate || undefined,
+      ..._apiDates(),
     })
       .then(setTransactions)
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, [filterType, filterCategory, startDate, endDate]);
+  useEffect(() => { load(); }, [filterType, filterYear, filterMonth, startDate, endDate]);
 
   const handleSubmit = async (rawData: TransactionCreate) => {
     setSaving(true);
@@ -147,20 +167,53 @@ export function Transactions() {
     setDialogOpen(true);
   };
 
-  const hasFilters = filterType !== 'all' || filterCategory || startDate || endDate || filterBank;
+  const hasFilters = filterType !== 'all' || filterCategories.length > 0 || startDate || endDate
+    || filterBank || filterYear !== 'all' || filterMonth !== 'all' || filterVendor;
   const clearFilters = () => {
     setFilterType('all');
-    setFilterCategory('');
+    setFilterCategories([]);
     setFilterBank('');
+    setFilterYear('all');
+    setFilterMonth('all');
+    setFilterVendor('');
     setStartDate('');
     setEndDate('');
   };
 
+  // Close category dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(e.target as Node)) {
+        setCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const toggleCategory = (cat: string) => {
+    setFilterCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
+
+  const currentYear = new Date().getFullYear();
+  const yearOptions = Array.from({ length: 5 }, (_, i) => String(currentYear - i));
+  const monthOptions = [
+    { value: '1',  label: 'January' },  { value: '2',  label: 'February' },
+    { value: '3',  label: 'March' },    { value: '4',  label: 'April' },
+    { value: '5',  label: 'May' },      { value: '6',  label: 'June' },
+    { value: '7',  label: 'July' },     { value: '8',  label: 'August' },
+    { value: '9',  label: 'September' },{ value: '10', label: 'October' },
+    { value: '11', label: 'November' }, { value: '12', label: 'December' },
+  ];
+
   const bankNames = [...new Set(transactions.map((t) => t.bank).filter(Boolean) as string[])].sort();
 
-  const visible = filterBank
-    ? transactions.filter((t) => t.bank === filterBank)
-    : transactions;
+  const visible = transactions
+    .filter((t) => !filterBank || t.bank === filterBank)
+    .filter((t) => filterCategories.length === 0 || filterCategories.includes(t.category))
+    .filter((t) => !filterVendor || (t.vendor ?? '').toLowerCase().includes(filterVendor.toLowerCase()));
 
   const allSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
   const someSelected = visible.some((t) => selected.has(t.id));
@@ -290,12 +343,59 @@ export function Transactions() {
             <SelectItem value="transfer">Transfer</SelectItem>
           </SelectContent>
         </Select>
-        <Input
-          className="w-44"
-          placeholder="Filter by category"
-          value={filterCategory}
-          onChange={(e) => setFilterCategory(e.target.value)}
-        />
+        {/* Multi-select category filter */}
+        <div ref={categoryDropdownRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setCategoryDropdownOpen((o) => !o)}
+            className="flex items-center gap-1.5 h-10 px-3 rounded-md border border-input bg-background text-sm min-w-44 text-left hover:bg-accent"
+          >
+            <span className="flex-1 truncate text-muted-foreground">
+              {filterCategories.length === 0
+                ? 'All Categories'
+                : filterCategories.length === 1
+                  ? filterCategories[0]
+                  : `${filterCategories.length} categories`}
+            </span>
+            {filterCategories.length > 0 && (
+              <X
+                className="h-3.5 w-3.5 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={(e) => { e.stopPropagation(); setFilterCategories([]); }}
+              />
+            )}
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          </button>
+          {categoryDropdownOpen && (
+            <div className="absolute top-full mt-1 left-0 z-50 w-52 rounded-md border bg-popover shadow-md max-h-72 overflow-y-auto">
+              <div className="p-1">
+                <p className="px-2 py-1 text-xs font-semibold text-muted-foreground">Expense</p>
+                {EXPENSE_CATEGORIES.map((cat) => (
+                  <label key={cat} className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-sm hover:bg-accent">
+                    <input
+                      type="checkbox"
+                      checked={filterCategories.includes(cat)}
+                      onChange={() => toggleCategory(cat)}
+                      className="h-3.5 w-3.5 rounded"
+                    />
+                    {cat}
+                  </label>
+                ))}
+                <p className="px-2 py-1 mt-1 text-xs font-semibold text-muted-foreground">Income</p>
+                {INCOME_CATEGORIES.filter((c) => !EXPENSE_CATEGORIES.includes(c)).map((cat) => (
+                  <label key={cat} className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-sm hover:bg-accent">
+                    <input
+                      type="checkbox"
+                      checked={filterCategories.includes(cat)}
+                      onChange={() => toggleCategory(cat)}
+                      className="h-3.5 w-3.5 rounded"
+                    />
+                    {cat}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         {bankNames.length > 0 && (
           <Select value={filterBank || 'all'} onValueChange={(v) => setFilterBank(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-44">
@@ -309,8 +409,44 @@ export function Transactions() {
             </SelectContent>
           </Select>
         )}
-        <Input type="date" className="w-40" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-        <Input type="date" className="w-40" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        {/* Year filter */}
+        <Select value={filterYear} onValueChange={(v) => { setFilterYear(v); setStartDate(''); setEndDate(''); }}>
+          <SelectTrigger className="w-28">
+            <SelectValue placeholder="Year" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Years</SelectItem>
+            {yearOptions.map((y) => (
+              <SelectItem key={y} value={y}>{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {/* Month filter */}
+        <Select value={filterMonth} onValueChange={(v) => { setFilterMonth(v); setStartDate(''); setEndDate(''); }}>
+          <SelectTrigger className="w-32">
+            <SelectValue placeholder="Month" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Months</SelectItem>
+            {monthOptions.map((m) => (
+              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {/* Custom date range (visible only when no year/month picker is active) */}
+        {filterYear === 'all' && filterMonth === 'all' && (
+          <>
+            <Input type="date" className="w-40" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <Input type="date" className="w-40" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          </>
+        )}
+        {/* Vendor / customer filter */}
+        <Input
+          className="w-44"
+          placeholder="Filter by customer"
+          value={filterVendor}
+          onChange={(e) => setFilterVendor(e.target.value)}
+        />
         {hasFilters && (
           <Button variant="ghost" size="sm" onClick={clearFilters}>
             Clear

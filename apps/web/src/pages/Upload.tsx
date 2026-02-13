@@ -244,7 +244,7 @@ export function Upload() {
             _selected: true,
             _category: finalCategory,
             _type: finalType,
-            _vendor: '',
+            _vendor: tx.vendor || '',
             _description: tx.description,
           };
         })
