@@ -112,15 +112,7 @@ jobs:
             echo "  [attempt $i] raw: $BODY"
 
             # Extract status — handles both {"status":"..."} and {"deploy":{"status":"..."}}
-            STATUS=$(echo "$BODY" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(d.get('deploy', d).get('status', ''))
-except Exception as e:
-    print(f'parse_error: {e}', file=sys.stderr)
-    print('')
-")
+            STATUS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('deploy',d).get('status',''))" 2>/dev/null || echo "parse_error")
             echo "  [attempt $i] status: $STATUS"
             case "$STATUS" in
               live)
