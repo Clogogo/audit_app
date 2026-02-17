@@ -25,6 +25,8 @@ with engine.connect() as _conn:
         "ALTER TABLE bank_accounts ADD COLUMN opening_balance FLOAT",
         "ALTER TABLE bank_accounts ADD COLUMN closing_balance FLOAT",
         "ALTER TABLE bank_accounts ADD COLUMN last_statement_date DATE",
+        "ALTER TABLE bank_statements ADD COLUMN bank_account_id INTEGER",
+        "ALTER TABLE bank_transactions ADD COLUMN bank_account_id INTEGER",
     ]:
         try:
             _conn.execute(text(_col_sql))
