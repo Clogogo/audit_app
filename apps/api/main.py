@@ -106,7 +106,6 @@ def health():
             "max_file_size": "50MB"
         }
     }
-    
     # Return response wrapped with cache-control headers
     return Response(
         content=json.dumps(response),
