@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  # ── Lint & build frontend ──────────────────────────────────────────────────
+  # ── Build & type-check frontend ────────────────────────────────────────────
   check-frontend:
     name: Frontend — build
     runs-on: ubuntu-latest
@@ -18,12 +18,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx nx run web:build
+      - name: Build
+        run: npx nx run web:build
         env:
           NX_DAEMON: false
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
 
-  # ── Install & syntax-check backend ────────────────────────────────────────
+  # ── Install deps & syntax-check backend ───────────────────────────────────
   check-backend:
     name: Backend — checks
     runs-on: ubuntu-latest
@@ -34,11 +35,12 @@ jobs:
           python-version: '3.13'
           cache: pip
           cache-dependency-path: apps/api/requirements.txt
-      - run: pip install -r apps/api/requirements.txt
+      - name: Install dependencies
+        run: pip install -r apps/api/requirements.txt
       - name: Syntax check (all .py files)
         run: find apps/api -name "*.py" | xargs python -m py_compile
 
-  # ── Deploy frontend to Vercel ─────────────────────────────────────────────
+  # ── Deploy frontend → Vercel ──────────────────────────────────────────────
   deploy-frontend:
     name: Deploy → Vercel
     needs: check-frontend
@@ -68,12 +70,42 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
-  # ── Deploy backend to Render ──────────────────────────────────────────────
+  # ── Deploy backend → Render ────────────────────────────────────────────────
   deploy-backend:
     name: Deploy → Render
     needs: check-backend
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - name: Trigger Render deploy hook
-        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+      - name: Trigger deploy hook
+        id: trigger
+        run: |
+          RESPONSE=$(curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+          echo "$RESPONSE"
+          DEPLOY_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for deploy to go live
+        run: |
+          DEPLOY_ID="${{ steps.trigger.outputs.deploy_id }}"
+          echo "Polling deploy $DEPLOY_ID ..."
+          for i in $(seq 1 40); do
+            STATUS=$(curl -fsS \
+              -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+              "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+            echo "  [attempt $i] status: $STATUS"
+            case "$STATUS" in
+              live)
+                echo "Deploy succeeded."
+                exit 0
+                ;;
+              build_failed|deactivated|canceled)
+                echo "Deploy failed with status: $STATUS"
+                exit 1
+                ;;
+            esac
+            sleep 15
+          done
+          echo "Timed out after 10 min waiting for Render deploy."
+          exit 1
