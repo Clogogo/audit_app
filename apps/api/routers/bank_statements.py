@@ -1151,13 +1151,71 @@ def _dedup_rows(rows: list[dict]) -> list[dict]:
 
 def _parse_pdf_statement(file_path: str) -> list[dict]:
     """
-    Multi-strategy PDF parser.
-    1. Table extraction (pdfplumber tables)
-    2. Moniepoint multi-line text extraction (handles 1-row-per-table PDFs where some
-       transactions are in bordered cells and others are plain text)
-    3. Generic text heuristic fallback
-    4. AI chunk-based fallback (last resort)
+    Enhanced PDF bank statement parser with improved accuracy.
+    
+    Strategy:
+    1. Use advanced PDF table extraction with structure detection
+    2. Extract metadata (account number, balances, bank name, period)
+    3. Validate transactions against running balances
+    4. Fallback to text-based extraction for scanned PDFs
     """
+    try:
+        from pdf_extraction import extract_bank_statement_pdf, PDFExtractionError
+        
+        logger.info("Using enhanced PDF extraction method")
+        metadata, transactions = extract_bank_statement_pdf(file_path)
+        
+        logger.info(
+            f"Enhanced PDF extraction: {len(transactions)} transactions, "
+            f"bank={metadata.bank_name}, account={metadata.account_number}"
+        )
+        
+        rows = []
+        for tx in transactions:
+            # Determine transaction type
+            tx_type = tx.get("amount_type", "credit")
+            if tx_type not in ("debit", "credit"):
+                tx_type = "credit"
+            
+            row = {
+                "date":             tx.get("date"),
+                "description":      tx.get("description", ""),
+                "amount":           tx.get("amount", 0),
+                "transaction_type": tx_type,
+                "reference":        tx.get("reference"),
+                "vendor":           None,
+            }
+            
+            # Extract vendor from description if available
+            if row["description"]:
+                vendor_patterns = [
+                    r"Transfer\s+to\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+                    r"Payment\s+to\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+                    r"Transfer\s+from\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+                    r"Received\s+from\s+([A-Z][A-Z\s]+?)(?:\s+\||$)",
+                ]
+                for pattern in vendor_patterns:
+                    m = re.search(pattern, row["description"], re.IGNORECASE)
+                    if m:
+                        row["vendor"] = m.group(1).strip()
+                        break
+            
+            # Skip rows without date or amount
+            if row["date"] and row["amount"]:
+                rows.append(row)
+        
+        if rows:
+            rows.sort(key=lambda r: r["date"])
+            return _dedup_rows(rows)
+        else:
+            logger.info("Enhanced extraction found no transactions, falling back to legacy methods")
+    
+    except ImportError:
+        logger.warning("pdf_extraction module not available, using legacy parsing")
+    except Exception as e:
+        logger.warning(f"Enhanced PDF extraction failed: {e}, falling back to legacy methods")
+    
+    # ── Fallback to legacy multi-strategy parser ──────────────────────────────
     table_rows: list[dict] = []
     monie_rows: list[dict] = []
     text_rows:  list[dict] = []
@@ -1175,11 +1233,7 @@ def _parse_pdf_statement(file_path: str) -> list[dict]:
         logger.warning(f"PDF Moniepoint text parser failed: {e}")
 
     # If Moniepoint text parser found transactions, use it as the primary source
-    # (it captures ALL transactions including those not in bordered table cells)
     if monie_rows:
-        # Merge: Moniepoint text is the base; add any table rows not already covered
-        # by (date, amount, tx_type) — this adds any bordered-cell transactions that
-        # the text parser might have missed due to multi-line narration obfuscation
         existing = {(r["date"], round(r["amount"], 2), r["transaction_type"]) for r in monie_rows}
         for r in table_rows:
             key = (r["date"], round(r["amount"], 2), r["transaction_type"])

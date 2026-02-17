@@ -3,6 +3,7 @@ node_modules/
 dist/
 .cache/
 *.local
+.md
 
 # Vite
 vite.config.*.timestamp*
@@ -47,5 +48,12 @@ uploads/
 Thumbs.db
 *.swp
 *.swo
+
+# ── Documentation (Development Only) ──────────────────────────────────────────
+EXTRACTION_IMPROVEMENTS.md
+EXTRACTION_ENHANCEMENT_SUMMARY.md
+EXTRACTION_QUICK_REFERENCE.md
+DEPLOYMENT_GUIDE.md
+README_EXTRACTION_ENHANCEMENT.md
 .idea/
 .vscode/
