@@ -1211,8 +1211,8 @@ def _parse_pdf_statement(file_path: str) -> list[dict]:
     if text_rows:
         return text_rows
 
-    # ── AI fallback (chunked, uses _call_ai which supports Gemini) ────────────
-    logger.info("Falling back to AI-based PDF parsing (Ollama → Gemini if needed)")
+    # ── AI fallback (chunked, Gemini) ─────────────────────────────────────────
+    logger.info("Falling back to AI-based PDF parsing via Gemini")
     text = ai_worker._extract_pdf_text(file_path)
     if not text:
         return []
@@ -1236,17 +1236,8 @@ def _parse_pdf_statement(file_path: str) -> list[dict]:
             "If no transactions are found in this chunk, return []\n\n"
             f"Statement text:\n{chunk}"
         )
-        # Write chunk to a temp text file so _call_ai can route it correctly
-        import tempfile, os as _os
-        tmp_path = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt", delete=False, encoding="utf-8"
-            ) as tmp:
-                tmp.write(prompt)
-                tmp_path = tmp.name
-
-            raw = ai_worker._call_ai(prompt, file_path, "application/pdf")
+            raw = ai_worker.call_ai_text(prompt)
             raw = ai_worker._clean_json(raw)
             arr_match = re.search(r"\[[\s\S]*\]", raw)
             if arr_match:
@@ -1265,9 +1256,6 @@ def _parse_pdf_statement(file_path: str) -> list[dict]:
                         continue
         except Exception as e:
             logger.warning(f"AI chunk offset={offset} failed: {e}")
-        finally:
-            if tmp_path and _os.path.exists(tmp_path):
-                _os.unlink(tmp_path)
 
         offset += chunk_size - overlap
         if offset >= len(text):
