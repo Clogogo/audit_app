@@ -56,8 +56,8 @@ _frontend_url = _os.getenv("FRONTEND_URL", "").strip()
 if _frontend_url:
     _origins.append(_frontend_url.rstrip("/"))
 
-# Also allow any HTTPS origin in production (Vercel, etc.)
-_allow_origins = _origins if not _os.getenv("RENDER") else ["*"]
+# In production (Render), allow all HTTPS origins for cross-origin frontend access
+_allow_origins = ["*"] if _os.getenv("RENDER") else _origins
 
 app.add_middleware(
     CORSMiddleware,
