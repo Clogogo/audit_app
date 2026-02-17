@@ -34,7 +34,9 @@ class AIProviderError(Exception):
 # ── Configuration ────────────────────────────────────────────────────────────
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen3-vl-30b-a3b-thinking")
+# Fast free vision model — stays well within Render's 60s edge timeout
+# Override via OPENROUTER_MODEL env var if needed
+OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-11b-vision-instruct:free")
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 PDF_VISION_MAX_PAGES = int(os.getenv("PDF_VISION_MAX_PAGES", "3"))
@@ -231,8 +233,8 @@ def _build_messages(
     if "pdf" in mime_type.lower():
         text = pre_extracted_pdf_text if pre_extracted_pdf_text is not None else _extract_pdf_text(file_path)
         if text and len(text) >= 50:
-            # Text-based PDF — send as plain text (up to 15000 chars to cover large statements)
-            combined = f"{prompt}\n\nDocument text:\n{text[:15000]}"
+            # Text-based PDF — cap at 8000 chars to avoid slow AI responses that hit edge timeouts
+            combined = f"{prompt}\n\nDocument text:\n{text[:8000]}"
             return [{"role": "user", "content": combined}]
         # Scanned / image-only PDF — render pages with PyMuPDF and send as images
         logger.info("Text extraction insufficient; falling back to PyMuPDF vision rendering")
