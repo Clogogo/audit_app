@@ -78,7 +78,7 @@ class BankStatement(Base):
     __tablename__ = "bank_statements"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    bank_account_id: Mapped[int] = mapped_column(Integer, ForeignKey("bank_accounts.id"), index=True)
+    bank_account_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("bank_accounts.id"), nullable=True, index=True)
     bank_name: Mapped[str] = mapped_column(String(200))
     account_last4: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     statement_period_start: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
@@ -88,7 +88,7 @@ class BankStatement(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | reconciled
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    bank_account: Mapped[BankAccount] = relationship("BankAccount", back_populates="statements")
+    bank_account: Mapped[Optional["BankAccount"]] = relationship("BankAccount", back_populates="statements")
     bank_transactions: Mapped[list["BankTransaction"]] = relationship("BankTransaction", back_populates="statement", cascade="all, delete-orphan")
 
 
@@ -96,7 +96,7 @@ class BankTransaction(Base):
     __tablename__ = "bank_transactions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    bank_account_id: Mapped[int] = mapped_column(Integer, ForeignKey("bank_accounts.id"), index=True)
+    bank_account_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("bank_accounts.id"), nullable=True, index=True)
     statement_id: Mapped[int] = mapped_column(Integer, ForeignKey("bank_statements.id"))
     date: Mapped[date] = mapped_column(Date, index=True)
     description: Mapped[str] = mapped_column(String(500))
@@ -112,7 +112,7 @@ class BankTransaction(Base):
     suggested_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    bank_account: Mapped[BankAccount] = relationship("BankAccount", back_populates="transactions")
+    bank_account: Mapped[Optional["BankAccount"]] = relationship("BankAccount", back_populates="transactions")
     statement: Mapped[BankStatement] = relationship("BankStatement", back_populates="bank_transactions")
     matched_transaction: Mapped[Optional[Transaction]] = relationship("Transaction", back_populates="bank_match")
 

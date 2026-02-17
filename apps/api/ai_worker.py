@@ -66,7 +66,7 @@ Use null for any field you cannot clearly see in the document — do NOT guess o
   "vendor": "<business or person name>",
   "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
 Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, \
-Salary, Freelance, Investment, Business, Other>",
+Salary, Freelance, Investment, Business, Loans, Other>",
   "type": "<expense or income>",
   "description": "<one short sentence describing what was paid for>"
 }
@@ -87,7 +87,7 @@ Use null for any field you cannot clearly see — do NOT guess or invent values.
     "vendor": "<payer name, student name, or party name>",
     "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
 Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, \
-Salary, Freelance, Investment, Business, Other>",
+Salary, Freelance, Investment, Business, Loans, Other>",
     "type": "<expense or income>",
     "description": "<brief description of this specific entry>",
     "reference": "<receipt number, transaction ID, or row reference if visible>"

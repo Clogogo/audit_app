@@ -168,19 +168,25 @@ _TRANSFER_KEYWORDS = [
 
 # (category, forced_type) pairs — checked first for income-only categories
 _INCOME_KEYWORD_MAP: list[tuple[str, list[str]]] = [
-    ("Salary",     ["salary", "salaries", "payroll", "monthly pay", "remuneration",
-                    "staff pay", "wages", "pay day",
-                    "(salary)", "(january", "(february", "(march", "(april",
-                    "(may", "(june", "(july", "(august", "(september",
-                    "(october", "(november", "(december"]),
-    ("Investment", ["interest earn", "owealth interest", "investment income", "dividend",
-                    "fixed deposit return", "savings interest", "interest credit",
-                    "treasury", "lien release", "yield"]),
-    ("Freelance",  ["freelance", "upwork", "fiverr", "gig income", "contract pay"]),
-    ("Gift",       ["gift received", "cash gift"]),
-    ("Refund",     ["refund", "reversal", "chargeback", "return credit",
-                    "clawback reversal"]),
-    ("Business",   ["sales proceed", "business income", "revenue credit"]),
+    ("Salary",      ["salary", "salaries", "payroll", "monthly pay", "remuneration",
+                     "staff pay", "wages", "pay day",
+                     "(salary)", "(january", "(february", "(march", "(april",
+                     "(may", "(june", "(july", "(august", "(september",
+                     "(october", "(november", "(december"]),
+    ("Investment",  ["interest earn", "owealth interest", "investment income", "dividend",
+                     "fixed deposit return", "savings interest", "interest credit",
+                     "treasury", "lien release", "yield"]),
+    ("Freelance",   ["freelance", "upwork", "fiverr", "gig income", "contract pay"]),
+    ("Gift",        ["gift received", "cash gift"]),
+    ("Refund",      ["refund", "reversal", "chargeback", "return credit",
+                     "clawback reversal"]),
+    ("Business",    ["sales proceed", "business income", "revenue credit"]),
+    # School Fees income: "Transfer from" / "Received from" credits are school fee payments
+    # received by the school from parents/students — these are unambiguously credits.
+    # Regular "school fees" keyword is handled by _NEUTRAL_KEYWORD_MAP (direction-aware).
+    ("School Fees", ["transfer from", "received from"]),
+    ("Loans",       ["loan received", "loan credit", "loan disbursement",
+                     "credit facility", "overdraft credit"]),
 ]
 
 # Expense/neutral categories (type follows the bank direction — debit=expense, credit=income)
@@ -234,6 +240,9 @@ _NEUTRAL_KEYWORD_MAP: list[tuple[str, list[str]]] = [
                               "technician", "mechanic", "electrician", "plumber",
                               "renovation", "fix", "overhaul", "refurbish"]),
     ("Internal Transfer",   ["auto-save", "owealth"]),
+    ("Loans",               ["loan repayment", "loan payment", "loan deduction",
+                              "repayment of loan", "loan recovery", "debt repayment",
+                              "advance repayment", "loan charge"]),
 ]
 
 
@@ -282,7 +291,7 @@ _VALID_CATEGORIES = {
     "Food & Dining", "Transportation", "Shopping", "Entertainment",
     "Bills & Utilities", "Healthcare", "Travel", "Education", "School Fees",
     "Housing", "Administration", "Repairs",
-    "Salary", "Freelance", "Investment", "Business",
+    "Salary", "Freelance", "Investment", "Business", "Loans",
     "Bank Charges & Fees", "Internal Transfer", "Refund", "Gift", "Other",
 }
 
@@ -319,7 +328,7 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         '  {"i": <index>, "category": "<category>", "type": "<expense|income|transfer>"}\n\n'
         "Valid categories: Food & Dining, Transportation, Shopping, Entertainment, "
         "Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, "
-        "Salary, Freelance, Investment, Business, Bank Charges & Fees, Internal Transfer, Refund, Gift, Other\n\n"
+        "Salary, Freelance, Investment, Business, Loans, Bank Charges & Fees, Internal Transfer, Refund, Gift, Other\n\n"
         "Rules:\n"
         "- 'salary', 'payroll' → Salary / income\n"
         "- 'electricity', 'nepa', 'dstv', 'airtime', 'internet' → Bills & Utilities / expense\n"
@@ -327,7 +336,10 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         "- 'auto-save', 'owealth', 'own account', 'inter-account', 'wallet transfer' → Internal Transfer / transfer\n"
         "- 'refund', 'reversal' → Refund / income\n"
         "- 'bank charge', 'stamp duty', 'commission' → Bank Charges & Fees / expense\n"
-        "- 'Transfer from PERSON_NAME' or 'Received from PERSON_NAME' = payment received from an external person → income (NOT transfer)\n"
+        "- 'loan repayment', 'loan deduction', 'debt repayment', 'advance repayment' → Loans / expense\n"
+        "- 'loan received', 'loan disbursement', 'credit facility', 'loan credit' → Loans / income\n"
+        "- 'Transfer from PERSON_NAME' or 'Received from PERSON_NAME' = school fee payment received → School Fees / income\n"
+        "- 'school fees', 'school fee', 'tuition fee', 'sch fees' → School Fees\n"
         "- Debits (dir=debit) are usually expenses; credits (dir=credit) are usually income\n"
         "- IMPORTANT: Only use type=transfer for movements between the account owner's OWN accounts (e.g. own account, inter-account, wallet). A credit received from another person is INCOME, not transfer.\n"
         "- Only extract data visible in the description. Do NOT guess.\n\n"
