@@ -56,12 +56,10 @@ _frontend_url = _os.getenv("FRONTEND_URL", "").strip()
 if _frontend_url:
     _origins.append(_frontend_url.rstrip("/"))
 
-# In production (Render), allow all HTTPS origins for cross-origin frontend access
-_allow_origins = ["*"] if _os.getenv("RENDER") else _origins
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allow_origins,
+    allow_origins=_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

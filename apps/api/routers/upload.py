@@ -134,10 +134,17 @@ async def upload_batch(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    if file.content_type not in ALLOWED_TYPES:
+    file_ext = Path(file.filename or "").suffix.lower()
+    if file.content_type not in ALLOWED_TYPES and file_ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"Unsupported file type: {file.content_type}")
 
     contents = await file.read()
+    if len(contents) > 50 * 1024 * 1024:
+        raise HTTPException(413, detail="File too large. Maximum size: 50MB")
+
+    if len(contents) == 0:
+        raise HTTPException(400, detail="Empty file uploaded")
+
     stored_path = _save_file(contents, file.filename or "file")
     try:
         ocr_text, items = ai_worker.process_file_batch(str(stored_path), file.content_type or "")
@@ -145,6 +152,8 @@ async def upload_batch(
         raise HTTPException(429, detail=str(e))
     except AIProviderError as e:
         raise HTTPException(503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(500, detail=f"Error processing batch upload: {str(e)}")
 
     record = UploadedFile(
         original_name=file.filename or stored_path.name,
