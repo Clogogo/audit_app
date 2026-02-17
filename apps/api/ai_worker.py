@@ -1,7 +1,7 @@
 """
-AI Worker — Google Gemini provider
-  Model: gemini-2.0-flash  (GEMINI_MODEL env var to override)
-  Requires: GEMINI_API_KEY environment variable
+AI Worker — OpenRouter provider
+  Model: qwen/qwen2.5-vl-72b-instruct:free  (OPENROUTER_MODEL env var to override)
+  Requires: OPENROUTER_API_KEY environment variable
 
 Two extraction modes:
   process_file()       → single transaction  (receipts)
@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 # ── Custom exceptions ────────────────────────────────────────────────────────
 
-class GeminiRateLimitError(Exception):
-    """Raised when Gemini returns HTTP 429."""
+class OpenRouterRateLimitError(Exception):
+    """Raised when OpenRouter returns HTTP 429."""
 
 
 class AIProviderError(Exception):
@@ -33,27 +33,24 @@ class AIProviderError(Exception):
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-GEMINI_ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_MODEL}:generateContent?key={{api_key}}"
-)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen2.5-vl-72b-instruct:free")
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
-# Rate limiter — gemini-2.0-flash free tier: 15 RPM
-_GEMINI_INTERVAL = 4.5
-_gemini_lock     = threading.Lock()
-_gemini_last: float = 0.0
+# Rate limiter — free tier: 20 RPM → 3s between requests
+_OR_INTERVAL   = 3.0
+_or_lock       = threading.Lock()
+_or_last: float = 0.0
 
 
-def _gemini_acquire() -> None:
-    global _gemini_last
-    with _gemini_lock:
-        wait = _GEMINI_INTERVAL - (time.monotonic() - _gemini_last)
+def _or_acquire() -> None:
+    global _or_last
+    with _or_lock:
+        wait = _OR_INTERVAL - (time.monotonic() - _or_last)
         if wait > 0:
-            logger.info(f"Gemini rate-limiter: sleeping {wait:.1f}s")
+            logger.info(f"OpenRouter rate-limiter: sleeping {wait:.1f}s")
             time.sleep(wait)
-        _gemini_last = time.monotonic()
+        _or_last = time.monotonic()
 
 
 # ── Shared prompt schemas ────────────────────────────────────────────────────
@@ -167,79 +164,98 @@ def _extract_pdf_text_ocr(file_path: str) -> str:
         return ""
 
 
-# ── Gemini provider ──────────────────────────────────────────────────────────
+# ── OpenRouter provider ───────────────────────────────────────────────────────
 
-def _gemini_parts_for(file_path: str, mime_type: str) -> list[dict]:
-    """Build the Gemini content parts list for the given file."""
+def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -> list[dict]:
+    """
+    Build the OpenAI-style messages list.
+    - PDF: extract text, send as plain text message
+    - Image: send as base64 image_url content part
+    - None (text-only): send prompt as plain text
+    """
+    if file_path is None or mime_type is None:
+        return [{"role": "user", "content": prompt}]
+
     if "pdf" in mime_type.lower():
         text = _extract_pdf_text(file_path)
-        return [{"text": f"\n\nDocument text:\n{text[:4000]}"}] if text else []
-    else:
-        b64 = _read_image_b64(file_path)
-        return [{"inline_data": {"mime_type": mime_type, "data": b64}}]
+        if not text:
+            return []
+        combined = f"{prompt}\n\nDocument text:\n{text[:6000]}"
+        return [{"role": "user", "content": combined}]
+
+    # Image — use vision content parts
+    b64 = _read_image_b64(file_path)
+    return [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}},
+        ],
+    }]
 
 
-def _call_gemini(prompt: str, parts: list[dict]) -> str:
+def _call_openrouter(messages: list[dict]) -> str:
     """
-    Call Gemini API with the given prompt and content parts.
-    Raises GeminiRateLimitError on HTTP 429.
+    Call OpenRouter API.
+    Raises OpenRouterRateLimitError on HTTP 429.
     Returns raw text response or "" on failure.
     """
-    if not GEMINI_API_KEY:
+    if not OPENROUTER_API_KEY:
         raise AIProviderError(
-            "GEMINI_API_KEY is not set. Add it to your environment variables."
+            "OPENROUTER_API_KEY is not set. Add it to your environment variables."
         )
 
-    _gemini_acquire()
+    _or_acquire()
 
-    url = GEMINI_ENDPOINT.format(api_key=GEMINI_API_KEY)
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://audit-app-yw5z.onrender.com",
+        "X-Title": "FinanceAudit",
+    }
     body = {
-        "contents": [{"parts": [{"text": prompt}] + parts}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
+        "model": OPENROUTER_MODEL,
+        "messages": messages,
+        "temperature": 0.1,
+        "max_tokens": 4096,
     }
     try:
-        with httpx.Client(timeout=60.0) as c:
-            resp = c.post(url, json=body)
+        with httpx.Client(timeout=90.0) as c:
+            resp = c.post(OPENROUTER_ENDPOINT, headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()
         text = (
-            data.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
         )
-        logger.info(f"Gemini response preview: {text[:200]}...")
+        logger.info(f"OpenRouter response preview: {text[:200]}...")
         return text
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 429:
-            raise GeminiRateLimitError(
-                "Gemini rate limit reached. Please wait a moment and try again."
+            raise OpenRouterRateLimitError(
+                "Rate limit reached. Please wait a moment and try again."
             )
-        logger.error(f"Gemini HTTP error {e.response.status_code}: {e.response.text[:300]}")
+        logger.error(f"OpenRouter HTTP error {e.response.status_code}: {e.response.text[:300]}")
         return ""
-    except GeminiRateLimitError:
+    except OpenRouterRateLimitError:
         raise
     except Exception as e:
-        logger.error(f"Gemini call failed: {e}")
+        logger.error(f"OpenRouter call failed: {e}")
         return ""
-
-
-def _contains_json(text: str) -> bool:
-    """Return True if text contains at least one JSON array or object."""
-    return bool(re.search(r"[\[{]", _clean_json(text)))
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def get_provider_status() -> dict:
     """Return current provider availability for the health endpoint."""
-    configured = bool(GEMINI_API_KEY)
+    configured = bool(OPENROUTER_API_KEY)
     return {
-        "provider": f"Google Gemini ({GEMINI_MODEL})" if configured else "None",
-        "model": GEMINI_MODEL if configured else "",
+        "provider": f"OpenRouter / {OPENROUTER_MODEL}" if configured else "None",
+        "model": OPENROUTER_MODEL if configured else "",
         "configured": configured,
         "ollama_available": False,
-        "gemini_configured": configured,
+        "gemini_configured": False,
     }
 
 
@@ -248,12 +264,12 @@ def process_file(file_path: str, mime_type: str) -> tuple[str, dict]:
     is_pdf = "pdf" in mime_type.lower()
     ocr_text = _extract_pdf_text(file_path) if is_pdf else f"[Image — {Path(file_path).stat().st_size:,} bytes]"
 
-    parts = _gemini_parts_for(file_path, mime_type)
-    if not parts:
+    messages = _build_messages(SINGLE_SCHEMA, file_path, mime_type)
+    if not messages:
         logger.warning("No content parts extracted from file")
         return ocr_text, {}
 
-    raw = _call_gemini(SINGLE_SCHEMA, parts)
+    raw = _call_openrouter(messages)
     logger.info(f"Raw AI response length: {len(raw)} chars")
 
     cleaned = _clean_json(raw)
@@ -287,11 +303,11 @@ def process_file_batch(file_path: str, mime_type: str) -> tuple[str, list[dict]]
     is_pdf = "pdf" in mime_type.lower()
     ocr_text = _extract_pdf_text(file_path) if is_pdf else f"[Image — {Path(file_path).stat().st_size:,} bytes]"
 
-    parts = _gemini_parts_for(file_path, mime_type)
-    if not parts:
+    messages = _build_messages(BATCH_SCHEMA, file_path, mime_type)
+    if not messages:
         return ocr_text, []
 
-    raw = _call_gemini(BATCH_SCHEMA, parts)
+    raw = _call_openrouter(messages)
     logger.info(f"Batch extraction raw response length: {len(raw)} chars")
 
     cleaned = _clean_json(raw)
@@ -349,34 +365,17 @@ def call_ai_text(prompt: str) -> str:
     Text-only AI call (no file). Used for categorisation and other text tasks.
     Returns "" on failure — never raises.
     """
-    if not GEMINI_API_KEY:
-        logger.warning("GEMINI_API_KEY not set; text-only AI call skipped")
+    if not OPENROUTER_API_KEY:
+        logger.warning("OPENROUTER_API_KEY not set; text-only AI call skipped")
         return ""
 
-    _gemini_acquire()
-    url = GEMINI_ENDPOINT.format(api_key=GEMINI_API_KEY)
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
-    }
     try:
-        with httpx.Client(timeout=60.0) as c:
-            resp = c.post(url, json=body)
-            resp.raise_for_status()
-            data = resp.json()
-        return (
-            data.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 429:
-            logger.warning("Gemini rate limit on text-only call — skipping")
-        else:
-            logger.error(f"Gemini text-only error {e.response.status_code}: {e.response.text[:200]}")
+        messages = _build_messages(prompt, None, None)
+        return _call_openrouter(messages)
+    except OpenRouterRateLimitError:
+        logger.warning("OpenRouter rate limit on text-only call — skipping")
     except Exception as e:
-        logger.error(f"Gemini text-only call failed: {e}")
+        logger.error(f"OpenRouter text-only call failed: {e}")
     return ""
 
 

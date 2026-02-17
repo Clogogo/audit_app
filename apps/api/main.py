@@ -1,5 +1,5 @@
 from dotenv import load_dotenv
-load_dotenv()  # loads apps/api/.env → sets GEMINI_API_KEY in os.environ
+load_dotenv()  # loads apps/api/.env → sets OPENROUTER_API_KEY in os.environ
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

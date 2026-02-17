@@ -162,7 +162,7 @@ export function Upload() {
       if (status === 429) {
         setUploadError(detail ?? 'Rate limit reached. Please wait and retry.');
       } else if (status === 503) {
-        setUploadError('AI not available. Check your GEMINI_API_KEY.');
+        setUploadError('AI not available. Check your OPENROUTER_API_KEY.');
       } else {
         setUploadError('Failed to process file. Check the format and try again.');
       }
@@ -313,7 +313,7 @@ export function Upload() {
             aiReady ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'
           }`}>
             {aiReady ? <Zap className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
-            {aiReady ? `${aiStatus.model} ready` : 'Gemini key not set'}
+            {aiReady ? `${aiStatus.model} ready` : 'OPENROUTER_API_KEY not set'}
           </div>
         )}
       </div>
