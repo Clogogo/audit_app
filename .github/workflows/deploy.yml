@@ -82,7 +82,8 @@ jobs:
         run: |
           RESPONSE=$(curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
           echo "$RESPONSE"
-          DEPLOY_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          # Hook returns {"deploy":{"id":"dep-..."}} — extract the nested id
+          DEPLOY_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['deploy']['id'])")
           echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
 
       - name: Wait for deploy to go live
@@ -90,10 +91,11 @@ jobs:
           DEPLOY_ID="${{ steps.trigger.outputs.deploy_id }}"
           echo "Polling deploy $DEPLOY_ID ..."
           for i in $(seq 1 40); do
+            # API returns {"deploy":{"status":"..."}} or {"status":"..."} — handle both
             STATUS=$(curl -fsS \
               -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
               "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID" \
-              | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('deploy',d).get('status',''))")
             echo "  [attempt $i] status: $STATUS"
             case "$STATUS" in
               live)
