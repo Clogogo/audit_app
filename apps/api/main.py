@@ -20,6 +20,11 @@ with engine.connect() as _conn:
         "ALTER TABLE bank_transactions ADD COLUMN suggested_category VARCHAR(100)",
         "ALTER TABLE bank_transactions ADD COLUMN suggested_type VARCHAR(20)",
         "ALTER TABLE bank_transactions ADD COLUMN vendor VARCHAR(200)",
+        "ALTER TABLE bank_accounts ADD COLUMN account_holder VARCHAR(200)",
+        "ALTER TABLE bank_accounts ADD COLUMN account_type VARCHAR(50)",
+        "ALTER TABLE bank_accounts ADD COLUMN opening_balance FLOAT",
+        "ALTER TABLE bank_accounts ADD COLUMN closing_balance FLOAT",
+        "ALTER TABLE bank_accounts ADD COLUMN last_statement_date DATE",
     ]:
         try:
             _conn.execute(text(_col_sql))

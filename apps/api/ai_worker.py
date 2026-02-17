@@ -164,6 +164,35 @@ def _extract_pdf_text_ocr(file_path: str) -> str:
         return ""
 
 
+def _pdf_pages_as_b64_images(file_path: str) -> list[tuple[str, str]]:
+    """
+    Render each PDF page to a PNG image using PyMuPDF (no poppler needed).
+    Returns list of (mime_type, base64_string) tuples, one per page.
+    Limited to first 8 pages to stay within token limits.
+    """
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(file_path)
+        images = []
+        for page_num in range(min(len(doc), 8)):
+            page = doc[page_num]
+            # 2x zoom = ~144 DPI — good quality without excessive size
+            mat = fitz.Matrix(2.0, 2.0)
+            pix = page.get_pixmap(matrix=mat)
+            png_bytes = pix.tobytes("png")
+            b64 = base64.b64encode(png_bytes).decode()
+            images.append(("image/png", b64))
+            logger.info(f"PyMuPDF rendered page {page_num + 1}/{len(doc)} ({len(png_bytes):,} bytes)")
+        doc.close()
+        return images
+    except ImportError:
+        logger.warning("PyMuPDF not installed; cannot render PDF as images")
+        return []
+    except Exception as e:
+        logger.warning(f"PyMuPDF PDF rendering failed: {e}")
+        return []
+
+
 # ── OpenRouter provider ───────────────────────────────────────────────────────
 
 def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -> list[dict]:
@@ -178,10 +207,20 @@ def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -
 
     if "pdf" in mime_type.lower():
         text = _extract_pdf_text(file_path)
-        if not text:
+        if text and len(text) >= 50:
+            # Text-based PDF — send as plain text (up to 15000 chars to cover large statements)
+            combined = f"{prompt}\n\nDocument text:\n{text[:15000]}"
+            return [{"role": "user", "content": combined}]
+        # Scanned / image-only PDF — render pages with PyMuPDF and send as images
+        logger.info("Text extraction insufficient; falling back to PyMuPDF vision rendering")
+        page_images = _pdf_pages_as_b64_images(file_path)
+        if not page_images:
+            logger.error("PyMuPDF fallback also failed — cannot process this PDF")
             return []
-        combined = f"{prompt}\n\nDocument text:\n{text[:6000]}"
-        return [{"role": "user", "content": combined}]
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for mime, b64 in page_images:
+            content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+        return [{"role": "user", "content": content}]
 
     # Image — use vision content parts
     b64 = _read_image_b64(file_path)
