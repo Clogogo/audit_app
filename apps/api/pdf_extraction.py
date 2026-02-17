@@ -13,8 +13,8 @@ from typing import Optional, Dict, List, Tuple, Any
 
 import pdfplumber
 import pandas as pd
-from pdf2image import convert_from_path
-import pytesseract
+# pdf2image and pytesseract are imported lazily inside _extract_from_ocr
+# to avoid ImportError on Render (no poppler/tesseract system binaries)
 
 logger = logging.getLogger(__name__)
 # Cache compiled regex patterns to avoid recompilation on each use
@@ -374,6 +374,12 @@ class TableExtractor:
         transactions = []
         
         try:
+            try:
+                from pdf2image import convert_from_path
+                import pytesseract
+            except ImportError:
+                logger.warning("OCR unavailable: pdf2image or pytesseract not installed (no poppler/tesseract)")
+                return []
             images = convert_from_path(self.pdf_path, dpi=200)
             
             for page_num, image in enumerate(images, 1):
