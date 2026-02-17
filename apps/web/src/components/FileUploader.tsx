@@ -5,11 +5,16 @@ import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 
 interface FileUploaderProps {
+  /** Called immediately when a file is dropped/chosen — for staging only. */
   onFileSelect: (file: File) => void;
   accept?: Record<string, string[]>;
   label?: string;
   className?: string;
   isLoading?: boolean;
+  /** If provided, the component is controlled: shows this file instead of internal state. */
+  stagedFile?: File | null;
+  /** Called when the user clicks the ✕ to clear the staged file. */
+  onClear?: () => void;
 }
 
 export function FileUploader({
@@ -21,17 +26,21 @@ export function FileUploader({
   label = 'Drop receipt or invoice here',
   className,
   isLoading,
+  stagedFile,
+  onClear,
 }: FileUploaderProps) {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [internalFile, setInternalFile] = useState<File | null>(null);
+  // Use controlled file if provided, otherwise internal
+  const selectedFile = stagedFile !== undefined ? stagedFile : internalFile;
 
   const onDrop = useCallback(
     (files: File[]) => {
       if (files[0]) {
-        setSelectedFile(files[0]);
+        if (stagedFile === undefined) setInternalFile(files[0]);
         onFileSelect(files[0]);
       }
     },
-    [onFileSelect]
+    [onFileSelect, stagedFile]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -43,7 +52,8 @@ export function FileUploader({
 
   const clear = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setSelectedFile(null);
+    setInternalFile(null);
+    onClear?.();
   };
 
   return (

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  CheckCircle, Sparkles, Zap, AlertCircle, Trash2, Plus, Save, GitMerge, FileSpreadsheet,
+  CheckCircle, Sparkles, Zap, AlertCircle, Trash2, Plus, Save, GitMerge, FileSpreadsheet, ScanLine,
 } from 'lucide-react';
 import {
   uploadBatch, confirmBatch, getFilePreviewUrl, getBankAccounts,
@@ -62,6 +62,7 @@ function detectType(desc: string, rawType: 'credit' | 'debit'): 'income' | 'expe
 export function Upload() {
   const navigate = useNavigate();
 
+  const [pendingFile, setPendingFile]         = useState<File | null>(null);
   const [uploading, setUploading]             = useState(false);
   const [rows, setRows]                       = useState<EditableRow[]>([]);
   const [saving, setSaving]                   = useState(false);
@@ -92,7 +93,19 @@ export function Upload() {
     ['text/csv', 'application/vnd.ms-excel',
      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(file.type);
 
-  const handleFileSelect = async (file: File) => {
+  /** Step 1 — user drops/picks a file: just stage it, don't process yet. */
+  const handleFileDrop = (file: File) => {
+    setPendingFile(file);
+    setUploadError(null);
+    setRows([]);
+    aiBatchRef.current = null;
+    stmtRef.current    = null;
+  };
+
+  /** Step 2 — user clicks Scan: actually call the backend. */
+  const handleScan = async () => {
+    if (!pendingFile) return;
+    const file = pendingFile;
     setUploading(true);
     setSaved(false);
     setRows([]);
@@ -246,6 +259,7 @@ export function Upload() {
 
   const reset = () => {
     setSaved(false); setRows([]); setUploadError(null);
+    setPendingFile(null);
     aiBatchRef.current = null; stmtRef.current = null;
     setImportResult(null);
   };
@@ -370,7 +384,9 @@ export function Upload() {
             </div>
 
             <FileUploader
-              onFileSelect={handleFileSelect}
+              onFileSelect={handleFileDrop}
+              stagedFile={pendingFile}
+              onClear={() => { setPendingFile(null); setUploadError(null); }}
               isLoading={uploading}
               accept={{
                 'application/pdf':   ['.pdf'],
@@ -381,10 +397,32 @@ export function Upload() {
                 'application/vnd.ms-excel': ['.xls'],
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
               }}
-              label={uploading
-                ? 'Processing…'
-                : 'Drop bank statement here — PDF, image, CSV, or Excel'}
+              label="Drop bank statement here — PDF, image, CSV, or Excel"
             />
+
+            {/* Scan button — appears once a file is staged */}
+            {pendingFile && !uploading && (
+              <div className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+                <div className="text-sm">
+                  <span className="font-medium">{pendingFile.name}</span>
+                  <span className="text-muted-foreground ml-2">
+                    ({(pendingFile.size / 1024).toFixed(1)} KB)
+                    {isStructured(pendingFile) ? ' — CSV/Excel: instant parse' : ' — PDF/Image: Qwen AI'}
+                  </span>
+                </div>
+                <Button onClick={handleScan} className="gap-2 ml-4 shrink-0">
+                  <ScanLine className="h-4 w-4" />
+                  Scan Document
+                </Button>
+              </div>
+            )}
+
+            {uploading && (
+              <div className="flex items-center gap-3 rounded-lg border border-muted px-4 py-3 text-sm text-muted-foreground animate-pulse">
+                <ScanLine className="h-4 w-4 shrink-0" />
+                Scanning with Qwen AI…
+              </div>
+            )}
 
             {/* Format hint chips */}
             <div className="flex flex-wrap gap-2 pt-1">
