@@ -79,6 +79,7 @@ export interface BankTransaction {
   amount: number;
   transaction_type: 'debit' | 'credit';
   reference?: string;
+  vendor?: string;
   matched_transaction_id?: number;
   match_status: MatchStatus;
   match_confidence?: number;
