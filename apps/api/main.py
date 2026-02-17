@@ -49,15 +49,18 @@ app = FastAPI(
 
 import os as _os
 
-_origins = ["http://localhost:4200", "http://localhost:3000"]
+_origins = ["http://localhost:4200", "http://localhost:3000", "http://localhost:5173"]
 # FRONTEND_URL is set in Render env vars to your Vercel URL
-_frontend_url = _os.getenv("FRONTEND_URL", "")
+_frontend_url = _os.getenv("FRONTEND_URL", "").strip()
 if _frontend_url:
     _origins.append(_frontend_url.rstrip("/"))
 
+# Also allow any HTTPS origin in production (Vercel, etc.)
+_allow_origins = _origins if not _os.getenv("RENDER") else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_origins,
+    allow_origins=_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
