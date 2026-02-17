@@ -15,7 +15,7 @@ from schemas import (
     BatchConfirmRequest,
 )
 import ai_worker
-from ai_worker import GeminiRateLimitError, AIProviderError
+from ai_worker import OpenRouterRateLimitError, AIProviderError
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -81,7 +81,7 @@ async def upload_file(
                        "Please ensure the file contains a clear receipt or invoice with "
                        "visible amount, date, and vendor information."
             )
-    except GeminiRateLimitError as e:
+    except OpenRouterRateLimitError as e:
         raise HTTPException(429, detail=str(e))
     except AIProviderError as e:
         raise HTTPException(503, detail=str(e))
@@ -141,7 +141,7 @@ async def upload_batch(
     stored_path = _save_file(contents, file.filename or "file")
     try:
         ocr_text, items = ai_worker.process_file_batch(str(stored_path), file.content_type or "")
-    except GeminiRateLimitError as e:
+    except OpenRouterRateLimitError as e:
         raise HTTPException(429, detail=str(e))
     except AIProviderError as e:
         raise HTTPException(503, detail=str(e))
