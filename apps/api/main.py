@@ -1,7 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()  # loads apps/api/.env → sets OPENROUTER_API_KEY in os.environ
 
-from fastapi import FastAPI
+import json
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from sqlalchemy import text
@@ -92,7 +93,7 @@ def health():
     except:
         pass
     
-    return {
+    response = {
         "status": "ok",
         "ai": ai_status,
         "ocr": {
@@ -105,3 +106,14 @@ def health():
             "max_file_size": "50MB"
         }
     }
+    
+    # Return response wrapped with cache-control headers
+    return Response(
+        content=json.dumps(response),
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
