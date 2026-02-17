@@ -387,6 +387,14 @@ export function Upload() {
               onFileSelect={handleFileDrop}
               stagedFile={pendingFile}
               onClear={() => { setPendingFile(null); setUploadError(null); }}
+              onScan={pendingFile ? handleScan : undefined}
+              scanLabel={
+                pendingFile
+                  ? isStructured(pendingFile)
+                    ? 'Parse CSV / Excel'
+                    : 'Scan with Qwen AI'
+                  : 'Scan Document'
+              }
               isLoading={uploading}
               accept={{
                 'application/pdf':   ['.pdf'],
@@ -400,27 +408,10 @@ export function Upload() {
               label="Drop bank statement here — PDF, image, CSV, or Excel"
             />
 
-            {/* Scan button — appears once a file is staged */}
-            {pendingFile && !uploading && (
-              <div className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
-                <div className="text-sm">
-                  <span className="font-medium">{pendingFile.name}</span>
-                  <span className="text-muted-foreground ml-2">
-                    ({(pendingFile.size / 1024).toFixed(1)} KB)
-                    {isStructured(pendingFile) ? ' — CSV/Excel: instant parse' : ' — PDF/Image: Qwen AI'}
-                  </span>
-                </div>
-                <Button onClick={handleScan} className="gap-2 ml-4 shrink-0">
-                  <ScanLine className="h-4 w-4" />
-                  Scan Document
-                </Button>
-              </div>
-            )}
-
             {uploading && (
               <div className="flex items-center gap-3 rounded-lg border border-muted px-4 py-3 text-sm text-muted-foreground animate-pulse">
                 <ScanLine className="h-4 w-4 shrink-0" />
-                Scanning with Qwen AI…
+                {pendingFile && isStructured(pendingFile) ? 'Parsing file…' : 'Scanning with Qwen AI…'}
               </div>
             )}
 
