@@ -255,7 +255,6 @@ def get_provider_status() -> dict:
         "model": OPENROUTER_MODEL if configured else "",
         "configured": configured,
         "ollama_available": False,
-        "gemini_configured": False,
     }
 
 

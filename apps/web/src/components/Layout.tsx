@@ -29,14 +29,14 @@ const navItems = [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
+  const [aiReady, setAiReady] = useState<boolean | null>(null);
 
-  // Poll Ollama status every 30 s
+  // Poll AI status every 30 s
   useEffect(() => {
     const check = () =>
       getHealth()
-        .then((h) => setOllamaUp(h.ai.ollama_available))
-        .catch(() => setOllamaUp(false));
+        .then((h) => setAiReady(h.ai.configured))
+        .catch(() => setAiReady(false));
     check();
     const id = setInterval(check, 30_000);
     return () => clearInterval(id);
@@ -82,20 +82,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
         {/* AI status footer */}
         <div className="px-4 py-3 border-t">
-          {ollamaUp === null ? (
+          {aiReady === null ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="h-2 w-2 rounded-full bg-muted-foreground animate-pulse" />
               Checking AI…
             </div>
-          ) : ollamaUp ? (
+          ) : aiReady ? (
             <div className="flex items-center gap-2 text-xs text-green-600">
               <Cpu className="h-3.5 w-3.5 shrink-0" />
-              <span>Ollama running</span>
+              <span>Qwen AI ready</span>
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-xs text-amber-600" title="Run: ollama serve">
+            <div className="flex items-center gap-2 text-xs text-amber-600" title="Set OPENROUTER_API_KEY">
               <WifiOff className="h-3.5 w-3.5 shrink-0" />
-              <span>Ollama offline</span>
+              <span>AI not configured</span>
             </div>
           )}
         </div>

@@ -44,7 +44,7 @@ try:
         print("\n⚠️  No transactions extracted. The AI model may need:")
         print("   - Better lighting/image quality")
         print("   - Clearer handwriting")
-        print("   - Or to fallback to Gemini API")
+        print("   - Or to fallback to OpenRouter API")
         
 except Exception as e:
     print(f"\n❌ Error: {e}")

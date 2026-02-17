@@ -167,7 +167,6 @@ export interface HealthStatus {
     model: string;
     configured: boolean;
     ollama_available: boolean;
-    gemini_configured: boolean;
   };
 }
 export const getHealth = () => api.get<HealthStatus>('/health').then(unwrap);

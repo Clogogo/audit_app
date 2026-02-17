@@ -305,7 +305,7 @@ export function Upload() {
             AI Document Import
           </h1>
           <p className="text-muted-foreground mt-1">
-            Upload a bank statement — PDF and images use Gemini AI; CSV and Excel are parsed instantly.
+            Upload a bank statement — PDF and images use Qwen AI (OpenRouter); CSV and Excel are parsed instantly.
           </p>
         </div>
         {aiStatus && (
@@ -335,7 +335,7 @@ export function Upload() {
           <CardHeader>
             <CardTitle className="text-base">Upload Bank Statement</CardTitle>
             <CardDescription>
-              Accepts <span className="font-medium">PDF · PNG · JPG</span> (Gemini AI extracts transactions)
+              Accepts <span className="font-medium">PDF · PNG · JPG</span> (Qwen AI extracts transactions)
               or <span className="font-medium">CSV · Excel</span> (parsed instantly, no AI needed).
             </CardDescription>
           </CardHeader>
@@ -389,10 +389,10 @@ export function Upload() {
             {/* Format hint chips */}
             <div className="flex flex-wrap gap-2 pt-1">
               <span className="flex items-center gap-1 text-xs text-muted-foreground bg-muted rounded-full px-2.5 py-1">
-                <Sparkles className="h-3 w-3 text-primary" /> PDF → Gemini AI
+                <Sparkles className="h-3 w-3 text-primary" /> PDF → Qwen AI
               </span>
               <span className="flex items-center gap-1 text-xs text-muted-foreground bg-muted rounded-full px-2.5 py-1">
-                <Sparkles className="h-3 w-3 text-primary" /> Image → Gemini AI
+                <Sparkles className="h-3 w-3 text-primary" /> Image → Qwen AI
               </span>
               <span className="flex items-center gap-1 text-xs text-muted-foreground bg-muted rounded-full px-2.5 py-1">
                 <FileSpreadsheet className="h-3 w-3" /> CSV → instant parse

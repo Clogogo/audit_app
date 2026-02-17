@@ -1265,8 +1265,8 @@ def _parse_pdf_statement(file_path: str) -> list[dict]:
     if text_rows:
         return text_rows
 
-    # ── AI fallback (chunked, Gemini) ─────────────────────────────────────────
-    logger.info("Falling back to AI-based PDF parsing via Gemini")
+    # ── AI fallback (chunked, OpenRouter/Qwen) ────────────────────────────────
+    logger.info("Falling back to AI-based PDF parsing via OpenRouter")
     text = ai_worker._extract_pdf_text(file_path)
     if not text:
         return []
