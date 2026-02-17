@@ -25,6 +25,7 @@ from schemas import (
     StatementImportItem, StatementImportRequest, StatementImportResult, TransactionOut,
 )
 import ai_worker
+import bank_account_service
 
 router = APIRouter(prefix="/bank-statements", tags=["bank-statements"])
 
@@ -1339,6 +1340,10 @@ async def upload_bank_statement(
     bank_name: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    """
+    Upload a bank statement file (CSV, Excel, or PDF).
+    Automatically extracts transactions and links them to a bank account.
+    """
     contents  = await file.read()
     file_type = _detect_file_type(file.content_type or "", file.filename or "")
 
@@ -1347,12 +1352,24 @@ async def upload_bank_statement(
     stored_path = UPLOAD_DIR / stored_name
     stored_path.write_bytes(contents)
 
+    # Extract transactions
     if file_type == "csv":
         rows = _parse_csv(contents)
+        metadata = None
     elif file_type == "excel":
         rows = _parse_excel(contents)
+        metadata = None
     else:
-        rows = _parse_pdf_statement(str(stored_path))
+        # For PDFs, also extract metadata (account info)
+        from pdf_extraction import extract_bank_statement_pdf
+        try:
+            extracted = extract_bank_statement_pdf(str(stored_path), cleanup=False)
+            rows = extracted["transactions"]
+            metadata = extracted.get("metadata")
+        except Exception as e:
+            logger.warning(f"PDF extraction failed: {e}, falling back to text extraction")
+            rows = _parse_pdf_statement(str(stored_path))
+            metadata = None
 
     if not rows:
         raise HTTPException(
@@ -1360,6 +1377,63 @@ async def upload_bank_statement(
             "No transactions were parsed from this file. "
             "Check that the file is a valid bank statement with Date, "
             "Description and Amount/Debit/Credit columns.",
+        )
+
+    # ── Get or create bank account from metadata ──────────────────────────────
+    account_number = None
+    account_holder = None
+    currency = "NGN"
+    account_type = None
+    opening_balance = None
+    closing_balance = None
+    
+    if metadata:
+        account_number = metadata.get("account_number")
+        account_holder = metadata.get("account_holder")
+        currency = metadata.get("currency", "NGN")
+        account_type = metadata.get("account_type")
+        opening_balance = metadata.get("opening_balance")
+        closing_balance = metadata.get("closing_balance")
+    
+    # If no account_number from metadata, try to extract from first transaction's vendor
+    if not account_number and rows:
+        # Try to find account number from description patterns
+        for row in rows[:5]:  # Check first 5 transactions
+            desc = row.get("description", "").lower()
+            # Look for patterns like "Account: 1234567890" or "A/C: 1234567890"
+            match = re.search(r'(?:account|a/c|acct)[:\s]+(\d{10,20})', desc)
+            if match:
+                account_number = match.group(1)
+                break
+    
+    # Create or get bank account (use last 4 digits as fallback if no full number)
+    if account_number:
+        bank_account = bank_account_service.get_or_create_bank_account(
+            db=db,
+            bank_name=bank_name,
+            account_number=account_number,
+            account_holder=account_holder,
+            currency=currency,
+            account_type=account_type,
+        )
+        # Update balances if extracted from statement
+        if opening_balance is not None or closing_balance is not None:
+            bank_account_service.update_account_balances(
+                db=db,
+                bank_account_id=bank_account.id,
+                opening_balance=opening_balance,
+                closing_balance=closing_balance,
+            )
+    else:
+        # Create generic account for this statement
+        import hashlib
+        # Use bank name + file date to create a pseudo-unique account number
+        pseudo_account = f"{bank_name}_{uuid.uuid4().hex[:10]}".replace(" ", "")
+        bank_account = bank_account_service.get_or_create_bank_account(
+            db=db,
+            bank_name=bank_name,
+            account_number=pseudo_account,
+            currency=currency,
         )
 
     # ── Smart category / type suggestions ─────────────────────────────────────
@@ -1372,8 +1446,13 @@ async def upload_bank_statement(
     # Pass 2: AI batch call for rows that keyword rules couldn't classify ("Other")
     rows = _ai_suggest_categories_batch(rows)
 
+    # Create statement linked to bank account
     stmt = BankStatement(
+        bank_account_id=bank_account.id,
         bank_name=bank_name,
+        account_last4=account_number[-4:] if account_number else None,
+        statement_period_start=metadata.get("period_start") if metadata else None,
+        statement_period_end=metadata.get("period_end") if metadata else None,
         file_path=str(stored_path),
         file_type=file_type,
         status="pending",
@@ -1381,8 +1460,14 @@ async def upload_bank_statement(
     db.add(stmt)
     db.flush()
 
+    # Create transaction records linked to both statement and bank account
     for row in rows:
-        db.add(BankTransaction(statement_id=stmt.id, **row))
+        tx = BankTransaction(
+            bank_account_id=bank_account.id,
+            statement_id=stmt.id,
+            **row
+        )
+        db.add(tx)
 
     db.commit()
     db.refresh(stmt)
