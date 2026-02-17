@@ -37,6 +37,9 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen3-vl-30b-a3b-thinking")
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
+PDF_VISION_MAX_PAGES = int(os.getenv("PDF_VISION_MAX_PAGES", "3"))
+PDF_VISION_MAX_TOTAL_B64_CHARS = int(os.getenv("PDF_VISION_MAX_TOTAL_B64_CHARS", "6000000"))
+
 # Rate limiter — free tier: 20 RPM → 3s between requests
 _OR_INTERVAL   = 3.0
 _or_lock       = threading.Lock()
@@ -168,22 +171,37 @@ def _pdf_pages_as_b64_images(file_path: str) -> list[tuple[str, str]]:
     """
     Render each PDF page to a PNG image using PyMuPDF (no poppler needed).
     Returns list of (mime_type, base64_string) tuples, one per page.
-    Limited to first 8 pages to stay within token limits.
+    Limited to first N pages to stay within token/time limits.
     """
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(file_path)
         images = []
-        for page_num in range(min(len(doc), 8)):
-            page = doc[page_num]
-            # 2x zoom = ~144 DPI — good quality without excessive size
-            mat = fitz.Matrix(2.0, 2.0)
-            pix = page.get_pixmap(matrix=mat)
-            png_bytes = pix.tobytes("png")
-            b64 = base64.b64encode(png_bytes).decode()
-            images.append(("image/png", b64))
-            logger.info(f"PyMuPDF rendered page {page_num + 1}/{len(doc)} ({len(png_bytes):,} bytes)")
-        doc.close()
+        total_b64_chars = 0
+        try:
+            max_pages = max(1, PDF_VISION_MAX_PAGES)
+            for page_num in range(min(len(doc), max_pages)):
+                page = doc[page_num]
+                # 1.5x zoom keeps payload smaller and faster on free-tier instances
+                mat = fitz.Matrix(1.5, 1.5)
+                pix = page.get_pixmap(matrix=mat)
+                png_bytes = pix.tobytes("png")
+                b64 = base64.b64encode(png_bytes).decode()
+
+                projected = total_b64_chars + len(b64)
+                if projected > PDF_VISION_MAX_TOTAL_B64_CHARS:
+                    logger.warning(
+                        "Stopping PDF vision render at page %s due to payload cap (%s chars)",
+                        page_num + 1,
+                        PDF_VISION_MAX_TOTAL_B64_CHARS,
+                    )
+                    break
+
+                images.append(("image/png", b64))
+                total_b64_chars = projected
+                logger.info(f"PyMuPDF rendered page {page_num + 1}/{len(doc)} ({len(png_bytes):,} bytes)")
+        finally:
+            doc.close()
         return images
     except ImportError:
         logger.warning("PyMuPDF not installed; cannot render PDF as images")
@@ -195,7 +213,12 @@ def _pdf_pages_as_b64_images(file_path: str) -> list[tuple[str, str]]:
 
 # ── OpenRouter provider ───────────────────────────────────────────────────────
 
-def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -> list[dict]:
+def _build_messages(
+    prompt: str,
+    file_path: str | None,
+    mime_type: str | None,
+    pre_extracted_pdf_text: str | None = None,
+) -> list[dict]:
     """
     Build the OpenAI-style messages list.
     - PDF: extract text, send as plain text message
@@ -206,7 +229,7 @@ def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -
         return [{"role": "user", "content": prompt}]
 
     if "pdf" in mime_type.lower():
-        text = _extract_pdf_text(file_path)
+        text = pre_extracted_pdf_text if pre_extracted_pdf_text is not None else _extract_pdf_text(file_path)
         if text and len(text) >= 50:
             # Text-based PDF — send as plain text (up to 15000 chars to cover large statements)
             combined = f"{prompt}\n\nDocument text:\n{text[:15000]}"
@@ -256,10 +279,11 @@ def _call_openrouter(messages: list[dict]) -> str:
         "model": OPENROUTER_MODEL,
         "messages": messages,
         "temperature": 0.1,
-        "max_tokens": 4096,
+        "max_tokens": 2048,
     }
     try:
-        with httpx.Client(timeout=90.0) as c:
+        # Keep timeout below common edge/proxy limits to avoid empty-reply failures.
+        with httpx.Client(timeout=55.0) as c:
             resp = c.post(OPENROUTER_ENDPOINT, headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()
@@ -302,7 +326,12 @@ def process_file(file_path: str, mime_type: str) -> tuple[str, dict]:
     is_pdf = "pdf" in mime_type.lower()
     ocr_text = _extract_pdf_text(file_path) if is_pdf else f"[Image — {Path(file_path).stat().st_size:,} bytes]"
 
-    messages = _build_messages(SINGLE_SCHEMA, file_path, mime_type)
+    messages = _build_messages(
+        SINGLE_SCHEMA,
+        file_path,
+        mime_type,
+        pre_extracted_pdf_text=ocr_text if is_pdf else None,
+    )
     if not messages:
         logger.warning("No content parts extracted from file")
         return ocr_text, {}
@@ -341,7 +370,12 @@ def process_file_batch(file_path: str, mime_type: str) -> tuple[str, list[dict]]
     is_pdf = "pdf" in mime_type.lower()
     ocr_text = _extract_pdf_text(file_path) if is_pdf else f"[Image — {Path(file_path).stat().st_size:,} bytes]"
 
-    messages = _build_messages(BATCH_SCHEMA, file_path, mime_type)
+    messages = _build_messages(
+        BATCH_SCHEMA,
+        file_path,
+        mime_type,
+        pre_extracted_pdf_text=ocr_text if is_pdf else None,
+    )
     if not messages:
         return ocr_text, []
 
