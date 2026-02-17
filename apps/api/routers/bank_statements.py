@@ -1363,9 +1363,9 @@ async def upload_bank_statement(
         # For PDFs, also extract metadata (account info)
         from pdf_extraction import extract_bank_statement_pdf
         try:
-            extracted = extract_bank_statement_pdf(str(stored_path), cleanup=False)
-            rows = extracted["transactions"]
-            metadata = extracted.get("metadata")
+            # extract_bank_statement_pdf returns (metadata, transactions) tuple
+            metadata, rows = extract_bank_statement_pdf(str(stored_path), cleanup=False)
+            logger.info(f"Extracted {len(rows)} transactions from PDF")
         except Exception as e:
             logger.warning(f"PDF extraction failed: {e}, falling back to text extraction")
             rows = _parse_pdf_statement(str(stored_path))
@@ -1379,43 +1379,57 @@ async def upload_bank_statement(
             "Description and Amount/Debit/Credit columns.",
         )
 
-    # ── Get or create bank account from metadata ──────────────────────────────
+    # ── Extract and use bank account metadata ──────────────────────────────────
+    # Prefer bank name from metadata (PDF extraction), fallback to form input
+    extracted_bank_name = bank_name
     account_number = None
     account_holder = None
     currency = "NGN"
-    account_type = None
     opening_balance = None
     closing_balance = None
+    stmt_period_start = None
+    stmt_period_end = None
     
     if metadata:
-        account_number = metadata.get("account_number")
-        account_holder = metadata.get("account_holder")
-        currency = metadata.get("currency", "NGN")
-        account_type = metadata.get("account_type")
-        opening_balance = metadata.get("opening_balance")
-        closing_balance = metadata.get("closing_balance")
+        # Use extracted bank name if available
+        if metadata.bank_name:
+            extracted_bank_name = metadata.bank_name
+            logger.info(f"Using extracted bank name: {extracted_bank_name}")
+        
+        # Extract account details from metadata (object attributes, not dict)
+        account_number = metadata.account_number
+        account_holder = metadata.account_holder
+        currency = metadata.currency or "NGN"
+        opening_balance = metadata.opening_balance
+        closing_balance = metadata.closing_balance
+        stmt_period_start = metadata.period_start
+        stmt_period_end = metadata.period_end
+        
+        logger.info(
+            f"Extracted metadata: account={account_number}, "
+            f"holder={account_holder}, bank={extracted_bank_name}"
+        )
     
-    # If no account_number from metadata, try to extract from first transaction's vendor
+    # If still no account_number, try to extract from first transaction's description
     if not account_number and rows:
-        # Try to find account number from description patterns
         for row in rows[:5]:  # Check first 5 transactions
             desc = row.get("description", "").lower()
-            # Look for patterns like "Account: 1234567890" or "A/C: 1234567890"
             match = re.search(r'(?:account|a/c|acct)[:\s]+(\d{10,20})', desc)
             if match:
-                account_number = match.group(1)
+                account_number = match.group(1).replace(" ", "").replace("-", "")
+                logger.info(f"Extracted account number from transaction: {account_number}")
                 break
     
-    # Create or get bank account (use last 4 digits as fallback if no full number)
+    # Create or get bank account
     if account_number:
         bank_account = bank_account_service.get_or_create_bank_account(
             db=db,
-            bank_name=bank_name,
+            bank_name=extracted_bank_name,
             account_number=account_number,
             account_holder=account_holder,
             currency=currency,
-            account_type=account_type,
         )
+        
         # Update balances if extracted from statement
         if opening_balance is not None or closing_balance is not None:
             bank_account_service.update_account_balances(
@@ -1424,15 +1438,19 @@ async def upload_bank_statement(
                 opening_balance=opening_balance,
                 closing_balance=closing_balance,
             )
+            logger.info(
+                f"Updated account balances: opening={opening_balance}, "
+                f"closing={closing_balance}"
+            )
     else:
-        # Create generic account for this statement
-        import hashlib
-        # Use bank name + file date to create a pseudo-unique account number
-        pseudo_account = f"{bank_name}_{uuid.uuid4().hex[:10]}".replace(" ", "")
+        # Fallback: Create account with pseudo-unique number if extraction failed
+        pseudo_account = f"{extracted_bank_name}_{uuid.uuid4().hex[:12]}".replace(" ", "_")
+        logger.warning(f"No account number found, using pseudo-account: {pseudo_account}")
         bank_account = bank_account_service.get_or_create_bank_account(
             db=db,
-            bank_name=bank_name,
+            bank_name=extracted_bank_name,
             account_number=pseudo_account,
+            account_holder=account_holder,
             currency=currency,
         )
 
@@ -1449,10 +1467,10 @@ async def upload_bank_statement(
     # Create statement linked to bank account
     stmt = BankStatement(
         bank_account_id=bank_account.id,
-        bank_name=bank_name,
-        account_last4=account_number[-4:] if account_number else None,
-        statement_period_start=metadata.get("period_start") if metadata else None,
-        statement_period_end=metadata.get("period_end") if metadata else None,
+        bank_name=extracted_bank_name,
+        account_last4=account_number[-4:] if account_number and len(account_number) >= 4 else None,
+        statement_period_start=stmt_period_start,
+        statement_period_end=stmt_period_end,
         file_path=str(stored_path),
         file_type=file_type,
         status="pending",

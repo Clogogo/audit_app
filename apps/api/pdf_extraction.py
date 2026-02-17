@@ -295,22 +295,54 @@ class TableExtractor:
         if not text:
             return
         
-        # Extract account number
-        acct_match = re.search(r'account\s*(?:no|number)?\s*[:\-]?\s*([0-9]{8,20})', text, re.IGNORECASE)
-        if acct_match:
-            self.metadata.account_number = acct_match.group(1)
+        # Extract account number (various formats: 0000000000, 00-00-00-00)
+        acct_patterns = [
+            r'account\s*(?:no|number)?\s*[:\-]?\s*([0-9]{10,20})',
+            r'a/c\s*[:\-]?\s*([0-9]{10,20})',
+            r'acct\s*[:\-]?\s*([0-9]{10,20})',
+        ]
+        for pattern in acct_patterns:
+            acct_match = re.search(pattern, text, re.IGNORECASE)
+            if acct_match:
+                self.metadata.account_number = re.sub(r'[\s\-]', '', acct_match.group(1).strip())
+                break
         
         # Extract account holder name
-        holder_match = re.search(r'account\s*(?:holder|name)\s*[:\-]?\s*([A-Z][A-Za-z\s]+)', text, re.IGNORECASE)
-        if holder_match:
-            self.metadata.account_holder = holder_match.group(1).strip()
+        holder_patterns = [
+            r'account\s*(?:holder|name)\s*[:\-]?\s*([A-Z][A-Za-z\s/]{3,50})',
+            r'registered\s+name\s*[:\-]?\s*([A-Z][A-Za-z\s/]{3,50})',
+        ]
+        for pattern in holder_patterns:
+            holder_match = re.search(pattern, text, re.IGNORECASE)
+            if holder_match:
+                name = holder_match.group(1).strip()
+                name = re.sub(r'[^\w\s/\-]$', '', name)
+                if len(name) > 3:
+                    self.metadata.account_holder = name
+                    break
         
-        # Extract bank name (common Nigerian banks)
-        banks = ["Access Bank", "Guaranty Trust Bank", "GTBank", "UBA", "Zenith Bank",
-                 "First Bank", "Stanbic", "FCMB", "Moniepoint", "OPay", "Kuda"]
-        for bank in banks:
-            if bank.lower() in text.lower():
-                self.metadata.bank_name = bank
+        # Extract bank name with comprehensive patterns
+        bank_patterns = [
+            (r'access\s+bank', 'Access Bank'),
+            (r'gtbank|guaranty\s+trust', 'GTBank'),
+            (r'uba|united\s+bank\s+for\s+africa', 'UBA'),
+            (r'zenith\s+bank', 'Zenith Bank'),
+            (r'first\s+bank(?:\s+of\s+nigeria)?', 'First Bank'),
+            (r'stanbic', 'Stanbic'),
+            (r'fcmb|fidelity\s+bank', 'FCMB'),
+            (r'moniepoint', 'Moniepoint'),
+            (r'opay', 'OPay'),
+            (r'kuda', 'Kuda'),
+            (r'ecobank', 'Ecobank'),
+            (r'polaris\s+bank', 'Polaris Bank'),
+            (r'wema\s+bank', 'Wema Bank'),
+            (r'union\s+bank', 'Union Bank'),
+            (r'heritage\s+bank', 'Heritage Bank'),
+        ]
+        text_lower = text.lower()
+        for pattern, bank_name in bank_patterns:
+            if re.search(pattern, text_lower, re.IGNORECASE):
+                self.metadata.bank_name = bank_name
                 break
         
         # Extract opening/closing balances
@@ -329,8 +361,11 @@ class TableExtractor:
                 text, re.IGNORECASE
             )
             if period_match:
-                self.metadata.period_start = self._parse_date(period_match.group(1))
-                self.metadata.period_end = self._parse_date(period_match.group(2))
+                try:
+                    self.metadata.period_start = self._parse_date(period_match.group(1))
+                    self.metadata.period_end = self._parse_date(period_match.group(2))
+                except:
+                    pass
     
     def _extract_from_ocr(self, pdf) -> List[Dict[str, Any]]:
         """
