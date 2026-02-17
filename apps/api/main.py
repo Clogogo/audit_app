@@ -30,14 +30,14 @@ with engine.connect() as _conn:
             _conn.execute(text(_col_sql))
             _conn.commit()
         except Exception:
-            pass  # column already exists
+            _conn.rollback()  # PostgreSQL aborts the whole transaction on error; must rollback before next statement
 
     # Normalize legacy USD entries to NGN (this app is NGN-primary)
     try:
         _conn.execute(text("UPDATE transactions SET currency = 'NGN' WHERE currency = 'USD' OR currency IS NULL"))
         _conn.commit()
     except Exception:
-        pass
+        _conn.rollback()
 
 app = FastAPI(
     title="FinanceAudit API",
