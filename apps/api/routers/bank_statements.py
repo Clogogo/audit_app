@@ -239,6 +239,7 @@ _NEUTRAL_KEYWORD_MAP: list[tuple[str, list[str]]] = [
 def _suggest_category_keyword(description: str, tx_type: str) -> tuple[str, str]:
     """
     Return (category, suggested_type) using keyword rules.
+    Optimized with early returns and minimal string operations.
 
     Priority:
       1. Transfer patterns → ("Internal Transfer", "transfer")
@@ -249,14 +250,14 @@ def _suggest_category_keyword(description: str, tx_type: str) -> tuple[str, str]
     desc = description.lower()
     default_type = "income" if tx_type == "credit" else "expense"
 
-    # 1. Transfer
+    # 1. Transfer - check first (fastest path for common case)
     if any(p in desc for p in _TRANSFER_KEYWORDS):
         return "Internal Transfer", "transfer"
 
     # 2. Income-specific categories (direction-aware for Salary)
     for cat, patterns in _INCOME_KEYWORD_MAP:
         if any(p in desc for p in patterns):
-            # Salary paid out (debit) = expense; salary received (credit) = income
+            # Fast path: Salary paid out (debit) = expense; received (credit) = income
             if cat == "Salary" and tx_type == "debit":
                 return "Salary", "expense"
             return cat, "income"
@@ -267,6 +268,24 @@ def _suggest_category_keyword(description: str, tx_type: str) -> tuple[str, str]
             return cat, default_type
 
     return "Other", default_type
+
+
+# Pre-compiled validation sets for AI response validation (computed once at module load)
+_OWN_ACCT_PATTERNS = {
+    "own account", "inter-account", "owealth", "auto-save",
+    "wallet to wallet", "wallet transfer", "self transfer",
+    "internal transfer",
+}
+
+_VALID_CATEGORIES = {
+    "Food & Dining", "Transportation", "Shopping", "Entertainment",
+    "Bills & Utilities", "Healthcare", "Travel", "Education", "School Fees",
+    "Housing", "Administration", "Repairs",
+    "Salary", "Freelance", "Investment", "Business",
+    "Bank Charges & Fees", "Internal Transfer", "Refund", "Gift", "Other",
+}
+
+_VALID_TYPES = {"expense", "income", "transfer"}
 
 
 def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
@@ -280,13 +299,14 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
     """
     import httpx
 
-    # Only send rows where we don't already have a specific category
+    # Fast filter: only send rows needing categorization
     undecided_idx = [
         i for i, r in enumerate(rows) if r.get("suggested_category") == "Other"
     ]
-    if not undecided_idx:
+    if not undecided_idx:  # Early return if all rows already categorized
         return rows
 
+    # Prepare batch items with minimal overhead
     items = [
         {"i": i, "desc": rows[i]["description"], "dir": rows[i]["transaction_type"]}
         for i in undecided_idx
@@ -320,45 +340,38 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         raw = ai_worker._clean_json(raw)
         arr_match = re.search(r"\[[\s\S]*\]", raw)
         if not arr_match:
-            return rows
-        # Own-account patterns that legitimately warrant type=transfer
-        _OWN_ACCT_PATTERNS = [
-            "own account", "inter-account", "owealth", "auto-save",
-            "wallet to wallet", "wallet transfer", "self transfer",
-            "internal transfer",
-        ]
-
-        _VALID_CATEGORIES = {
-            "Food & Dining", "Transportation", "Shopping", "Entertainment",
-            "Bills & Utilities", "Healthcare", "Travel", "Education", "School Fees",
-            "Housing", "Administration", "Repairs",
-            "Salary", "Freelance", "Investment", "Business",
-            "Bank Charges & Fees", "Internal Transfer", "Refund", "Gift", "Other",
-        }
+            return rows  # Early exit if no JSON array found
 
         suggestions = json.loads(arr_match.group())
+        undecided_set = set(undecided_idx)  # O(1) lookup for validation
+        
         for s in suggestions:
-            idx = int(s.get("i", -1))
-            # Only update rows we actually asked about — prevents the AI
-            # hallucinating items for indices it was never given
-            if idx not in undecided_idx:
+            try:
+                idx = int(s.get("i", -1))
+                # Validate index to prevent AI hallucination for indices not requested
+                if idx not in undecided_set:
+                    continue
+                
+                cat = str(s.get("category", "Other")).strip()
+                typ = str(s.get("type", "")).strip().lower()
+                
+                # Update category if valid (reject malformed values like "Bills & Utilities / expense")
+                if cat in _VALID_CATEGORIES and cat != "Other":
+                    rows[idx]["suggested_category"] = cat
+                
+                # Update type if valid, with guard for transfer classification
+                if typ in _VALID_TYPES:
+                    # Guard: AI shouldn't reclassify external credits as transfers
+                    # Only allow transfer if description signals own-account movement
+                    if typ == "transfer":
+                        desc_lower = rows[idx]["description"].lower()
+                        if not any(p in desc_lower for p in _OWN_ACCT_PATTERNS):
+                            # Fall back to direction-based default
+                            typ = "income" if rows[idx]["transaction_type"] == "credit" else "expense"
+                    rows[idx]["suggested_type"] = typ
+            except (ValueError, TypeError, KeyError):
+                # Skip malformed entries silently
                 continue
-            cat = str(s.get("category", "Other")).strip()
-            typ = str(s.get("type", "")).strip().lower()
-            # Validate category against known list to reject malformed values
-            # like "Bills & Utilities / expense" that the AI sometimes returns
-            if cat in _VALID_CATEGORIES and cat != "Other":
-                rows[idx]["suggested_category"] = cat
-            if typ in ("expense", "income", "transfer"):
-                # Guard: don't let AI reclassify a received-from-person credit as
-                # "transfer". Only honour type=transfer when the description clearly
-                # signals an own-account movement.
-                if typ == "transfer":
-                    desc_lower = rows[idx]["description"].lower()
-                    if not any(p in desc_lower for p in _OWN_ACCT_PATTERNS):
-                        # Fall back to direction-based default
-                        typ = "income" if rows[idx]["transaction_type"] == "credit" else "expense"
-                rows[idx]["suggested_type"] = typ
     except Exception as e:
         logger.warning(f"AI batch categorization failed: {e}")
 

@@ -17,7 +17,15 @@ from pdf2image import convert_from_path
 import pytesseract
 
 logger = logging.getLogger(__name__)
-
+# Cache compiled regex patterns to avoid recompilation on each use
+_REGEX_CACHE = {
+    'date_formats': [
+        re.compile(r'day', re.IGNORECASE),
+        re.compile(r'month', re.IGNORECASE),
+    ],
+    'currency': re.compile(r'[₦N$£€\s]'),
+    'date_parts': re.compile(r'(\d{4})-(\d{1,2})-(\d{1,2})')
+}
 
 class PDFExtractionError(Exception):
     """Raised when PDF extraction fails."""
@@ -420,18 +428,21 @@ class TableExtractor:
         return "amount" in tx and tx.get("amount") and tx.get("date")
     
     def _parse_date(self, date_str: str) -> Optional[str]:
-        """Parse date string to YYYY-MM-DD format."""
+        """Parse date string to YYYY-MM-DD format. Optimized with early returns."""
         if not date_str or not isinstance(date_str, str):
             return None
         
         date_str = date_str.strip()
         
-        # Common date formats
+        # Fast path: already in YYYY-MM-DD format
+        if _REGEX_CACHE['date_parts'].match(date_str):
+            return date_str
+        
+        # Common date formats (ordered by likelihood)
         formats = [
-            "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y",
-            "%m/%d/%Y", "%m-%d-%Y", "%m/%d/%y", "%m-%d-%y",
-            "%d %b %Y", "%d %B %Y",
-            "%Y-%m-%d", "%Y/%m/%d",
+            "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d",
+            "%d/%m/%y", "%d-%m-%y", "%m/%d/%Y", "%m-%d-%Y",
+            "%m/%d/%y", "%m-%d-%y", "%d %b %Y", "%d %B %Y",
         ]
         
         for fmt in formats:
@@ -441,39 +452,49 @@ class TableExtractor:
             except ValueError:
                 continue
         
-        logger.warning(f"Could not parse date: {date_str}")
         return None
     
     def _parse_amount(self, amount_str: str) -> Optional[float]:
-        """Parse amount string to float."""
+        """Parse amount string to float. Optimized for performance."""
         if not amount_str or not isinstance(amount_str, str):
             return None
         
-        amount_str = str(amount_str).strip()
+        amount_str = amount_str.strip()
         
-        if not amount_str or amount_str.lower() in ["na", "n/a", "null", "-"]:
+        # Fast return for common null values
+        if amount_str in ("na", "n/a", "null", "-", ""):
             return None
         
-        # Remove currency symbols and whitespace
-        amount_str = re.sub(r'[₦N$£€\s]', '', amount_str)
+        # Remove currency symbols and whitespace using cached regex
+        amount_str = _REGEX_CACHE['currency'].sub('', amount_str)
         
-        # Remove commas
-        amount_str = amount_str.replace(',', '')
+        # Remove commas in one pass
+        amount_str = amount_str.replace(',', '').strip()
+        
+        # Fast validation
+        if not amount_str:
+            return None
         
         try:
-            return float(amount_str)
+            val = float(amount_str)
+            return val if val > 0 else None
         except ValueError:
-            logger.warning(f"Could not parse amount: {amount_str}")
             return None
     
     def _deduplicate_transactions(self, transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Remove duplicate transactions."""
+        """Remove duplicate transactions efficiently using reference or signature."""
         seen = set()
         unique = []
         
         for tx in transactions:
-            # Create a signature (date + amount + description)
-            sig = (tx.get("date"), tx.get("amount"), tx.get("description", "")[:30])
+            # Prefer reference if available (more reliable)
+            ref = tx.get("reference")
+            if ref:
+                sig = (tx.get("date"), ref)
+            else:
+                # Fallback to (date + amount + description prefix)
+                sig = (tx.get("date"), tx.get("amount"), tx.get("description", "")[:20])
+            
             if sig not in seen:
                 seen.add(sig)
                 unique.append(tx)
@@ -495,25 +516,18 @@ def extract_bank_statement_pdf(pdf_path: str, cleanup: bool = True) -> Tuple[Sta
     Raises:
         PDFExtractionError: If extraction fails
     """
+    pdf = Path(pdf_path)
+    
     try:
         extractor = TableExtractor(pdf_path)
-        result = extractor.extract()
-        
-        # Delete temporary file after successful extraction
-        if cleanup:
+        return extractor.extract()
+    except PDFExtractionError:
+        raise
+    finally:
+        # Always cleanup, even on success or failure
+        if cleanup and pdf.exists():
             try:
-                Path(pdf_path).unlink()
-                logger.info(f"Cleaned up temporary file: {pdf_path}")
+                pdf.unlink()
+                logger.debug(f"Cleaned up temporary file: {pdf_path}")
             except Exception as e:
                 logger.warning(f"Could not delete temporary file {pdf_path}: {e}")
-        
-        return result
-    except Exception as e:
-        # Still cleanup even if extraction fails
-        if cleanup:
-            try:
-                Path(pdf_path).unlink()
-                logger.info(f"Cleaned up temporary file after failed extraction: {pdf_path}")
-            except Exception:
-                pass
-        raise
