@@ -28,9 +28,10 @@ import ai_worker
 
 router = APIRouter(prefix="/bank-statements", tags=["bank-statements"])
 
+import os as _os
 BASE_DIR = Path(__file__).parent.parent.parent.parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR = Path(_os.getenv("UPLOAD_DIR", str(BASE_DIR / "uploads")))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ── Known column aliases ───────────────────────────────────────────────────────
@@ -228,6 +229,9 @@ _NEUTRAL_KEYWORD_MAP: list[tuple[str, list[str]]] = [
                               "transfer fee", "transaction fee", "service charge",
                               "account maintenance", "atm fee", "pos fee",
                               "interbank fee", "vat on", "withholding"]),
+    ("Repairs",             ["repair", "maintenance", "servicing", "spare part",
+                              "technician", "mechanic", "electrician", "plumber",
+                              "renovation", "fix", "overhaul", "refurbish"]),
     ("Internal Transfer",   ["auto-save", "owealth"]),
 ]
 
@@ -249,9 +253,12 @@ def _suggest_category_keyword(description: str, tx_type: str) -> tuple[str, str]
     if any(p in desc for p in _TRANSFER_KEYWORDS):
         return "Internal Transfer", "transfer"
 
-    # 2. Income-only categories
+    # 2. Income-specific categories (direction-aware for Salary)
     for cat, patterns in _INCOME_KEYWORD_MAP:
         if any(p in desc for p in patterns):
+            # Salary paid out (debit) = expense; salary received (credit) = income
+            if cat == "Salary" and tx_type == "debit":
+                return "Salary", "expense"
             return cat, "income"
 
     # 3. Neutral categories
@@ -290,7 +297,7 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         "For each transaction below, return ONLY a JSON array with objects:\n"
         '  {"i": <index>, "category": "<category>", "type": "<expense|income|transfer>"}\n\n'
         "Valid categories: Food & Dining, Transportation, Shopping, Entertainment, "
-        "Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, "
+        "Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, "
         "Salary, Freelance, Investment, Business, Bank Charges & Fees, Internal Transfer, Refund, Gift, Other\n\n"
         "Rules:\n"
         "- 'salary', 'payroll' → Salary / income\n"
@@ -324,7 +331,7 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         _VALID_CATEGORIES = {
             "Food & Dining", "Transportation", "Shopping", "Entertainment",
             "Bills & Utilities", "Healthcare", "Travel", "Education", "School Fees",
-            "Housing", "Administration",
+            "Housing", "Administration", "Repairs",
             "Salary", "Freelance", "Investment", "Business",
             "Bank Charges & Fees", "Internal Transfer", "Refund", "Gift", "Other",
         }

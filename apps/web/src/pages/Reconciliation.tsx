@@ -178,7 +178,7 @@ export function Reconciliation() {
 
       <h1 className="text-2xl font-bold">Bank Statement Reconciliation</h1>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Upload + statement list */}
         <div className="space-y-4">
           <Card>
@@ -263,7 +263,7 @@ export function Reconciliation() {
         </div>
 
         {/* Right: Reconciliation view */}
-        <div className="col-span-2 space-y-4">
+        <div className="lg:col-span-2 space-y-4">
           {!selected ? (
             <div className="flex flex-col items-center justify-center h-64 rounded-lg border-2 border-dashed text-muted-foreground gap-2">
               <GitMerge className="h-8 w-8" />
@@ -273,7 +273,7 @@ export function Reconciliation() {
             <>
               {/* Status bar */}
               {status && (
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {[
                     { label: 'Total', value: status.total, icon: null },
                     { label: 'Matched', value: status.matched, icon: CheckCircle2, color: 'text-green-600' },
@@ -298,7 +298,7 @@ export function Reconciliation() {
                 <Button variant="outline" size="sm" onClick={() => handleExport('pdf')}>Export PDF</Button>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Bank transactions */}
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">

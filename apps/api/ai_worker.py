@@ -73,7 +73,7 @@ Use null for any field you cannot clearly see in the document — do NOT guess o
   "date": "<YYYY-MM-DD>",
   "vendor": "<business or person name>",
   "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
-Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, \
+Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, \
 Salary, Freelance, Investment, Business, Other>",
   "type": "<expense or income>",
   "description": "<one short sentence describing what was paid for>"
@@ -94,7 +94,7 @@ Use null for any field you cannot clearly see — do NOT guess or invent values.
     "date": "<YYYY-MM-DD or null>",
     "vendor": "<payer name, student name, or party name>",
     "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
-Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, \
+Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, \
 Salary, Freelance, Investment, Business, Other>",
     "type": "<expense or income>",
     "description": "<brief description of this specific entry>",

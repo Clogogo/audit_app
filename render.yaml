@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: financeaudit-api
+    runtime: python
+    rootDir: apps/api
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false          # paste your Supabase connection string in Render dashboard
+      - key: FRONTEND_URL
+        sync: false          # paste your Vercel URL e.g. https://financeaudit.vercel.app
+      - key: GEMINI_API_KEY
+        sync: false          # optional — enables AI fallback when Ollama is unavailable
+      - key: UPLOAD_DIR
+        value: /tmp/uploads  # Render free tier has no persistent disk; use /tmp

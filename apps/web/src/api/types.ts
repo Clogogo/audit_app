@@ -185,6 +185,8 @@ export const EXPENSE_CATEGORIES = [
   'School Fees',
   'Housing',
   'Administration',
+  'Salary',
+  'Repairs',
   'Bank Charges & Fees',
   'Internal Transfer',
   'Other',

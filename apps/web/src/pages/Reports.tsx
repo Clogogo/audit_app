@@ -107,9 +107,9 @@ export function Reports() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-2xl font-bold">Reports &amp; Analytics</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={() => handleExport('csv')}>
             <Download className="h-4 w-4" /> Export CSV
           </Button>
@@ -135,7 +135,7 @@ export function Reports() {
       ) : (
         <div className="space-y-6">
           {/* ── Stat cards ── */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Card className="border-green-200 bg-green-50/50 dark:bg-green-950/20">
               <CardContent className="py-5 px-5">
                 <div className="flex items-start justify-between">
@@ -237,7 +237,7 @@ export function Reports() {
           </Card>
 
           {/* ── Category breakdowns ── */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Expenses */}
             <Card>
               <CardHeader>

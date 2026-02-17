@@ -272,7 +272,7 @@ export function Transactions() {
         onCancel={() => setConfirmOpen(false)}
       />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-2xl font-bold">Transactions</h1>
         <div className="flex items-center gap-2">
           {selected.size > 0 && (
@@ -460,8 +460,8 @@ export function Transactions() {
       ) : visible.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">No transactions found</div>
       ) : (
-        <div className="rounded-lg border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-lg border overflow-x-auto">
+          <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-muted/50">
               <tr>
                 <th className="px-4 py-3 w-10" aria-label="Select all">

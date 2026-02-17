@@ -19,9 +19,10 @@ from ai_worker import GeminiRateLimitError, AIProviderError
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
+import os as _os
 BASE_DIR = Path(__file__).parent.parent.parent.parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR = Path(_os.getenv("UPLOAD_DIR", str(BASE_DIR / "uploads")))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_TYPES = {
     "image/jpeg", "image/png", "image/webp", "image/gif",

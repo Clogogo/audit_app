@@ -64,17 +64,21 @@ def get_summary(
 
     transactions = q.all()
 
-    # "transfer" type (inter-account / internal movements) is excluded from both
-    # income and expense totals so it does not inflate the dashboard figures.
-    total_income = sum(t.amount for t in transactions if t.type == "income")
-    total_expenses = sum(t.amount for t in transactions if t.type == "expense")
+    # "transfer" type and "Internal Transfer" category are excluded from all
+    # aggregate calculations — they are inter-account movements, not real
+    # income or expenses.  They remain visible as individual transactions.
+    def _is_internal(t: Transaction) -> bool:
+        return t.type == "transfer" or t.category == "Internal Transfer"
+
+    total_income = sum(t.amount for t in transactions if t.type == "income" and not _is_internal(t))
+    total_expenses = sum(t.amount for t in transactions if t.type == "expense" and not _is_internal(t))
 
     by_category: dict[str, float] = defaultdict(float)
     expense_by_category: dict[str, float] = defaultdict(float)
     income_by_category: dict[str, float] = defaultdict(float)
     for t in transactions:
-        if t.type == "transfer":
-            continue  # transfers don't contribute to category breakdowns
+        if _is_internal(t):
+            continue  # internal transfers don't contribute to category breakdowns
         by_category[t.category] += t.amount
         if t.type == "expense":
             expense_by_category[t.category] += t.amount
@@ -84,6 +88,8 @@ def get_summary(
     # Build monthly data — sort by YYYY-MM key (not display string) for correct order
     monthly_map: dict[str, dict] = {}
     for t in transactions:
+        if _is_internal(t):
+            continue  # exclude internal transfers from monthly chart
         key = t.date.strftime("%Y-%m")
         if key not in monthly_map:
             monthly_map[key] = {"month": t.date.strftime("%b %Y"), "income": 0.0, "expenses": 0.0}

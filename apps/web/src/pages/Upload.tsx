@@ -244,7 +244,7 @@ export function Upload() {
             _selected: true,
             _category: finalCategory,
             _type: finalType,
-            _vendor: tx.vendor || '',
+            _vendor:'',
             _description: tx.description,
           };
         })
@@ -362,7 +362,7 @@ export function Upload() {
   return (
     <div className="space-y-6 max-w-6xl">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold">Upload &amp; Import</h1>
           <p className="text-muted-foreground mt-1">

@@ -26,7 +26,7 @@ export function AuditLog() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-2xl font-bold">Audit Log</h1>
         <Select value={filterEntity} onValueChange={setFilterEntity}>
           <SelectTrigger className="w-48">
@@ -46,8 +46,8 @@ export function AuditLog() {
       ) : entries.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">No audit entries yet</div>
       ) : (
-        <div className="rounded-lg border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-lg border overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead className="bg-muted/50">
               <tr>
                 <th className="text-left px-4 py-3 font-medium">Timestamp</th>

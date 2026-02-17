@@ -16,8 +16,14 @@ import type {
   StatementImportResult,
 } from './types';
 
+// In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
+// In development the Vite proxy rewrites /api → localhost:8000
+const baseURL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}`
+  : '/api';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL,
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -152,3 +158,16 @@ export const getAuditLog = (params?: {
   entity_id?: number;
   limit?: number;
 }) => api.get<AuditLogEntry[]>('/audit-log', { params }).then(unwrap);
+
+// Health / AI status
+export interface HealthStatus {
+  status: string;
+  ai: {
+    provider: string;
+    model: string;
+    configured: boolean;
+    ollama_available: boolean;
+    gemini_configured: boolean;
+  };
+}
+export const getHealth = () => api.get<HealthStatus>('/health').then(unwrap);

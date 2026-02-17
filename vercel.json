@@ -1,0 +1,11 @@
+{
+  "buildCommand": "npx nx build web",
+  "outputDirectory": "dist/apps/web",
+  "installCommand": "npm install",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "env": {
+    "NX_DAEMON": "false"
+  }
+}

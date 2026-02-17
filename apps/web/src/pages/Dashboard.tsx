@@ -119,7 +119,7 @@ export function Dashboard() {
       </div>
 
       {/* 4 Stat cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((card) => (
           <div key={card.label} className="rounded-2xl border bg-card p-5 flex flex-col gap-3">
             <div className="flex items-center justify-between">
@@ -143,9 +143,9 @@ export function Dashboard() {
       </div>
 
       {/* Main 3-col layout */}
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Chart 2/3 */}
-        <div className="col-span-2 rounded-2xl border bg-card p-6">
+        <div className="lg:col-span-2 rounded-2xl border bg-card p-6">
           <div className="flex items-start justify-between mb-5">
             <div>
               <h2 className="text-base font-semibold">Monthly Overview</h2>
