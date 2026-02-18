@@ -34,7 +34,7 @@ class AIProviderError(Exception):
 # ── Configuration ────────────────────────────────────────────────────────────
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen2.5-vl-7b-instruct:free")
+OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen2-vl-7b-instruct:free")
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # Rate limiter — free tier: 20 RPM → 3s between requests
