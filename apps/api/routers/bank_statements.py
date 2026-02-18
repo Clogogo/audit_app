@@ -180,7 +180,10 @@ _INCOME_KEYWORD_MAP: list[tuple[str, list[str]]] = [
     ("Refund",     ["refund", "reversal", "chargeback", "return credit",
                     "clawback reversal"]),
     ("Business",   ["sales proceed", "business income", "revenue credit"]),
-    ("School Fees", ["transfer from", "received from"]),  # credits from students/parents
+    ("School Fees", ["transfer from", "trf from", "trf frm", "trfr from", "tfr from",
+                    "received from", "rcv from", "rcvd from",
+                    "payment from", "pmt from", "funds from",
+                    "nip from", "neft from", "credit from", "lodgment from"]),
     ("Loans",      ["loan received", "loan credit", "loan disbursement",
                     "credit facility", "overdraft credit"]),
 ]
@@ -271,6 +274,10 @@ def _suggest_category_keyword(description: str, tx_type: str) -> tuple[str, str]
     for cat, patterns in _NEUTRAL_KEYWORD_MAP:
         if any(p in desc for p in patterns):
             return cat, default_type
+
+    # 4. Default: credit transactions are School Fees (this is a school account)
+    if tx_type == "credit":
+        return "School Fees", "income"
 
     return "Other", default_type
 
