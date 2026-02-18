@@ -12,6 +12,7 @@ export interface Transaction {
   date: string;
   vendor: string;
   bank?: string;
+  bank_account_id?: number;
   file_id?: number;
   created_at: string;
   updated_at: string;
@@ -100,6 +101,7 @@ export interface BankAccount {
   bank_name: string;
   account_number?: string;
   created_at: string;
+  transaction_count?: number;
 }
 
 export interface BankAccountCreate {
@@ -186,6 +188,7 @@ export const EXPENSE_CATEGORIES = [
   'Housing',
   'Administration',
   'Salary',
+  'Loans',
   'Repairs',
   'Bank Charges & Fees',
   'Internal Transfer',
@@ -194,9 +197,11 @@ export const EXPENSE_CATEGORIES = [
 
 export const INCOME_CATEGORIES = [
   'Salary',
+  'School Fees',
   'Freelance',
   'Investment',
   'Business',
+  'Loans',
   'Gift',
   'Refund',
   'Internal Transfer',

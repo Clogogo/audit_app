@@ -20,19 +20,20 @@ with engine.connect() as _conn:
         "ALTER TABLE bank_transactions ADD COLUMN suggested_category VARCHAR(100)",
         "ALTER TABLE bank_transactions ADD COLUMN suggested_type VARCHAR(20)",
         "ALTER TABLE bank_transactions ADD COLUMN vendor VARCHAR(200)",
+        "ALTER TABLE transactions ADD COLUMN bank_account_id INTEGER REFERENCES bank_accounts(id) ON DELETE SET NULL",
     ]:
         try:
             _conn.execute(text(_col_sql))
             _conn.commit()
         except Exception:
-            pass  # column already exists
+            _conn.rollback()  # PostgreSQL requires rollback after a failed statement
 
     # Normalize legacy USD entries to NGN (this app is NGN-primary)
     try:
         _conn.execute(text("UPDATE transactions SET currency = 'NGN' WHERE currency = 'USD' OR currency IS NULL"))
         _conn.commit()
     except Exception:
-        pass
+        _conn.rollback()
 
 app = FastAPI(
     title="FinanceAudit API",

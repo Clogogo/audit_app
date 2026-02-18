@@ -46,11 +46,13 @@ class Transaction(Base):
     date: Mapped[date] = mapped_column(Date)
     vendor: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     bank: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    bank_account_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("bank_accounts.id", ondelete="SET NULL"), nullable=True)
     file_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("uploaded_files.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     file: Mapped[Optional[UploadedFile]] = relationship("UploadedFile", back_populates="transaction")
+    bank_account: Mapped[Optional["BankAccount"]] = relationship("BankAccount", back_populates="transactions")
     audit_logs: Mapped[list["AuditLog"]] = relationship("AuditLog", back_populates="transaction", foreign_keys="AuditLog.entity_id", primaryjoin="and_(AuditLog.entity_id == Transaction.id, AuditLog.entity_type == 'transaction')", passive_deletes=True)
     bank_match: Mapped[Optional["BankTransaction"]] = relationship("BankTransaction", back_populates="matched_transaction", uselist=False)
 
@@ -101,6 +103,8 @@ class BankAccount(Base):
     bank_name: Mapped[str] = mapped_column(String(200))
     account_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="bank_account")
 
 
 class AuditLog(Base):

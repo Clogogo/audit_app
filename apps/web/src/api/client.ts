@@ -105,8 +105,15 @@ export const batchDeleteBankStatements = (ids: number[]) =>
 export const getBankTransactions = (statementId: number) =>
   api.get<BankTransaction[]>(`/bank-statements/${statementId}/transactions`).then(unwrap);
 
-export const importStatementTransactions = (stmtId: number, items: StatementImportItem[]) =>
-  api.post<StatementImportResult>(`/bank-statements/${stmtId}/import-transactions`, { items }).then(unwrap);
+export const importStatementTransactions = (
+  stmtId: number,
+  items: StatementImportItem[],
+  bankAccountId?: number,
+) =>
+  api.post<StatementImportResult>(`/bank-statements/${stmtId}/import-transactions`, {
+    items,
+    bank_account_id: bankAccountId ?? null,
+  }).then(unwrap);
 
 export const autoMatch = (statementId: number) =>
   api.post<{ matched: number }>(`/reconcile/${statementId}/auto-match`).then(unwrap);
@@ -142,6 +149,15 @@ export const createBankAccount = (body: BankAccountCreate) =>
 
 export const deleteBankAccount = (id: number) =>
   api.delete<void>(`/bank-accounts/${id}`).then(unwrap);
+
+export const getAccountTransactions = (accountId: number) =>
+  api.get<Transaction[]>(`/bank-accounts/${accountId}/transactions`).then(unwrap);
+
+export const linkTransaction = (accountId: number, txId: number) =>
+  api.patch<{ ok: boolean }>(`/bank-accounts/${accountId}/transactions/${txId}`).then(unwrap);
+
+export const unlinkTransaction = (accountId: number, txId: number) =>
+  api.delete<{ ok: boolean }>(`/bank-accounts/${accountId}/transactions/${txId}`).then(unwrap);
 
 // Reports
 export const exportReport = (

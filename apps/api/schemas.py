@@ -38,6 +38,7 @@ class TransactionOut(BaseModel):
     date: date
     vendor: Optional[str]
     bank: Optional[str]
+    bank_account_id: Optional[int]
     file_id: Optional[int]
     created_at: datetime
     updated_at: datetime
@@ -137,6 +138,7 @@ class StatementImportItem(BaseModel):
 
 class StatementImportRequest(BaseModel):
     items: list[StatementImportItem]
+    bank_account_id: Optional[int] = None  # link all saved transactions to this account
 
 
 class StatementImportResult(BaseModel):
