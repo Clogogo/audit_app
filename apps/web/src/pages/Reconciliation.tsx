@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GitMerge, Zap, Link2, Unlink, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react';
+import { GitMerge, Zap, Link2, Unlink, AlertTriangle, CheckCircle2, Trash2, ScanLine } from 'lucide-react';
 import {
   getBankStatements,
   uploadBankStatement,
@@ -38,6 +38,7 @@ export function Reconciliation() {
   const [recordedTxs, setRecordedTxs] = useState<Transaction[]>([]);
   const [status, setStatus] = useState<ReconciliationStatus | null>(null);
   const [bankName, setBankName] = useState('');
+  const [stagedFile, setStagedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [matching, setMatching] = useState(false);
   const [selectedBankTx, setSelectedBankTx] = useState<number | null>(null);
@@ -62,14 +63,20 @@ export function Reconciliation() {
     setStatus(s);
   };
 
-  const handleUpload = async (file: File) => {
+  const handleFileSelect = (file: File) => {
+    setStagedFile(file);
+  };
+
+  const handleScan = async () => {
+    if (!stagedFile) return;
     if (!bankName.trim()) { alert('Please enter the bank name first.'); return; }
     setUploading(true);
     try {
-      const stmt = await uploadBankStatement(file, bankName);
+      const stmt = await uploadBankStatement(stagedFile, bankName);
       const updated = await getBankStatements();
       setStatements(updated);
       await loadStatement(stmt);
+      setStagedFile(null);
     } finally {
       setUploading(false);
     }
@@ -193,10 +200,21 @@ export function Reconciliation() {
                   'application/vnd.ms-excel': ['.xls'],
                   'application/pdf': ['.pdf'],
                 }}
-                onFileSelect={handleUpload}
+                onFileSelect={handleFileSelect}
                 isLoading={uploading}
                 className="py-4"
               />
+              {stagedFile && (
+                <Button
+                  type="button"
+                  onClick={handleScan}
+                  disabled={uploading}
+                  className="w-full"
+                >
+                  <ScanLine className="h-4 w-4 mr-2" />
+                  {uploading ? 'Scanning...' : 'Scan Document'}
+                </Button>
+              )}
             </CardContent>
           </Card>
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  CheckCircle, Sparkles, Zap, AlertCircle, Trash2, Plus, Save, GitMerge, FileSpreadsheet,
+  CheckCircle, Sparkles, Zap, AlertCircle, Trash2, Plus, Save, GitMerge, FileSpreadsheet, ScanLine,
 } from 'lucide-react';
 import {
   uploadBatch, confirmBatch, getFilePreviewUrl, getBankAccounts,
@@ -62,6 +62,7 @@ function detectType(desc: string, rawType: 'credit' | 'debit'): 'income' | 'expe
 export function Upload() {
   const navigate = useNavigate();
 
+  const [stagedFile, setStagedFile]           = useState<File | null>(null);
   const [uploading, setUploading]             = useState(false);
   const [rows, setRows]                       = useState<EditableRow[]>([]);
   const [saving, setSaving]                   = useState(false);
@@ -92,7 +93,14 @@ export function Upload() {
     ['text/csv', 'application/vnd.ms-excel',
      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(file.type);
 
-  const handleFileSelect = async (file: File) => {
+  const handleFileSelect = (file: File) => {
+    setStagedFile(file);
+    setUploadError(null);
+  };
+
+  const handleScan = async () => {
+    const file = stagedFile;
+    if (!file) return;
     setUploading(true);
     setSaved(false);
     setRows([]);
@@ -168,6 +176,7 @@ export function Upload() {
       }
     } finally {
       setUploading(false);
+      setStagedFile(null);
     }
   };
 
@@ -246,6 +255,7 @@ export function Upload() {
 
   const reset = () => {
     setSaved(false); setRows([]); setUploadError(null);
+    setStagedFile(null);
     aiBatchRef.current = null; stmtRef.current = null;
     setImportResult(null);
   };
@@ -381,10 +391,19 @@ export function Upload() {
                 'application/vnd.ms-excel': ['.xls'],
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
               }}
-              label={uploading
-                ? 'Processing…'
-                : 'Drop bank statement here — PDF, image, CSV, or Excel'}
+              label="Drop bank statement here — PDF, image, CSV, or Excel"
             />
+            {stagedFile && (
+              <Button
+                type="button"
+                onClick={handleScan}
+                disabled={uploading}
+                className="w-full"
+              >
+                <ScanLine className="h-4 w-4 mr-2" />
+                {uploading ? 'Processing…' : 'Scan Document'}
+              </Button>
+            )}
 
             {/* Format hint chips */}
             <div className="flex flex-wrap gap-2 pt-1">
