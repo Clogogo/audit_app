@@ -1,9 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  GitMerge, Zap, Link2, Unlink, CheckCircle2, Trash2,
-  ChevronDown, ChevronRight, Save,
-} from 'lucide-react';
+import { GitMerge, Zap, Link2, Unlink, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react';
 import {
   getBankStatements,
   uploadBankStatement,
@@ -16,9 +12,8 @@ import {
   exportReconciliation,
   deleteBankStatement,
   batchDeleteBankStatements,
-  saveUnmatchedTransactions,
 } from '../api/client';
-import type { BankStatement, BankTransaction, Transaction, ReconciliationStatus, StatementImportResult } from '../api/types';
+import type { BankStatement, BankTransaction, Transaction, ReconciliationStatus } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
@@ -37,24 +32,19 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export function Reconciliation() {
-  const navigate = useNavigate();
-
-  const [statements, setStatements]           = useState<BankStatement[]>([]);
-  const [selected, setSelected]               = useState<BankStatement | null>(null);
-  const [bankTxs, setBankTxs]                 = useState<BankTransaction[]>([]);
-  const [recordedTxs, setRecordedTxs]         = useState<Transaction[]>([]);
-  const [status, setStatus]                   = useState<ReconciliationStatus | null>(null);
-  const [bankName, setBankName]               = useState('');
-  const [uploading, setUploading]             = useState(false);
-  const [matching, setMatching]               = useState(false);
-  const [saving, setSaving]                   = useState(false);
-  const [saveResult, setSaveResult]           = useState<StatementImportResult | null>(null);
-  const [selectedBankTx, setSelectedBankTx]   = useState<number | null>(null);
-  const [showMatched, setShowMatched]         = useState(false);
-  const [deleteTarget, setDeleteTarget]       = useState<BankStatement | null>(null);
-  const [deleting, setDeleting]               = useState(false);
-  const [checkedIds, setCheckedIds]           = useState<Set<number>>(new Set());
-  const [batchDeleting, setBatchDeleting]     = useState(false);
+  const [statements, setStatements] = useState<BankStatement[]>([]);
+  const [selected, setSelected] = useState<BankStatement | null>(null);
+  const [bankTxs, setBankTxs] = useState<BankTransaction[]>([]);
+  const [recordedTxs, setRecordedTxs] = useState<Transaction[]>([]);
+  const [status, setStatus] = useState<ReconciliationStatus | null>(null);
+  const [bankName, setBankName] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [matching, setMatching] = useState(false);
+  const [selectedBankTx, setSelectedBankTx] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<BankStatement | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const [showBatchConfirm, setShowBatchConfirm] = useState(false);
 
   useEffect(() => {
@@ -64,8 +54,6 @@ export function Reconciliation() {
 
   const loadStatement = async (stmt: BankStatement) => {
     setSelected(stmt);
-    setSaveResult(null);
-    setSelectedBankTx(null);
     const [txs, s] = await Promise.all([
       getBankTransactions(stmt.id),
       getReconciliationStatus(stmt.id),
@@ -93,11 +81,7 @@ export function Reconciliation() {
     try {
       const result = await autoMatch(selected.id);
       await loadStatement(selected);
-      if (result.matched === 0) {
-        alert('No automatic matches found. You can match manually, or click "Save Unmatched" to add them as new transactions.');
-      } else {
-        alert(`Auto-matched ${result.matched} transaction${result.matched !== 1 ? 's' : ''} to existing records.`);
-      }
+      alert(`Auto-matched ${result.matched} transactions.`);
     } finally {
       setMatching(false);
     }
@@ -115,23 +99,6 @@ export function Reconciliation() {
     if (selected) await loadStatement(selected);
   };
 
-  /** Save all remaining unmatched bank transactions as new Transactions */
-  const handleSaveUnmatched = async () => {
-    if (!selected) return;
-    const unmatchedCount = status?.unmatched ?? 0;
-    if (unmatchedCount === 0) { alert('No unmatched transactions to save.'); return; }
-    setSaving(true);
-    try {
-      const result = await saveUnmatchedTransactions(selected.id);
-      setSaveResult(result);
-      await loadStatement(selected);
-      // Refresh recorded transactions list so they appear immediately
-      getTransactions().then(setRecordedTxs);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleDeleteStatement = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -140,7 +107,9 @@ export function Reconciliation() {
       const updated = await getBankStatements();
       setStatements(updated);
       if (selected?.id === deleteTarget.id) {
-        setSelected(null); setBankTxs([]); setStatus(null); setSaveResult(null);
+        setSelected(null);
+        setBankTxs([]);
+        setStatus(null);
       }
       setCheckedIds((prev) => { const next = new Set(prev); next.delete(deleteTarget.id); return next; });
     } finally {
@@ -157,7 +126,9 @@ export function Reconciliation() {
       const updated = await getBankStatements();
       setStatements(updated);
       if (selected && checkedIds.has(selected.id)) {
-        setSelected(null); setBankTxs([]); setStatus(null); setSaveResult(null);
+        setSelected(null);
+        setBankTxs([]);
+        setStatus(null);
       }
       setCheckedIds(new Set());
     } finally {
@@ -181,49 +152,8 @@ export function Reconciliation() {
     downloadBlob(blob, `reconciliation-${selected.id}.${format}`);
   };
 
-  // ── Derived ──────────────────────────────────────────────────────────────────
-  const unmatchedBankTxs = bankTxs.filter((b) => b.match_status !== 'matched');
-  const matchedBankTxs   = bankTxs.filter((b) => b.match_status === 'matched');
-
   const matchStatusColor = (s: BankTransaction['match_status']) =>
     s === 'matched' ? 'text-green-600' : s === 'discrepancy' ? 'text-yellow-600' : 'text-muted-foreground';
-
-  const BankTxCard = ({ btx }: { btx: BankTransaction }) => (
-    <div
-      key={btx.id}
-      onClick={() => btx.match_status !== 'matched' && setSelectedBankTx(btx.id === selectedBankTx ? null : btx.id)}
-      className={cn(
-        'rounded-lg border p-3 text-sm transition-colors',
-        btx.match_status !== 'matched' ? 'cursor-pointer hover:bg-muted/30' : 'opacity-60 cursor-default bg-green-50 border-green-200',
-        btx.id === selectedBankTx && 'border-primary bg-primary/5',
-      )}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium truncate max-w-[60%]">{btx.description}</span>
-        <span className={`font-semibold shrink-0 ${btx.transaction_type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
-          {formatCurrency(btx.amount)}
-        </span>
-      </div>
-      <div className="flex items-center justify-between mt-1 gap-2">
-        <div className="text-xs text-muted-foreground truncate">
-          {formatDate(btx.date)}
-          {btx.vendor && <span className="ml-1.5">· {btx.vendor}</span>}
-        </div>
-        <span className={`text-xs shrink-0 ${matchStatusColor(btx.match_status)}`}>
-          {btx.match_status}
-          {btx.match_confidence && ` (${Math.round(btx.match_confidence * 100)}%)`}
-        </span>
-      </div>
-      {btx.match_status === 'matched' && (
-        <button
-          onClick={(e) => { e.stopPropagation(); handleUnmatch(btx.id); }}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive mt-1.5"
-        >
-          <Unlink className="h-3 w-3" /> Unmatch
-        </button>
-      )}
-    </div>
-  );
 
   return (
     <div className="space-y-6">
@@ -254,7 +184,7 @@ export function Reconciliation() {
           <Card>
             <CardHeader><CardTitle className="text-sm">Import Bank Statement</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              <Input placeholder="Bank name (e.g. Access Bank)" value={bankName} onChange={(e) => setBankName(e.target.value)} />
+              <Input placeholder="Bank name (e.g. Chase)" value={bankName} onChange={(e) => setBankName(e.target.value)} />
               <FileUploader
                 label="Drop CSV, Excel, or PDF"
                 accept={{
@@ -345,108 +275,79 @@ export function Reconciliation() {
               {status && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {[
-                    { label: 'Total',         value: status.total,         color: '' },
-                    { label: 'Matched',        value: status.matched,       color: 'text-green-600' },
-                    { label: 'Unmatched',      value: status.unmatched,     color: 'text-yellow-600' },
-                    { label: 'Discrepancies',  value: status.discrepancies, color: 'text-red-600' },
-                  ].map(({ label, value, color }) => (
+                    { label: 'Total', value: status.total, icon: null },
+                    { label: 'Matched', value: status.matched, icon: CheckCircle2, color: 'text-green-600' },
+                    { label: 'Unmatched', value: status.unmatched, icon: AlertTriangle, color: 'text-yellow-600' },
+                    { label: 'Discrepancies', value: status.discrepancies, icon: AlertTriangle, color: 'text-red-600' },
+                  ].map(({ label, value, icon: Icon, color }) => (
                     <Card key={label}>
                       <CardContent className="py-3 px-4">
                         <p className="text-xs text-muted-foreground">{label}</p>
-                        <p className={`text-xl font-bold ${color}`}>{value}</p>
+                        <p className={`text-xl font-bold ${color ?? ''}`}>{value}</p>
                       </CardContent>
                     </Card>
                   ))}
                 </div>
               )}
 
-              {/* Save result banner */}
-              {saveResult && saveResult.saved > 0 && (
-                <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
-                  <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
-                  <p className="text-sm text-green-800 flex-1">
-                    <strong>{saveResult.saved}</strong> transaction{saveResult.saved !== 1 ? 's' : ''} saved to your records.
-                  </p>
-                  <Button size="sm" variant="outline" onClick={() => navigate('/transactions')}>
-                    View Transactions
-                  </Button>
-                </div>
-              )}
-
-              {/* Action toolbar */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <Button onClick={handleAutoMatch} disabled={matching} size="sm" variant="outline">
-                  <Zap className="h-4 w-4" />
-                  {matching ? 'Matching…' : 'Auto-Match'}
+              <div className="flex items-center gap-2">
+                <Button onClick={handleAutoMatch} disabled={matching} size="sm">
+                  <Zap className="h-4 w-4" /> {matching ? 'Matching...' : 'Auto-Match'}
                 </Button>
-
-                {/* Save unmatched — primary action */}
-                {(status?.unmatched ?? 0) > 0 && (
-                  <Button onClick={handleSaveUnmatched} disabled={saving} size="sm" className="gap-1.5">
-                    <Save className="h-4 w-4" />
-                    {saving ? 'Saving…' : `Save ${status!.unmatched} Unmatched as Transactions`}
-                  </Button>
-                )}
-
                 <Button variant="outline" size="sm" onClick={() => handleExport('csv')}>Export CSV</Button>
                 <Button variant="outline" size="sm" onClick={() => handleExport('pdf')}>Export PDF</Button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Bank transactions — unmatched first */}
+                {/* Bank transactions */}
                 <div>
-                  {/* Unmatched */}
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                    Unmatched Bank Transactions ({unmatchedBankTxs.length})
-                    {selectedBankTx && (
-                      <span className="ml-2 text-primary normal-case font-normal">
-                        — click a recorded transaction on the right to link
-                      </span>
-                    )}
+                    Bank Transactions ({bankTxs.length})
                   </p>
-                  <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
-                    {unmatchedBankTxs.length === 0 && (
-                      <p className="text-sm text-muted-foreground py-4 text-center">
-                        All transactions matched ✓
-                      </p>
-                    )}
-                    {unmatchedBankTxs.map((btx) => <BankTxCard key={btx.id} btx={btx} />)}
-                  </div>
-
-                  {/* Matched — collapsible */}
-                  {matchedBankTxs.length > 0 && (
-                    <div className="mt-4">
-                      <button
-                        type="button"
-                        onClick={() => setShowMatched((v) => !v)}
-                        className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors mb-2 w-full text-left"
+                  <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
+                    {bankTxs.map((btx) => (
+                      <div
+                        key={btx.id}
+                        onClick={() => btx.match_status !== 'matched' && setSelectedBankTx(btx.id === selectedBankTx ? null : btx.id)}
+                        className={cn(
+                          'rounded-lg border p-3 text-sm cursor-pointer transition-colors',
+                          btx.id === selectedBankTx ? 'border-primary bg-primary/5' : 'hover:bg-muted/30',
+                          btx.match_status === 'matched' && 'opacity-60 cursor-default'
+                        )}
                       >
-                        {showMatched ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                        Matched ({matchedBankTxs.length})
-                      </button>
-                      {showMatched && (
-                        <div className="space-y-1.5 max-h-[300px] overflow-y-auto pr-1">
-                          {matchedBankTxs.map((btx) => <BankTxCard key={btx.id} btx={btx} />)}
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium truncate max-w-[60%]">{btx.description}</span>
+                          <span className={`font-semibold ${btx.transaction_type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
+                            {formatCurrency(btx.amount)}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  )}
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs text-muted-foreground">{formatDate(btx.date)}</span>
+                          <span className={`text-xs ${matchStatusColor(btx.match_status)}`}>
+                            {btx.match_status}
+                            {btx.match_confidence && ` (${Math.round(btx.match_confidence * 100)}%)`}
+                          </span>
+                        </div>
+                        {btx.match_status === 'matched' && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleUnmatch(btx.id); }}
+                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive mt-1"
+                          >
+                            <Unlink className="h-3 w-3" /> Unmatch
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Recorded transactions */}
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
                     Recorded Transactions
-                    {selectedBankTx && (
-                      <span className="ml-2 text-primary normal-case font-normal">(click to match)</span>
-                    )}
+                    {selectedBankTx && <span className="ml-2 text-primary normal-case font-normal">(click to match)</span>}
                   </p>
                   <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
-                    {recordedTxs.length === 0 && (
-                      <p className="text-sm text-muted-foreground py-4 text-center">
-                        No recorded transactions yet.
-                      </p>
-                    )}
                     {recordedTxs.map((tx) => (
                       <div
                         key={tx.id}
@@ -456,21 +357,15 @@ export function Reconciliation() {
                           selectedBankTx ? 'cursor-pointer hover:border-primary hover:bg-primary/5' : ''
                         )}
                       >
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center justify-between">
                           <span className="font-medium truncate max-w-[60%]">{tx.description}</span>
-                          <span className={`font-semibold shrink-0 ${tx.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                          <span className={`font-semibold ${tx.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
                             {formatCurrency(tx.amount, tx.currency ?? 'NGN')}
                           </span>
                         </div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {formatDate(tx.date)}
-                          {tx.vendor && <span className="ml-1.5">· {tx.vendor}</span>}
-                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">{tx.vendor} · {formatDate(tx.date)}</div>
                         {selectedBankTx && (
-                          <Button
-                            size="sm" variant="outline" className="mt-2 h-6 text-xs"
-                            onClick={(e) => { e.stopPropagation(); handleManualMatch(tx.id); }}
-                          >
+                          <Button size="sm" variant="outline" className="mt-2 h-6 text-xs" onClick={(e) => { e.stopPropagation(); handleManualMatch(tx.id); }}>
                             <Link2 className="h-3 w-3 mr-1" /> Match
                           </Button>
                         )}

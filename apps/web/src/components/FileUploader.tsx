@@ -1,24 +1,15 @@
 import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, File, X, ScanLine } from 'lucide-react';
+import { Upload, File, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 
 interface FileUploaderProps {
-  /** Called immediately when a file is dropped/chosen — for staging only. */
   onFileSelect: (file: File) => void;
   accept?: Record<string, string[]>;
   label?: string;
   className?: string;
   isLoading?: boolean;
-  /** If provided, the component is controlled: shows this file instead of internal state. */
-  stagedFile?: File | null;
-  /** Called when the user clicks the ✕ to clear the staged file. */
-  onClear?: () => void;
-  /** If provided, a Scan button is shown inside the dropzone when a file is staged. */
-  onScan?: () => void;
-  /** Label for the scan button */
-  scanLabel?: string;
 }
 
 export function FileUploader({
@@ -30,23 +21,17 @@ export function FileUploader({
   label = 'Drop receipt or invoice here',
   className,
   isLoading,
-  stagedFile,
-  onClear,
-  onScan,
-  scanLabel = 'Scan Document',
 }: FileUploaderProps) {
-  const [internalFile, setInternalFile] = useState<File | null>(null);
-  // Use controlled file if provided, otherwise internal
-  const selectedFile = stagedFile !== undefined ? stagedFile : internalFile;
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const onDrop = useCallback(
     (files: File[]) => {
       if (files[0]) {
-        if (stagedFile === undefined) setInternalFile(files[0]);
+        setSelectedFile(files[0]);
         onFileSelect(files[0]);
       }
     },
-    [onFileSelect, stagedFile]
+    [onFileSelect]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -58,13 +43,7 @@ export function FileUploader({
 
   const clear = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setInternalFile(null);
-    onClear?.();
-  };
-
-  const scan = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onScan?.();
+    setSelectedFile(null);
   };
 
   return (
@@ -74,41 +53,29 @@ export function FileUploader({
         'relative flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors cursor-pointer',
         isDragActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-primary/50',
         isLoading && 'opacity-50 cursor-not-allowed',
-        selectedFile && !isLoading && 'border-primary/40 bg-primary/5',
         className
       )}
     >
       <input {...getInputProps()} />
       {selectedFile ? (
-        <div className="flex flex-col items-center gap-4 w-full">
-          {/* File info row */}
-          <div className="flex items-center gap-3">
-            <File className="h-8 w-8 text-primary shrink-0" />
-            <div className="text-left">
-              <p className="text-sm font-medium">{selectedFile.name}</p>
-              <p className="text-xs text-muted-foreground">
-                {(selectedFile.size / 1024).toFixed(1)} KB — ready to scan
-              </p>
-            </div>
-            <Button variant="ghost" size="icon" onClick={clear} className="ml-2 shrink-0" title="Remove file">
-              <X className="h-4 w-4" />
-            </Button>
+        <div className="flex items-center gap-3">
+          <File className="h-8 w-8 text-primary" />
+          <div>
+            <p className="text-sm font-medium">{selectedFile.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {(selectedFile.size / 1024).toFixed(1)} KB
+            </p>
           </div>
-
-          {/* Scan button (only when onScan is provided) */}
-          {onScan && (
-            <Button onClick={scan} className="gap-2 w-full max-w-xs" size="lg">
-              <ScanLine className="h-4 w-4" />
-              {scanLabel}
-            </Button>
-          )}
+          <Button variant="ghost" size="icon" onClick={clear} className="ml-2">
+            <X className="h-4 w-4" />
+          </Button>
         </div>
       ) : (
         <>
           <Upload className="h-10 w-10 text-muted-foreground mb-3" />
           <p className="text-sm font-medium">{label}</p>
           <p className="text-xs text-muted-foreground mt-1">
-            {isDragActive ? 'Release to upload' : 'or click to browse'}
+            {isDragActive ? 'Release to upload' : 'or click to browse — JPG, PNG, PDF'}
           </p>
         </>
       )}

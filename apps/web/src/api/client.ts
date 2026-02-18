@@ -125,9 +125,6 @@ export const unmatch = (bankTxId: number) =>
 export const getReconciliationStatus = (statementId: number) =>
   api.get<ReconciliationStatus>(`/reconcile/${statementId}/status`).then(unwrap);
 
-export const saveUnmatchedTransactions = (statementId: number) =>
-  api.post<StatementImportResult>(`/reconcile/${statementId}/save-unmatched`).then(unwrap);
-
 export const exportReconciliation = (statementId: number, format: 'csv' | 'pdf') =>
   api
     .get<Blob>(`/reconcile/${statementId}/export`, {
