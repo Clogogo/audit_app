@@ -258,11 +258,14 @@ def _build_messages(
     }]
 
 
-def _call_openrouter(messages: list[dict]) -> str:
+def _call_openrouter(messages: list[dict], timeout: float = 55.0) -> str:
     """
     Call OpenRouter API.
     Raises OpenRouterRateLimitError on HTTP 429.
     Returns raw text response or "" on failure.
+
+    timeout: httpx timeout in seconds. Use a smaller value for text-only calls
+             so they finish within Render's 30-second edge timeout window.
     """
     if not OPENROUTER_API_KEY:
         raise AIProviderError(
@@ -285,7 +288,7 @@ def _call_openrouter(messages: list[dict]) -> str:
     }
     try:
         # Keep timeout below common edge/proxy limits to avoid empty-reply failures.
-        with httpx.Client(timeout=55.0) as c:
+        with httpx.Client(timeout=timeout) as c:
             resp = c.post(OPENROUTER_ENDPOINT, headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()
@@ -438,6 +441,9 @@ def call_ai_text(prompt: str) -> str:
     """
     Text-only AI call (no file). Used for categorisation and other text tasks.
     Returns "" on failure — never raises.
+
+    Uses a shorter timeout (18s) so the call fits within Render's 30s edge
+    timeout when combined with PDF parsing (~5-10s overhead).
     """
     if not OPENROUTER_API_KEY:
         logger.warning("OPENROUTER_API_KEY not set; text-only AI call skipped")
@@ -445,7 +451,8 @@ def call_ai_text(prompt: str) -> str:
 
     try:
         messages = _build_messages(prompt, None, None)
-        return _call_openrouter(messages)
+        # 18s keeps total request time < 30s (Render free-tier edge timeout)
+        return _call_openrouter(messages, timeout=18.0)
     except OpenRouterRateLimitError:
         logger.warning("OpenRouter rate limit on text-only call — skipping")
     except Exception as e:

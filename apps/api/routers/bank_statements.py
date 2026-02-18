@@ -306,6 +306,9 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
     Returns the same rows list with 'suggested_category' and 'suggested_type'
     updated where the AI provided a confident answer.
     Falls back silently on any AI failure.
+
+    Capped at 15 undecided rows per call to stay within Render's 30-second
+    edge timeout (PDF parse ~5-10s + AI call ~12-15s < 30s).
     """
     import httpx
 
@@ -315,6 +318,10 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
     ]
     if not undecided_idx:  # Early return if all rows already categorized
         return rows
+
+    # Cap batch size to keep AI prompt small and response fast on free tier
+    _MAX_BATCH = 15
+    undecided_idx = undecided_idx[:_MAX_BATCH]
 
     # Prepare batch items with minimal overhead
     items = [
@@ -1374,14 +1381,29 @@ async def upload_bank_statement(
     else:
         # For PDFs, also extract metadata (account info)
         from pdf_extraction import extract_bank_statement_pdf
+        metadata = None
+        rows = []
         try:
             # extract_bank_statement_pdf returns (metadata, transactions) tuple
             metadata, rows = extract_bank_statement_pdf(str(stored_path), cleanup=False)
-            logger.info(f"Extracted {len(rows)} transactions from PDF")
+            logger.info(f"Extracted {len(rows)} transactions from PDF via enhanced extractor")
         except Exception as e:
-            logger.warning(f"PDF extraction failed: {e}, falling back to text extraction")
-            rows = _parse_pdf_statement(str(stored_path))
-            metadata = None
+            logger.warning(f"Enhanced PDF extraction failed: {e!r}, trying fallback parser")
+        
+        if not rows:
+            # Fallback: multi-strategy parser (pdfplumber tables → text heuristic → AI text)
+            # Note: _parse_pdf_statement also tries extract_bank_statement_pdf first but
+            # degrades gracefully through several other strategies if that fails.
+            try:
+                rows = _parse_pdf_statement(str(stored_path))
+                logger.info(f"Fallback PDF parser: {len(rows)} transactions")
+            except Exception as e2:
+                logger.error(f"All PDF parsers failed: {e2!r}")
+                raise HTTPException(
+                    422,
+                    f"Could not extract transactions from this PDF. "
+                    f"Try a CSV or Excel export from your bank instead. (detail: {e2})",
+                )
 
     if not rows:
         raise HTTPException(
@@ -1474,7 +1496,16 @@ async def upload_bank_statement(
         r["suggested_type"] = stype
 
     # Pass 2: AI batch call for rows that keyword rules couldn't classify ("Other")
-    rows = _ai_suggest_categories_batch(rows)
+    # Skip on Render free tier: PDF parse + AI call easily exceeds the 30-second
+    # edge timeout, resulting in a 502.  Keyword rules cover ~85% of cases.
+    _is_render = bool(_os.getenv("RENDER"))
+    if not _is_render:
+        rows = _ai_suggest_categories_batch(rows)
+    else:
+        logger.info(
+            "Skipping AI batch categorization on Render to avoid 30s edge timeout; "
+            "keyword-based categories applied."
+        )
 
     # Create statement linked to bank account
     stmt = BankStatement(
