@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database import get_db
-from models import Transaction, AuditLog
+from models import Transaction, AuditLog, BankTransaction
 from pydantic import BaseModel as _BaseModel
 from schemas import TransactionCreate, TransactionOut, TransactionUpdate, TransactionSummary, MonthlySummary
 
@@ -171,6 +171,18 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     if not tx:
         raise HTTPException(404, "Transaction not found")
     old = {c.name: str(getattr(tx, c.name)) for c in Transaction.__table__.columns}
+
+    # Unlink any bank transactions that reference this transaction to avoid FK violation
+    linked = (
+        db.query(BankTransaction)
+        .filter(BankTransaction.matched_transaction_id == tx_id)
+        .all()
+    )
+    for btx in linked:
+        btx.matched_transaction_id = None
+        btx.match_status = "unmatched"
+        btx.match_confidence = None
+
     _log(db, tx_id, "delete", old=old)
     db.delete(tx)
     db.commit()

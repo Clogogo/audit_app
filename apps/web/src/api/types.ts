@@ -187,7 +187,6 @@ export const EXPENSE_CATEGORIES = [
   'Housing',
   'Administration',
   'Salary',
-  'Loans',
   'Repairs',
   'Bank Charges & Fees',
   'Internal Transfer',
@@ -196,13 +195,11 @@ export const EXPENSE_CATEGORIES = [
 
 export const INCOME_CATEGORIES = [
   'Salary',
-  'School Fees',
   'Freelance',
   'Investment',
   'Business',
   'Gift',
   'Refund',
-  'Loans',
   'Internal Transfer',
   'Other',
 ];

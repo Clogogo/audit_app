@@ -1437,22 +1437,35 @@ def list_bank_transactions(stmt_id: int, db: Session = Depends(get_db)):
     )
 
 
+def _fuzzy_score(a: str, b: str) -> float:
+    """Simple token-based similarity score (0-1)."""
+    try:
+        from rapidfuzz import fuzz
+        return fuzz.token_sort_ratio(a.lower(), b.lower()) / 100.0
+    except ImportError:
+        wa = set(a.lower().split())
+        wb = set(b.lower().split())
+        if not wa or not wb:
+            return 0.0
+        return len(wa & wb) / max(len(wa), len(wb))
+
+
 def _find_duplicate_transaction(
     db: Session, item: StatementImportItem, bank_name: str,
     reference: Optional[str] = None,
+    bank_vendor: Optional[str] = None,
 ) -> Optional[Transaction]:
     """
     Check if a matching Transaction already exists in the database.
 
     Priority:
-    1. Reference match — if the bank transaction has a unique reference (e.g. OPay
-       transaction ID), look for an existing Transaction whose description contains it.
-    2. Exact date + exact amount + same bank — high-confidence duplicate.
-    3. Exact date + exact amount (no bank info) — medium-confidence duplicate,
-       only returned if there is exactly one candidate (ambiguous amounts on the
-       same day are NOT auto-matched).
+    1. Reference match — exact reference/description hit (highest confidence).
+    2. Date ± 1 day + exact amount + bank name match — high-confidence duplicate.
+    3. Date ± 1 day + exact amount + vendor/description similarity ≥ 0.5.
+    4. Exact date + exact amount with a single unambiguous candidate.
     """
     from sqlalchemy import func
+    from datetime import timedelta
 
     # ── 1. Reference-based match ───────────────────────────────────────────────
     if reference:
@@ -1464,11 +1477,13 @@ def _find_duplicate_transaction(
         if ref_match:
             return ref_match
 
-    # ── 2 & 3. Exact date + exact amount ──────────────────────────────────────
+    # ── 2 & 3. Date ± 1 day + exact amount ────────────────────────────────────
+    from datetime import date as _date
+    d = item.date if isinstance(item.date, _date) else _date.fromisoformat(str(item.date))
     candidates = (
         db.query(Transaction)
         .filter(
-            Transaction.date == item.date,
+            Transaction.date.between(d - timedelta(days=1), d + timedelta(days=1)),
             func.abs(Transaction.amount - item.amount) <= 0.01,
         )
         .all()
@@ -1476,15 +1491,38 @@ def _find_duplicate_transaction(
     if not candidates:
         return None
 
-    # Prefer matches that also share the same bank (high confidence)
+    # Prefer same-bank match (highest confidence)
     bank_matches = [tx for tx in candidates if tx.bank and tx.bank.lower() == bank_name.lower()]
     if bank_matches:
-        return bank_matches[0]
+        # Within bank matches, pick best vendor/description similarity
+        best = max(
+            bank_matches,
+            key=lambda tx: max(
+                _fuzzy_score(item.description, tx.description),
+                _fuzzy_score(bank_vendor or "", tx.vendor or ""),
+                _fuzzy_score(bank_vendor or "", tx.description),
+            ),
+        )
+        return best
 
-    # Only return an amount+date match if it is unambiguous (exactly one candidate)
-    # Multiple transactions of the same amount on the same day are NOT auto-deduplicated
-    if len(candidates) == 1:
-        return candidates[0]
+    # Vendor / description similarity among all candidates
+    scored = []
+    for tx in candidates:
+        desc_score   = _fuzzy_score(item.description, tx.description)
+        vendor_score = max(
+            _fuzzy_score(bank_vendor or item.vendor or "", tx.vendor or ""),
+            _fuzzy_score(bank_vendor or item.vendor or "", tx.description),
+        )
+        scored.append((max(desc_score, vendor_score), tx))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    if scored and scored[0][0] >= 0.45:
+        return scored[0][1]
+
+    # Unambiguous fallback: exactly one candidate with same date
+    exact_date = [tx for tx in candidates if tx.date == d]
+    if len(exact_date) == 1:
+        return exact_date[0]
 
     return None
 
@@ -1521,7 +1559,9 @@ def import_statement_transactions(
             continue
 
         # ── Duplicate check (reference, then exact date + amount) ─────────
-        existing = _find_duplicate_transaction(db, item, stmt.bank_name, bank_tx.reference)
+        existing = _find_duplicate_transaction(
+            db, item, stmt.bank_name, bank_tx.reference, bank_tx.vendor
+        )
 
         if existing:
             # Link the bank transaction to the already-recorded transaction

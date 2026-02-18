@@ -1,5 +1,5 @@
 """
-Reconciliation engine: auto-match + manual match + export
+Reconciliation engine: auto-match + manual match + save-unmatched + export
 """
 import io
 import json
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import BankStatement, BankTransaction, Transaction, AuditLog
-from schemas import ReconciliationStatus, ManualMatchRequest
+from schemas import ReconciliationStatus, ManualMatchRequest, StatementImportResult
 
 router = APIRouter(prefix="/reconcile", tags=["reconciliation"])
 
@@ -146,6 +146,70 @@ def unmatch(bank_tx_id: int, db: Session = Depends(get_db)):
     ))
     db.commit()
     return {"ok": True}
+
+
+@router.post("/{stmt_id}/save-unmatched", response_model=StatementImportResult, status_code=201)
+def save_unmatched(stmt_id: int, db: Session = Depends(get_db)):
+    """
+    Convert all still-unmatched bank transactions for this statement into
+    recorded Transactions and mark them as matched.
+
+    Called from the Reconciliation page after auto/manual matching is done,
+    so any leftover unmatched entries are saved rather than lost.
+    """
+    stmt = db.get(BankStatement, stmt_id)
+    if not stmt:
+        raise HTTPException(404, "Statement not found")
+
+    unmatched = (
+        db.query(BankTransaction)
+        .filter(
+            BankTransaction.statement_id == stmt_id,
+            BankTransaction.match_status == "unmatched",
+        )
+        .all()
+    )
+
+    saved_count = 0
+    for btx in unmatched:
+        tx_type = btx.suggested_type or ("income" if btx.transaction_type == "credit" else "expense")
+        tx_category = btx.suggested_category or "Other"
+
+        tx = Transaction(
+            type=tx_type,
+            amount=btx.amount,
+            currency="NGN",
+            category=tx_category,
+            description=btx.description,
+            date=btx.date,
+            vendor=btx.vendor,
+            bank=stmt.bank_name,
+        )
+        db.add(tx)
+        db.flush()
+
+        btx.matched_transaction_id = tx.id
+        btx.match_status = "matched"
+        btx.match_confidence = 1.0
+
+        db.add(AuditLog(
+            entity_type="transaction",
+            entity_id=tx.id,
+            action="create",
+            new_values=json.dumps({
+                "type":        tx_type,
+                "amount":      btx.amount,
+                "category":    tx_category,
+                "description": btx.description,
+                "date":        str(btx.date),
+                "bank":        stmt.bank_name,
+                "source":      "reconciliation_save_unmatched",
+            }),
+        ))
+        saved_count += 1
+
+    db.commit()
+    return StatementImportResult(saved=saved_count, reconciled=0, statement_id=stmt_id)
 
 
 @router.get("/{stmt_id}/status", response_model=ReconciliationStatus)
