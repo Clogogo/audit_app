@@ -205,15 +205,32 @@ export function Reconciliation() {
                 className="py-4"
               />
               {stagedFile && (
-                <Button
-                  type="button"
-                  onClick={handleScan}
-                  disabled={uploading}
-                  className="w-full"
-                >
-                  <ScanLine className="h-4 w-4 mr-2" />
-                  {uploading ? 'Scanning...' : 'Scan Document'}
-                </Button>
+                <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3 space-y-3">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <ScanLine className="h-4 w-4 text-primary shrink-0" />
+                    <span className="truncate font-medium text-foreground">{stagedFile.name}</span>
+                    <span className="ml-auto text-xs shrink-0">{(stagedFile.size / 1024).toFixed(0)} KB</span>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={handleScan}
+                    disabled={uploading}
+                    size="lg"
+                    className="w-full gap-2 shadow-sm hover:shadow-md transition-all duration-200 active:scale-[0.98]"
+                  >
+                    {uploading ? (
+                      <>
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent inline-block shrink-0" />
+                        Scanning…
+                      </>
+                    ) : (
+                      <>
+                        <ScanLine className="h-4 w-4" />
+                        Scan Document
+                      </>
+                    )}
+                  </Button>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -297,7 +314,7 @@ export function Reconciliation() {
                     { label: 'Matched', value: status.matched, icon: CheckCircle2, color: 'text-green-600' },
                     { label: 'Unmatched', value: status.unmatched, icon: AlertTriangle, color: 'text-yellow-600' },
                     { label: 'Discrepancies', value: status.discrepancies, icon: AlertTriangle, color: 'text-red-600' },
-                  ].map(({ label, value, icon: Icon, color }) => (
+                  ].map(({ label, value, color }) => (
                     <Card key={label}>
                       <CardContent className="py-3 px-4">
                         <p className="text-xs text-muted-foreground">{label}</p>
@@ -348,6 +365,7 @@ export function Reconciliation() {
                         </div>
                         {btx.match_status === 'matched' && (
                           <button
+                            type="button"
                             onClick={(e) => { e.stopPropagation(); handleUnmatch(btx.id); }}
                             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive mt-1"
                           >

@@ -394,15 +394,32 @@ export function Upload() {
               label="Drop bank statement here — PDF, image, CSV, or Excel"
             />
             {stagedFile && (
-              <Button
-                type="button"
-                onClick={handleScan}
-                disabled={uploading}
-                className="w-full"
-              >
-                <ScanLine className="h-4 w-4 mr-2" />
-                {uploading ? 'Processing…' : 'Scan Document'}
-              </Button>
+              <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3 space-y-3">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <ScanLine className="h-4 w-4 text-primary shrink-0" />
+                  <span className="truncate font-medium text-foreground">{stagedFile.name}</span>
+                  <span className="ml-auto text-xs shrink-0">{(stagedFile.size / 1024).toFixed(0)} KB</span>
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleScan}
+                  disabled={uploading}
+                  size="lg"
+                  className="w-full gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-300 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploading ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent inline-block shrink-0" />
+                      <span className="animate-pulse">Processing…</span>
+                    </>
+                  ) : (
+                    <>
+                      <ScanLine className="h-5 w-5 animate-pulse" />
+                      <span>Scan Document</span>
+                    </>
+                  )}
+                </Button>
+              </div>
             )}
 
             {/* Format hint chips */}
