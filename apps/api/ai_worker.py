@@ -34,13 +34,8 @@ class AIProviderError(Exception):
 # ── Configuration ────────────────────────────────────────────────────────────
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-# Fast free vision model — stays well within Render's 60s edge timeout
-# Override via OPENROUTER_MODEL env var if needed
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-11b-vision-instruct:free")
+OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen3-vl-30b-a3b-thinking")
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-
-PDF_VISION_MAX_PAGES = int(os.getenv("PDF_VISION_MAX_PAGES", "3"))
-PDF_VISION_MAX_TOTAL_B64_CHARS = int(os.getenv("PDF_VISION_MAX_TOTAL_B64_CHARS", "6000000"))
 
 # Rate limiter — free tier: 20 RPM → 3s between requests
 _OR_INTERVAL   = 3.0
@@ -71,7 +66,7 @@ Use null for any field you cannot clearly see in the document — do NOT guess o
   "vendor": "<business or person name>",
   "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
 Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, \
-Salary, Freelance, Investment, Business, Loans, Other>",
+Salary, Freelance, Investment, Business, Other>",
   "type": "<expense or income>",
   "description": "<one short sentence describing what was paid for>"
 }
@@ -92,7 +87,7 @@ Use null for any field you cannot clearly see — do NOT guess or invent values.
     "vendor": "<payer name, student name, or party name>",
     "category": "<one of: Food & Dining, Transportation, Shopping, Entertainment, \
 Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, \
-Salary, Freelance, Investment, Business, Loans, Other>",
+Salary, Freelance, Investment, Business, Other>",
     "type": "<expense or income>",
     "description": "<brief description of this specific entry>",
     "reference": "<receipt number, transaction ID, or row reference if visible>"
@@ -169,58 +164,9 @@ def _extract_pdf_text_ocr(file_path: str) -> str:
         return ""
 
 
-def _pdf_pages_as_b64_images(file_path: str) -> list[tuple[str, str]]:
-    """
-    Render each PDF page to a PNG image using PyMuPDF (no poppler needed).
-    Returns list of (mime_type, base64_string) tuples, one per page.
-    Limited to first N pages to stay within token/time limits.
-    """
-    try:
-        import fitz  # PyMuPDF
-        doc = fitz.open(file_path)
-        images = []
-        total_b64_chars = 0
-        try:
-            max_pages = max(1, PDF_VISION_MAX_PAGES)
-            for page_num in range(min(len(doc), max_pages)):
-                page = doc[page_num]
-                # 1.5x zoom keeps payload smaller and faster on free-tier instances
-                mat = fitz.Matrix(1.5, 1.5)
-                pix = page.get_pixmap(matrix=mat)
-                png_bytes = pix.tobytes("png")
-                b64 = base64.b64encode(png_bytes).decode()
-
-                projected = total_b64_chars + len(b64)
-                if projected > PDF_VISION_MAX_TOTAL_B64_CHARS:
-                    logger.warning(
-                        "Stopping PDF vision render at page %s due to payload cap (%s chars)",
-                        page_num + 1,
-                        PDF_VISION_MAX_TOTAL_B64_CHARS,
-                    )
-                    break
-
-                images.append(("image/png", b64))
-                total_b64_chars = projected
-                logger.info(f"PyMuPDF rendered page {page_num + 1}/{len(doc)} ({len(png_bytes):,} bytes)")
-        finally:
-            doc.close()
-        return images
-    except ImportError:
-        logger.warning("PyMuPDF not installed; cannot render PDF as images")
-        return []
-    except Exception as e:
-        logger.warning(f"PyMuPDF PDF rendering failed: {e}")
-        return []
-
-
 # ── OpenRouter provider ───────────────────────────────────────────────────────
 
-def _build_messages(
-    prompt: str,
-    file_path: str | None,
-    mime_type: str | None,
-    pre_extracted_pdf_text: str | None = None,
-) -> list[dict]:
+def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -> list[dict]:
     """
     Build the OpenAI-style messages list.
     - PDF: extract text, send as plain text message
@@ -231,21 +177,11 @@ def _build_messages(
         return [{"role": "user", "content": prompt}]
 
     if "pdf" in mime_type.lower():
-        text = pre_extracted_pdf_text if pre_extracted_pdf_text is not None else _extract_pdf_text(file_path)
-        if text and len(text) >= 50:
-            # Text-based PDF — cap at 8000 chars to avoid slow AI responses that hit edge timeouts
-            combined = f"{prompt}\n\nDocument text:\n{text[:8000]}"
-            return [{"role": "user", "content": combined}]
-        # Scanned / image-only PDF — render pages with PyMuPDF and send as images
-        logger.info("Text extraction insufficient; falling back to PyMuPDF vision rendering")
-        page_images = _pdf_pages_as_b64_images(file_path)
-        if not page_images:
-            logger.error("PyMuPDF fallback also failed — cannot process this PDF")
+        text = _extract_pdf_text(file_path)
+        if not text:
             return []
-        content: list[dict] = [{"type": "text", "text": prompt}]
-        for mime, b64 in page_images:
-            content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-        return [{"role": "user", "content": content}]
+        combined = f"{prompt}\n\nDocument text:\n{text[:6000]}"
+        return [{"role": "user", "content": combined}]
 
     # Image — use vision content parts
     b64 = _read_image_b64(file_path)
@@ -258,14 +194,11 @@ def _build_messages(
     }]
 
 
-def _call_openrouter(messages: list[dict], timeout: float = 55.0) -> str:
+def _call_openrouter(messages: list[dict]) -> str:
     """
     Call OpenRouter API.
     Raises OpenRouterRateLimitError on HTTP 429.
     Returns raw text response or "" on failure.
-
-    timeout: httpx timeout in seconds. Use a smaller value for text-only calls
-             so they finish within Render's 30-second edge timeout window.
     """
     if not OPENROUTER_API_KEY:
         raise AIProviderError(
@@ -284,11 +217,10 @@ def _call_openrouter(messages: list[dict], timeout: float = 55.0) -> str:
         "model": OPENROUTER_MODEL,
         "messages": messages,
         "temperature": 0.1,
-        "max_tokens": 2048,
+        "max_tokens": 4096,
     }
     try:
-        # Keep timeout below common edge/proxy limits to avoid empty-reply failures.
-        with httpx.Client(timeout=timeout) as c:
+        with httpx.Client(timeout=90.0) as c:
             resp = c.post(OPENROUTER_ENDPOINT, headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()
@@ -331,12 +263,7 @@ def process_file(file_path: str, mime_type: str) -> tuple[str, dict]:
     is_pdf = "pdf" in mime_type.lower()
     ocr_text = _extract_pdf_text(file_path) if is_pdf else f"[Image — {Path(file_path).stat().st_size:,} bytes]"
 
-    messages = _build_messages(
-        SINGLE_SCHEMA,
-        file_path,
-        mime_type,
-        pre_extracted_pdf_text=ocr_text if is_pdf else None,
-    )
+    messages = _build_messages(SINGLE_SCHEMA, file_path, mime_type)
     if not messages:
         logger.warning("No content parts extracted from file")
         return ocr_text, {}
@@ -375,12 +302,7 @@ def process_file_batch(file_path: str, mime_type: str) -> tuple[str, list[dict]]
     is_pdf = "pdf" in mime_type.lower()
     ocr_text = _extract_pdf_text(file_path) if is_pdf else f"[Image — {Path(file_path).stat().st_size:,} bytes]"
 
-    messages = _build_messages(
-        BATCH_SCHEMA,
-        file_path,
-        mime_type,
-        pre_extracted_pdf_text=ocr_text if is_pdf else None,
-    )
+    messages = _build_messages(BATCH_SCHEMA, file_path, mime_type)
     if not messages:
         return ocr_text, []
 
@@ -441,9 +363,6 @@ def call_ai_text(prompt: str) -> str:
     """
     Text-only AI call (no file). Used for categorisation and other text tasks.
     Returns "" on failure — never raises.
-
-    Uses a shorter timeout (18s) so the call fits within Render's 30s edge
-    timeout when combined with PDF parsing (~5-10s overhead).
     """
     if not OPENROUTER_API_KEY:
         logger.warning("OPENROUTER_API_KEY not set; text-only AI call skipped")
@@ -451,8 +370,7 @@ def call_ai_text(prompt: str) -> str:
 
     try:
         messages = _build_messages(prompt, None, None)
-        # 18s keeps total request time < 30s (Render free-tier edge timeout)
-        return _call_openrouter(messages, timeout=18.0)
+        return _call_openrouter(messages)
     except OpenRouterRateLimitError:
         logger.warning("OpenRouter rate limit on text-only call — skipping")
     except Exception as e:

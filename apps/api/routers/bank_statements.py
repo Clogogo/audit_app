@@ -25,7 +25,6 @@ from schemas import (
     StatementImportItem, StatementImportRequest, StatementImportResult, TransactionOut,
 )
 import ai_worker
-import bank_account_service
 
 router = APIRouter(prefix="/bank-statements", tags=["bank-statements"])
 
@@ -168,25 +167,19 @@ _TRANSFER_KEYWORDS = [
 
 # (category, forced_type) pairs — checked first for income-only categories
 _INCOME_KEYWORD_MAP: list[tuple[str, list[str]]] = [
-    ("Salary",      ["salary", "salaries", "payroll", "monthly pay", "remuneration",
-                     "staff pay", "wages", "pay day",
-                     "(salary)", "(january", "(february", "(march", "(april",
-                     "(may", "(june", "(july", "(august", "(september",
-                     "(october", "(november", "(december"]),
-    ("Investment",  ["interest earn", "owealth interest", "investment income", "dividend",
-                     "fixed deposit return", "savings interest", "interest credit",
-                     "treasury", "lien release", "yield"]),
-    ("Freelance",   ["freelance", "upwork", "fiverr", "gig income", "contract pay"]),
-    ("Gift",        ["gift received", "cash gift"]),
-    ("Refund",      ["refund", "reversal", "chargeback", "return credit",
-                     "clawback reversal"]),
-    ("Business",    ["sales proceed", "business income", "revenue credit"]),
-    # School Fees income: "Transfer from" / "Received from" credits are school fee payments
-    # received by the school from parents/students — these are unambiguously credits.
-    # Regular "school fees" keyword is handled by _NEUTRAL_KEYWORD_MAP (direction-aware).
-    ("School Fees", ["transfer from", "received from"]),
-    ("Loans",       ["loan received", "loan credit", "loan disbursement",
-                     "credit facility", "overdraft credit"]),
+    ("Salary",     ["salary", "salaries", "payroll", "monthly pay", "remuneration",
+                    "staff pay", "wages", "pay day",
+                    "(salary)", "(january", "(february", "(march", "(april",
+                    "(may", "(june", "(july", "(august", "(september",
+                    "(october", "(november", "(december"]),
+    ("Investment", ["interest earn", "owealth interest", "investment income", "dividend",
+                    "fixed deposit return", "savings interest", "interest credit",
+                    "treasury", "lien release", "yield"]),
+    ("Freelance",  ["freelance", "upwork", "fiverr", "gig income", "contract pay"]),
+    ("Gift",       ["gift received", "cash gift"]),
+    ("Refund",     ["refund", "reversal", "chargeback", "return credit",
+                    "clawback reversal"]),
+    ("Business",   ["sales proceed", "business income", "revenue credit"]),
 ]
 
 # Expense/neutral categories (type follows the bank direction — debit=expense, credit=income)
@@ -240,16 +233,12 @@ _NEUTRAL_KEYWORD_MAP: list[tuple[str, list[str]]] = [
                               "technician", "mechanic", "electrician", "plumber",
                               "renovation", "fix", "overhaul", "refurbish"]),
     ("Internal Transfer",   ["auto-save", "owealth"]),
-    ("Loans",               ["loan repayment", "loan payment", "loan deduction",
-                              "repayment of loan", "loan recovery", "debt repayment",
-                              "advance repayment", "loan charge"]),
 ]
 
 
 def _suggest_category_keyword(description: str, tx_type: str) -> tuple[str, str]:
     """
     Return (category, suggested_type) using keyword rules.
-    Optimized with early returns and minimal string operations.
 
     Priority:
       1. Transfer patterns → ("Internal Transfer", "transfer")
@@ -260,14 +249,14 @@ def _suggest_category_keyword(description: str, tx_type: str) -> tuple[str, str]
     desc = description.lower()
     default_type = "income" if tx_type == "credit" else "expense"
 
-    # 1. Transfer - check first (fastest path for common case)
+    # 1. Transfer
     if any(p in desc for p in _TRANSFER_KEYWORDS):
         return "Internal Transfer", "transfer"
 
     # 2. Income-specific categories (direction-aware for Salary)
     for cat, patterns in _INCOME_KEYWORD_MAP:
         if any(p in desc for p in patterns):
-            # Fast path: Salary paid out (debit) = expense; received (credit) = income
+            # Salary paid out (debit) = expense; salary received (credit) = income
             if cat == "Salary" and tx_type == "debit":
                 return "Salary", "expense"
             return cat, "income"
@@ -280,24 +269,6 @@ def _suggest_category_keyword(description: str, tx_type: str) -> tuple[str, str]
     return "Other", default_type
 
 
-# Pre-compiled validation sets for AI response validation (computed once at module load)
-_OWN_ACCT_PATTERNS = {
-    "own account", "inter-account", "owealth", "auto-save",
-    "wallet to wallet", "wallet transfer", "self transfer",
-    "internal transfer",
-}
-
-_VALID_CATEGORIES = {
-    "Food & Dining", "Transportation", "Shopping", "Entertainment",
-    "Bills & Utilities", "Healthcare", "Travel", "Education", "School Fees",
-    "Housing", "Administration", "Repairs",
-    "Salary", "Freelance", "Investment", "Business", "Loans",
-    "Bank Charges & Fees", "Internal Transfer", "Refund", "Gift", "Other",
-}
-
-_VALID_TYPES = {"expense", "income", "transfer"}
-
-
 def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
     """
     For rows whose keyword-based category is still "Other", ask the AI to
@@ -306,24 +277,16 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
     Returns the same rows list with 'suggested_category' and 'suggested_type'
     updated where the AI provided a confident answer.
     Falls back silently on any AI failure.
-
-    Capped at 15 undecided rows per call to stay within Render's 30-second
-    edge timeout (PDF parse ~5-10s + AI call ~12-15s < 30s).
     """
     import httpx
 
-    # Fast filter: only send rows needing categorization
+    # Only send rows where we don't already have a specific category
     undecided_idx = [
         i for i, r in enumerate(rows) if r.get("suggested_category") == "Other"
     ]
-    if not undecided_idx:  # Early return if all rows already categorized
+    if not undecided_idx:
         return rows
 
-    # Cap batch size to keep AI prompt small and response fast on free tier
-    _MAX_BATCH = 15
-    undecided_idx = undecided_idx[:_MAX_BATCH]
-
-    # Prepare batch items with minimal overhead
     items = [
         {"i": i, "desc": rows[i]["description"], "dir": rows[i]["transaction_type"]}
         for i in undecided_idx
@@ -335,7 +298,7 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         '  {"i": <index>, "category": "<category>", "type": "<expense|income|transfer>"}\n\n'
         "Valid categories: Food & Dining, Transportation, Shopping, Entertainment, "
         "Bills & Utilities, Healthcare, Travel, Education, School Fees, Housing, Administration, Repairs, "
-        "Salary, Freelance, Investment, Business, Loans, Bank Charges & Fees, Internal Transfer, Refund, Gift, Other\n\n"
+        "Salary, Freelance, Investment, Business, Bank Charges & Fees, Internal Transfer, Refund, Gift, Other\n\n"
         "Rules:\n"
         "- 'salary', 'payroll' → Salary / income\n"
         "- 'electricity', 'nepa', 'dstv', 'airtime', 'internet' → Bills & Utilities / expense\n"
@@ -343,10 +306,7 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         "- 'auto-save', 'owealth', 'own account', 'inter-account', 'wallet transfer' → Internal Transfer / transfer\n"
         "- 'refund', 'reversal' → Refund / income\n"
         "- 'bank charge', 'stamp duty', 'commission' → Bank Charges & Fees / expense\n"
-        "- 'loan repayment', 'loan deduction', 'debt repayment', 'advance repayment' → Loans / expense\n"
-        "- 'loan received', 'loan disbursement', 'credit facility', 'loan credit' → Loans / income\n"
-        "- 'Transfer from PERSON_NAME' or 'Received from PERSON_NAME' = school fee payment received → School Fees / income\n"
-        "- 'school fees', 'school fee', 'tuition fee', 'sch fees' → School Fees\n"
+        "- 'Transfer from PERSON_NAME' or 'Received from PERSON_NAME' = payment received from an external person → income (NOT transfer)\n"
         "- Debits (dir=debit) are usually expenses; credits (dir=credit) are usually income\n"
         "- IMPORTANT: Only use type=transfer for movements between the account owner's OWN accounts (e.g. own account, inter-account, wallet). A credit received from another person is INCOME, not transfer.\n"
         "- Only extract data visible in the description. Do NOT guess.\n\n"
@@ -360,38 +320,45 @@ def _ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
         raw = ai_worker._clean_json(raw)
         arr_match = re.search(r"\[[\s\S]*\]", raw)
         if not arr_match:
-            return rows  # Early exit if no JSON array found
+            return rows
+        # Own-account patterns that legitimately warrant type=transfer
+        _OWN_ACCT_PATTERNS = [
+            "own account", "inter-account", "owealth", "auto-save",
+            "wallet to wallet", "wallet transfer", "self transfer",
+            "internal transfer",
+        ]
+
+        _VALID_CATEGORIES = {
+            "Food & Dining", "Transportation", "Shopping", "Entertainment",
+            "Bills & Utilities", "Healthcare", "Travel", "Education", "School Fees",
+            "Housing", "Administration", "Repairs",
+            "Salary", "Freelance", "Investment", "Business",
+            "Bank Charges & Fees", "Internal Transfer", "Refund", "Gift", "Other",
+        }
 
         suggestions = json.loads(arr_match.group())
-        undecided_set = set(undecided_idx)  # O(1) lookup for validation
-        
         for s in suggestions:
-            try:
-                idx = int(s.get("i", -1))
-                # Validate index to prevent AI hallucination for indices not requested
-                if idx not in undecided_set:
-                    continue
-                
-                cat = str(s.get("category", "Other")).strip()
-                typ = str(s.get("type", "")).strip().lower()
-                
-                # Update category if valid (reject malformed values like "Bills & Utilities / expense")
-                if cat in _VALID_CATEGORIES and cat != "Other":
-                    rows[idx]["suggested_category"] = cat
-                
-                # Update type if valid, with guard for transfer classification
-                if typ in _VALID_TYPES:
-                    # Guard: AI shouldn't reclassify external credits as transfers
-                    # Only allow transfer if description signals own-account movement
-                    if typ == "transfer":
-                        desc_lower = rows[idx]["description"].lower()
-                        if not any(p in desc_lower for p in _OWN_ACCT_PATTERNS):
-                            # Fall back to direction-based default
-                            typ = "income" if rows[idx]["transaction_type"] == "credit" else "expense"
-                    rows[idx]["suggested_type"] = typ
-            except (ValueError, TypeError, KeyError):
-                # Skip malformed entries silently
+            idx = int(s.get("i", -1))
+            # Only update rows we actually asked about — prevents the AI
+            # hallucinating items for indices it was never given
+            if idx not in undecided_idx:
                 continue
+            cat = str(s.get("category", "Other")).strip()
+            typ = str(s.get("type", "")).strip().lower()
+            # Validate category against known list to reject malformed values
+            # like "Bills & Utilities / expense" that the AI sometimes returns
+            if cat in _VALID_CATEGORIES and cat != "Other":
+                rows[idx]["suggested_category"] = cat
+            if typ in ("expense", "income", "transfer"):
+                # Guard: don't let AI reclassify a received-from-person credit as
+                # "transfer". Only honour type=transfer when the description clearly
+                # signals an own-account movement.
+                if typ == "transfer":
+                    desc_lower = rows[idx]["description"].lower()
+                    if not any(p in desc_lower for p in _OWN_ACCT_PATTERNS):
+                        # Fall back to direction-based default
+                        typ = "income" if rows[idx]["transaction_type"] == "credit" else "expense"
+                rows[idx]["suggested_type"] = typ
     except Exception as e:
         logger.warning(f"AI batch categorization failed: {e}")
 
@@ -1359,10 +1326,6 @@ async def upload_bank_statement(
     bank_name: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    """
-    Upload a bank statement file (CSV, Excel, or PDF).
-    Automatically extracts transactions and links them to a bank account.
-    """
     contents  = await file.read()
     file_type = _detect_file_type(file.content_type or "", file.filename or "")
 
@@ -1371,39 +1334,12 @@ async def upload_bank_statement(
     stored_path = UPLOAD_DIR / stored_name
     stored_path.write_bytes(contents)
 
-    # Extract transactions
     if file_type == "csv":
         rows = _parse_csv(contents)
-        metadata = None
     elif file_type == "excel":
         rows = _parse_excel(contents)
-        metadata = None
     else:
-        # For PDFs, also extract metadata (account info)
-        from pdf_extraction import extract_bank_statement_pdf
-        metadata = None
-        rows = []
-        try:
-            # extract_bank_statement_pdf returns (metadata, transactions) tuple
-            metadata, rows = extract_bank_statement_pdf(str(stored_path), cleanup=False)
-            logger.info(f"Extracted {len(rows)} transactions from PDF via enhanced extractor")
-        except Exception as e:
-            logger.warning(f"Enhanced PDF extraction failed: {e!r}, trying fallback parser")
-        
-        if not rows:
-            # Fallback: multi-strategy parser (pdfplumber tables → text heuristic → AI text)
-            # Note: _parse_pdf_statement also tries extract_bank_statement_pdf first but
-            # degrades gracefully through several other strategies if that fails.
-            try:
-                rows = _parse_pdf_statement(str(stored_path))
-                logger.info(f"Fallback PDF parser: {len(rows)} transactions")
-            except Exception as e2:
-                logger.error(f"All PDF parsers failed: {e2!r}")
-                raise HTTPException(
-                    422,
-                    f"Could not extract transactions from this PDF. "
-                    f"Try a CSV or Excel export from your bank instead. (detail: {e2})",
-                )
+        rows = _parse_pdf_statement(str(stored_path))
 
     if not rows:
         raise HTTPException(
@@ -1411,81 +1347,6 @@ async def upload_bank_statement(
             "No transactions were parsed from this file. "
             "Check that the file is a valid bank statement with Date, "
             "Description and Amount/Debit/Credit columns.",
-        )
-
-    # ── Extract and use bank account metadata ──────────────────────────────────
-    # Prefer bank name from metadata (PDF extraction), fallback to form input
-    extracted_bank_name = bank_name
-    account_number = None
-    account_holder = None
-    currency = "NGN"
-    opening_balance = None
-    closing_balance = None
-    stmt_period_start = None
-    stmt_period_end = None
-    
-    if metadata:
-        # Use extracted bank name if available
-        if metadata.bank_name:
-            extracted_bank_name = metadata.bank_name
-            logger.info(f"Using extracted bank name: {extracted_bank_name}")
-        
-        # Extract account details from metadata (object attributes, not dict)
-        account_number = metadata.account_number
-        account_holder = metadata.account_holder
-        currency = metadata.currency or "NGN"
-        opening_balance = metadata.opening_balance
-        closing_balance = metadata.closing_balance
-        stmt_period_start = metadata.period_start
-        stmt_period_end = metadata.period_end
-        
-        logger.info(
-            f"Extracted metadata: account={account_number}, "
-            f"holder={account_holder}, bank={extracted_bank_name}"
-        )
-    
-    # If still no account_number, try to extract from first transaction's description
-    if not account_number and rows:
-        for row in rows[:5]:  # Check first 5 transactions
-            desc = row.get("description", "").lower()
-            match = re.search(r'(?:account|a/c|acct)[:\s]+(\d{10,20})', desc)
-            if match:
-                account_number = match.group(1).replace(" ", "").replace("-", "")
-                logger.info(f"Extracted account number from transaction: {account_number}")
-                break
-    
-    # Create or get bank account
-    if account_number:
-        bank_account = bank_account_service.get_or_create_bank_account(
-            db=db,
-            bank_name=extracted_bank_name,
-            account_number=account_number,
-            account_holder=account_holder,
-            currency=currency,
-        )
-        
-        # Update balances if extracted from statement
-        if opening_balance is not None or closing_balance is not None:
-            bank_account_service.update_account_balances(
-                db=db,
-                bank_account_id=bank_account.id,
-                opening_balance=opening_balance,
-                closing_balance=closing_balance,
-            )
-            logger.info(
-                f"Updated account balances: opening={opening_balance}, "
-                f"closing={closing_balance}"
-            )
-    else:
-        # Fallback: Create account with pseudo-unique number if extraction failed
-        pseudo_account = f"{extracted_bank_name}_{uuid.uuid4().hex[:12]}".replace(" ", "_")
-        logger.warning(f"No account number found, using pseudo-account: {pseudo_account}")
-        bank_account = bank_account_service.get_or_create_bank_account(
-            db=db,
-            bank_name=extracted_bank_name,
-            account_number=pseudo_account,
-            account_holder=account_holder,
-            currency=currency,
         )
 
     # ── Smart category / type suggestions ─────────────────────────────────────
@@ -1496,24 +1357,10 @@ async def upload_bank_statement(
         r["suggested_type"] = stype
 
     # Pass 2: AI batch call for rows that keyword rules couldn't classify ("Other")
-    # Skip on Render free tier: PDF parse + AI call easily exceeds the 30-second
-    # edge timeout, resulting in a 502.  Keyword rules cover ~85% of cases.
-    _is_render = bool(_os.getenv("RENDER"))
-    if not _is_render:
-        rows = _ai_suggest_categories_batch(rows)
-    else:
-        logger.info(
-            "Skipping AI batch categorization on Render to avoid 30s edge timeout; "
-            "keyword-based categories applied."
-        )
+    rows = _ai_suggest_categories_batch(rows)
 
-    # Create statement linked to bank account
     stmt = BankStatement(
-        bank_account_id=bank_account.id,
-        bank_name=extracted_bank_name,
-        account_last4=account_number[-4:] if account_number and len(account_number) >= 4 else None,
-        statement_period_start=stmt_period_start,
-        statement_period_end=stmt_period_end,
+        bank_name=bank_name,
         file_path=str(stored_path),
         file_type=file_type,
         status="pending",
@@ -1521,14 +1368,8 @@ async def upload_bank_statement(
     db.add(stmt)
     db.flush()
 
-    # Create transaction records linked to both statement and bank account
     for row in rows:
-        tx = BankTransaction(
-            bank_account_id=bank_account.id,
-            statement_id=stmt.id,
-            **row
-        )
-        db.add(tx)
+        db.add(BankTransaction(statement_id=stmt.id, **row))
 
     db.commit()
     db.refresh(stmt)
@@ -1596,35 +1437,22 @@ def list_bank_transactions(stmt_id: int, db: Session = Depends(get_db)):
     )
 
 
-def _fuzzy_score(a: str, b: str) -> float:
-    """Simple token-based similarity score (0-1)."""
-    try:
-        from rapidfuzz import fuzz
-        return fuzz.token_sort_ratio(a.lower(), b.lower()) / 100.0
-    except ImportError:
-        wa = set(a.lower().split())
-        wb = set(b.lower().split())
-        if not wa or not wb:
-            return 0.0
-        return len(wa & wb) / max(len(wa), len(wb))
-
-
 def _find_duplicate_transaction(
     db: Session, item: StatementImportItem, bank_name: str,
     reference: Optional[str] = None,
-    bank_vendor: Optional[str] = None,
 ) -> Optional[Transaction]:
     """
     Check if a matching Transaction already exists in the database.
 
     Priority:
-    1. Reference match — exact reference/description hit (highest confidence).
-    2. Date ± 1 day + exact amount + bank name match — high-confidence duplicate.
-    3. Date ± 1 day + exact amount + vendor/description similarity ≥ 0.5.
-    4. Exact date + exact amount with a single unambiguous candidate.
+    1. Reference match — if the bank transaction has a unique reference (e.g. OPay
+       transaction ID), look for an existing Transaction whose description contains it.
+    2. Exact date + exact amount + same bank — high-confidence duplicate.
+    3. Exact date + exact amount (no bank info) — medium-confidence duplicate,
+       only returned if there is exactly one candidate (ambiguous amounts on the
+       same day are NOT auto-matched).
     """
     from sqlalchemy import func
-    from datetime import timedelta
 
     # ── 1. Reference-based match ───────────────────────────────────────────────
     if reference:
@@ -1636,13 +1464,11 @@ def _find_duplicate_transaction(
         if ref_match:
             return ref_match
 
-    # ── 2 & 3. Date ± 1 day + exact amount ────────────────────────────────────
-    from datetime import date as _date
-    d = item.date if isinstance(item.date, _date) else _date.fromisoformat(str(item.date))
+    # ── 2 & 3. Exact date + exact amount ──────────────────────────────────────
     candidates = (
         db.query(Transaction)
         .filter(
-            Transaction.date.between(d - timedelta(days=1), d + timedelta(days=1)),
+            Transaction.date == item.date,
             func.abs(Transaction.amount - item.amount) <= 0.01,
         )
         .all()
@@ -1650,38 +1476,15 @@ def _find_duplicate_transaction(
     if not candidates:
         return None
 
-    # Prefer same-bank match (highest confidence)
+    # Prefer matches that also share the same bank (high confidence)
     bank_matches = [tx for tx in candidates if tx.bank and tx.bank.lower() == bank_name.lower()]
     if bank_matches:
-        # Within bank matches, pick best vendor/description similarity
-        best = max(
-            bank_matches,
-            key=lambda tx: max(
-                _fuzzy_score(item.description, tx.description),
-                _fuzzy_score(bank_vendor or "", tx.vendor or ""),
-                _fuzzy_score(bank_vendor or "", tx.description),
-            ),
-        )
-        return best
+        return bank_matches[0]
 
-    # Vendor / description similarity among all candidates
-    scored = []
-    for tx in candidates:
-        desc_score   = _fuzzy_score(item.description, tx.description)
-        vendor_score = max(
-            _fuzzy_score(bank_vendor or item.vendor or "", tx.vendor or ""),
-            _fuzzy_score(bank_vendor or item.vendor or "", tx.description),
-        )
-        scored.append((max(desc_score, vendor_score), tx))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    if scored and scored[0][0] >= 0.45:
-        return scored[0][1]
-
-    # Unambiguous fallback: exactly one candidate with same date
-    exact_date = [tx for tx in candidates if tx.date == d]
-    if len(exact_date) == 1:
-        return exact_date[0]
+    # Only return an amount+date match if it is unambiguous (exactly one candidate)
+    # Multiple transactions of the same amount on the same day are NOT auto-deduplicated
+    if len(candidates) == 1:
+        return candidates[0]
 
     return None
 
@@ -1718,9 +1521,7 @@ def import_statement_transactions(
             continue
 
         # ── Duplicate check (reference, then exact date + amount) ─────────
-        existing = _find_duplicate_transaction(
-            db, item, stmt.bank_name, bank_tx.reference, bank_tx.vendor
-        )
+        existing = _find_duplicate_transaction(db, item, stmt.bank_name, bank_tx.reference)
 
         if existing:
             # Link the bank transaction to the already-recorded transaction

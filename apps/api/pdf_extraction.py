@@ -13,19 +13,11 @@ from typing import Optional, Dict, List, Tuple, Any
 
 import pdfplumber
 import pandas as pd
-# pdf2image and pytesseract are imported lazily inside _extract_from_ocr
-# to avoid ImportError on Render (no poppler/tesseract system binaries)
+from pdf2image import convert_from_path
+import pytesseract
 
 logger = logging.getLogger(__name__)
-# Cache compiled regex patterns to avoid recompilation on each use
-_REGEX_CACHE = {
-    'date_formats': [
-        re.compile(r'day', re.IGNORECASE),
-        re.compile(r'month', re.IGNORECASE),
-    ],
-    'currency': re.compile(r'[₦N$£€\s]'),
-    'date_parts': re.compile(r'(\d{4})-(\d{1,2})-(\d{1,2})')
-}
+
 
 class PDFExtractionError(Exception):
     """Raised when PDF extraction fails."""
@@ -295,54 +287,22 @@ class TableExtractor:
         if not text:
             return
         
-        # Extract account number (various formats: 0000000000, 00-00-00-00)
-        acct_patterns = [
-            r'account\s*(?:no|number)?\s*[:\-]?\s*([0-9]{10,20})',
-            r'a/c\s*[:\-]?\s*([0-9]{10,20})',
-            r'acct\s*[:\-]?\s*([0-9]{10,20})',
-        ]
-        for pattern in acct_patterns:
-            acct_match = re.search(pattern, text, re.IGNORECASE)
-            if acct_match:
-                self.metadata.account_number = re.sub(r'[\s\-]', '', acct_match.group(1).strip())
-                break
+        # Extract account number
+        acct_match = re.search(r'account\s*(?:no|number)?\s*[:\-]?\s*([0-9]{8,20})', text, re.IGNORECASE)
+        if acct_match:
+            self.metadata.account_number = acct_match.group(1)
         
         # Extract account holder name
-        holder_patterns = [
-            r'account\s*(?:holder|name)\s*[:\-]?\s*([A-Z][A-Za-z\s/]{3,50})',
-            r'registered\s+name\s*[:\-]?\s*([A-Z][A-Za-z\s/]{3,50})',
-        ]
-        for pattern in holder_patterns:
-            holder_match = re.search(pattern, text, re.IGNORECASE)
-            if holder_match:
-                name = holder_match.group(1).strip()
-                name = re.sub(r'[^\w\s/\-]$', '', name)
-                if len(name) > 3:
-                    self.metadata.account_holder = name
-                    break
+        holder_match = re.search(r'account\s*(?:holder|name)\s*[:\-]?\s*([A-Z][A-Za-z\s]+)', text, re.IGNORECASE)
+        if holder_match:
+            self.metadata.account_holder = holder_match.group(1).strip()
         
-        # Extract bank name with comprehensive patterns
-        bank_patterns = [
-            (r'access\s+bank', 'Access Bank'),
-            (r'gtbank|guaranty\s+trust', 'GTBank'),
-            (r'uba|united\s+bank\s+for\s+africa', 'UBA'),
-            (r'zenith\s+bank', 'Zenith Bank'),
-            (r'first\s+bank(?:\s+of\s+nigeria)?', 'First Bank'),
-            (r'stanbic', 'Stanbic'),
-            (r'fcmb|fidelity\s+bank', 'FCMB'),
-            (r'moniepoint', 'Moniepoint'),
-            (r'opay', 'OPay'),
-            (r'kuda', 'Kuda'),
-            (r'ecobank', 'Ecobank'),
-            (r'polaris\s+bank', 'Polaris Bank'),
-            (r'wema\s+bank', 'Wema Bank'),
-            (r'union\s+bank', 'Union Bank'),
-            (r'heritage\s+bank', 'Heritage Bank'),
-        ]
-        text_lower = text.lower()
-        for pattern, bank_name in bank_patterns:
-            if re.search(pattern, text_lower, re.IGNORECASE):
-                self.metadata.bank_name = bank_name
+        # Extract bank name (common Nigerian banks)
+        banks = ["Access Bank", "Guaranty Trust Bank", "GTBank", "UBA", "Zenith Bank",
+                 "First Bank", "Stanbic", "FCMB", "Moniepoint", "OPay", "Kuda"]
+        for bank in banks:
+            if bank.lower() in text.lower():
+                self.metadata.bank_name = bank
                 break
         
         # Extract opening/closing balances
@@ -361,11 +321,8 @@ class TableExtractor:
                 text, re.IGNORECASE
             )
             if period_match:
-                try:
-                    self.metadata.period_start = self._parse_date(period_match.group(1))
-                    self.metadata.period_end = self._parse_date(period_match.group(2))
-                except:
-                    pass
+                self.metadata.period_start = self._parse_date(period_match.group(1))
+                self.metadata.period_end = self._parse_date(period_match.group(2))
     
     def _extract_from_ocr(self, pdf) -> List[Dict[str, Any]]:
         """
@@ -374,12 +331,6 @@ class TableExtractor:
         transactions = []
         
         try:
-            try:
-                from pdf2image import convert_from_path
-                import pytesseract
-            except ImportError:
-                logger.warning("OCR unavailable: pdf2image or pytesseract not installed (no poppler/tesseract)")
-                return []
             images = convert_from_path(self.pdf_path, dpi=200)
             
             for page_num, image in enumerate(images, 1):
@@ -469,21 +420,18 @@ class TableExtractor:
         return "amount" in tx and tx.get("amount") and tx.get("date")
     
     def _parse_date(self, date_str: str) -> Optional[str]:
-        """Parse date string to YYYY-MM-DD format. Optimized with early returns."""
+        """Parse date string to YYYY-MM-DD format."""
         if not date_str or not isinstance(date_str, str):
             return None
         
         date_str = date_str.strip()
         
-        # Fast path: already in YYYY-MM-DD format
-        if _REGEX_CACHE['date_parts'].match(date_str):
-            return date_str
-        
-        # Common date formats (ordered by likelihood)
+        # Common date formats
         formats = [
-            "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d",
-            "%d/%m/%y", "%d-%m-%y", "%m/%d/%Y", "%m-%d-%Y",
-            "%m/%d/%y", "%m-%d-%y", "%d %b %Y", "%d %B %Y",
+            "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y",
+            "%m/%d/%Y", "%m-%d-%Y", "%m/%d/%y", "%m-%d-%y",
+            "%d %b %Y", "%d %B %Y",
+            "%Y-%m-%d", "%Y/%m/%d",
         ]
         
         for fmt in formats:
@@ -493,49 +441,39 @@ class TableExtractor:
             except ValueError:
                 continue
         
+        logger.warning(f"Could not parse date: {date_str}")
         return None
     
     def _parse_amount(self, amount_str: str) -> Optional[float]:
-        """Parse amount string to float. Optimized for performance."""
+        """Parse amount string to float."""
         if not amount_str or not isinstance(amount_str, str):
             return None
         
-        amount_str = amount_str.strip()
+        amount_str = str(amount_str).strip()
         
-        # Fast return for common null values
-        if amount_str in ("na", "n/a", "null", "-", ""):
+        if not amount_str or amount_str.lower() in ["na", "n/a", "null", "-"]:
             return None
         
-        # Remove currency symbols and whitespace using cached regex
-        amount_str = _REGEX_CACHE['currency'].sub('', amount_str)
+        # Remove currency symbols and whitespace
+        amount_str = re.sub(r'[₦N$£€\s]', '', amount_str)
         
-        # Remove commas in one pass
-        amount_str = amount_str.replace(',', '').strip()
-        
-        # Fast validation
-        if not amount_str:
-            return None
+        # Remove commas
+        amount_str = amount_str.replace(',', '')
         
         try:
-            val = float(amount_str)
-            return val if val > 0 else None
+            return float(amount_str)
         except ValueError:
+            logger.warning(f"Could not parse amount: {amount_str}")
             return None
     
     def _deduplicate_transactions(self, transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Remove duplicate transactions efficiently using reference or signature."""
+        """Remove duplicate transactions."""
         seen = set()
         unique = []
         
         for tx in transactions:
-            # Prefer reference if available (more reliable)
-            ref = tx.get("reference")
-            if ref:
-                sig = (tx.get("date"), ref)
-            else:
-                # Fallback to (date + amount + description prefix)
-                sig = (tx.get("date"), tx.get("amount"), tx.get("description", "")[:20])
-            
+            # Create a signature (date + amount + description)
+            sig = (tx.get("date"), tx.get("amount"), tx.get("description", "")[:30])
             if sig not in seen:
                 seen.add(sig)
                 unique.append(tx)
@@ -557,18 +495,25 @@ def extract_bank_statement_pdf(pdf_path: str, cleanup: bool = True) -> Tuple[Sta
     Raises:
         PDFExtractionError: If extraction fails
     """
-    pdf = Path(pdf_path)
-    
     try:
         extractor = TableExtractor(pdf_path)
-        return extractor.extract()
-    except PDFExtractionError:
-        raise
-    finally:
-        # Always cleanup, even on success or failure
-        if cleanup and pdf.exists():
+        result = extractor.extract()
+        
+        # Delete temporary file after successful extraction
+        if cleanup:
             try:
-                pdf.unlink()
-                logger.debug(f"Cleaned up temporary file: {pdf_path}")
+                Path(pdf_path).unlink()
+                logger.info(f"Cleaned up temporary file: {pdf_path}")
             except Exception as e:
                 logger.warning(f"Could not delete temporary file {pdf_path}: {e}")
+        
+        return result
+    except Exception as e:
+        # Still cleanup even if extraction fails
+        if cleanup:
+            try:
+                Path(pdf_path).unlink()
+                logger.info(f"Cleaned up temporary file after failed extraction: {pdf_path}")
+            except Exception:
+                pass
+        raise

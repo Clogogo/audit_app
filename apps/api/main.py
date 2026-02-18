@@ -1,8 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()  # loads apps/api/.env → sets OPENROUTER_API_KEY in os.environ
 
-import json
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from sqlalchemy import text
@@ -21,26 +20,19 @@ with engine.connect() as _conn:
         "ALTER TABLE bank_transactions ADD COLUMN suggested_category VARCHAR(100)",
         "ALTER TABLE bank_transactions ADD COLUMN suggested_type VARCHAR(20)",
         "ALTER TABLE bank_transactions ADD COLUMN vendor VARCHAR(200)",
-        "ALTER TABLE bank_accounts ADD COLUMN account_holder VARCHAR(200)",
-        "ALTER TABLE bank_accounts ADD COLUMN account_type VARCHAR(50)",
-        "ALTER TABLE bank_accounts ADD COLUMN opening_balance FLOAT",
-        "ALTER TABLE bank_accounts ADD COLUMN closing_balance FLOAT",
-        "ALTER TABLE bank_accounts ADD COLUMN last_statement_date DATE",
-        "ALTER TABLE bank_statements ADD COLUMN bank_account_id INTEGER",
-        "ALTER TABLE bank_transactions ADD COLUMN bank_account_id INTEGER",
     ]:
         try:
             _conn.execute(text(_col_sql))
             _conn.commit()
         except Exception:
-            _conn.rollback()  # PostgreSQL aborts the whole transaction on error; must rollback before next statement
+            pass  # column already exists
 
     # Normalize legacy USD entries to NGN (this app is NGN-primary)
     try:
         _conn.execute(text("UPDATE transactions SET currency = 'NGN' WHERE currency = 'USD' OR currency IS NULL"))
         _conn.commit()
     except Exception:
-        _conn.rollback()
+        pass
 
 app = FastAPI(
     title="FinanceAudit API",
@@ -50,16 +42,15 @@ app = FastAPI(
 
 import os as _os
 
-_origins = ["http://localhost:4200", "http://localhost:3000", "http://localhost:5173"]
+_origins = ["http://localhost:4200", "http://localhost:3000"]
 # FRONTEND_URL is set in Render env vars to your Vercel URL
-_frontend_url = _os.getenv("FRONTEND_URL", "").strip()
+_frontend_url = _os.getenv("FRONTEND_URL", "")
 if _frontend_url:
     _origins.append(_frontend_url.rstrip("/"))
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -91,7 +82,7 @@ def health():
     except:
         pass
     
-    response = {
+    return {
         "status": "ok",
         "ai": ai_status,
         "ocr": {
@@ -104,13 +95,3 @@ def health():
             "max_file_size": "50MB"
         }
     }
-    # Return response wrapped with cache-control headers
-    return Response(
-        content=json.dumps(response),
-        media_type="application/json",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0"
-        }
-    )
