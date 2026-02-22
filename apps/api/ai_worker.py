@@ -34,7 +34,7 @@ class AIProviderError(Exception):
 # ── Configuration ────────────────────────────────────────────────────────────
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.5-plus-02-15")
+OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen3-next-80b-a3b-instruct:free")
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # Rate limiter — free tier: 20 RPM → 3s between requests
@@ -256,6 +256,11 @@ def _call_openrouter(messages: list[dict]) -> str:
         if e.response.status_code == 429:
             raise OpenRouterRateLimitError(
                 "Rate limit reached. Please wait a moment and try again."
+            )
+        if e.response.status_code == 402:
+            raise AIProviderError(
+                "Insufficient OpenRouter Credits: You have reached the quota limit for the selected model. "
+                "Please upgrade your OpenRouter account or switch to a free model like 'google/gemini-2.5-flash'."
             )
         logger.error(f"OpenRouter HTTP error {e.response.status_code}: {e.response.text[:300]}")
         return ""
