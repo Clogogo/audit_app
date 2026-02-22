@@ -240,35 +240,51 @@ def _call_openrouter(messages: list[dict]) -> str:
         "temperature": 0.1,
         "max_tokens": 1300,
     }
-    try:
-        with httpx.Client(timeout=90.0) as c:
-            resp = c.post(OPENROUTER_ENDPOINT, headers=headers, json=body)
-            resp.raise_for_status()
-            data = resp.json()
-        text = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
-        logger.info(f"OpenRouter response preview: {text[:200]}...")
-        return text
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 429:
-            raise OpenRouterRateLimitError(
-                "Rate limit reached. Please wait a moment and try again."
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        _or_acquire()
+        try:
+            with httpx.Client(timeout=90.0) as c:
+                resp = c.post(OPENROUTER_ENDPOINT, headers=headers, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+            text = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
             )
-        if e.response.status_code == 402:
-            raise AIProviderError(
-                "Insufficient OpenRouter Credits: You have reached the quota limit for the selected model. "
-                "Please upgrade your OpenRouter account or switch to a free model like 'google/gemini-2.5-flash'."
-            )
-        logger.error(f"OpenRouter HTTP error {e.response.status_code}: {e.response.text[:300]}")
-        return ""
-    except OpenRouterRateLimitError:
-        raise
-    except Exception as e:
-        logger.error(f"OpenRouter call failed: {e}")
-        return ""
+            logger.info(f"OpenRouter response preview: {text[:200]}...")
+            return text
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 5
+                    logger.warning(f"OpenRouter 429 Rate Limit. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                raise OpenRouterRateLimitError(
+                    "Rate limit reached. Please wait a moment and try again."
+                )
+            if e.response.status_code == 402:
+                raise AIProviderError(
+                    "Insufficient OpenRouter Credits: You have reached the quota limit for the selected model. "
+                    "Please upgrade your OpenRouter account or switch to a free model like 'google/gemini-2.5-flash'."
+                )
+            logger.error(f"OpenRouter HTTP error {e.response.status_code}: {e.response.text[:300]}")
+            return ""
+        except OpenRouterRateLimitError:
+            raise
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5
+                logger.warning(f"OpenRouter network error: {e}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+            logger.error(f"OpenRouter call failed after retries: {e}")
+            return ""
+            
+    return ""
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
