@@ -34,7 +34,7 @@ class AIProviderError(Exception):
 # ── Configuration ────────────────────────────────────────────────────────────
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen3-vl-30b-a3b-thinking")
+OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.5-plus-02-15")
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # Rate limiter — free tier: 20 RPM → 3s between requests
@@ -72,11 +72,11 @@ Salary, Freelance, Investment, Business, Other>",
 }
 
 IMPORTANT: Only extract information that is explicitly visible in the document.
-Return ONLY the JSON object. No markdown, no explanation, no extra text."""
+Return ONLY the JSON object. Do not include markdown formatting or reasoning."""
 
 BATCH_SCHEMA = """\
 This document may contain MULTIPLE transactions, payments, or line items.
-Extract EVERY row/entry as a separate item. Return ONLY a valid JSON array.
+Extract EVERY row/entry as a separate item. Return ONLY a valid JSON array of objects.
 Use null for any field you cannot clearly see — do NOT guess or invent values.
 
 [
@@ -99,7 +99,7 @@ IMPORTANT rules:
 - Include ALL rows/entries, even if some fields are missing (use null for those fields).
 - For school fee payments the type is usually "income".
 - If a column has a running date, use the most recent date above each entry.
-- Return ONLY the JSON array. No markdown, no explanation, no extra text."""
+- Return ONLY the JSON array. Do not include markdown formatting, backticks, or reasoning blocks."""
 
 
 # ── JSON cleanup ─────────────────────────────────────────────────────────────
@@ -108,11 +108,32 @@ def _clean_json(raw: str) -> str:
     """Remove common non-JSON artifacts from AI responses."""
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
     raw = re.sub(r"<reasoning>.*?</reasoning>", "", raw, flags=re.DOTALL)
-    raw = re.sub(r"```(?:json)?\s*", "", raw)
-    raw = re.sub(r"```", "", raw)
+    raw = re.sub(r"```json\s*", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"```\s*", "", raw)
+    # Strip any introductory text like "Here is the JSON:"
     raw = re.sub(r"^(?:Here's|Here is|The|This is)\s+(?:the|a)?\s+(?:JSON|json|extracted)?.*?[:\n]", "", raw, flags=re.IGNORECASE)
     raw = re.sub(r"^(?:Based on|From|According to)\s+(?:the|this)?.*?[:\n]", "", raw, flags=re.IGNORECASE)
-    return raw.strip()
+    
+    cleaned = raw.strip()
+    
+    # Try to heuristically fix truncated JSON due to token limits
+    if cleaned.startswith("[") and not cleaned.endswith("]"):
+        # Remove anything after the last complete object "}"
+        last_brace = cleaned.rfind('}')
+        if last_brace != -1:
+            cleaned = cleaned[:last_brace+1] + "\n]"
+        else:
+            # If there's no complete object at all, just close the array
+            cleaned += "\n]"
+    elif cleaned.startswith("{") and not cleaned.endswith("}"):
+        # For a single object, remove a partial trailing key like `"date":`
+        last_comma = cleaned.rfind(',')
+        if last_comma != -1:
+            cleaned = cleaned[:last_comma] + "\n}"
+        else:
+            cleaned += "\n}"
+
+    return cleaned
 
 
 # ── File helpers ─────────────────────────────────────────────────────────────
@@ -217,7 +238,7 @@ def _call_openrouter(messages: list[dict]) -> str:
         "model": OPENROUTER_MODEL,
         "messages": messages,
         "temperature": 0.1,
-        "max_tokens": 4096,
+        "max_tokens": 1300,
     }
     try:
         with httpx.Client(timeout=90.0) as c:
