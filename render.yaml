@@ -15,3 +15,6 @@ services:
         sync: false          # optional — enables AI fallback when Ollama is unavailable
       - key: UPLOAD_DIR
         value: /tmp/uploads  # Render free tier has no persistent disk; use /tmp
+    buildFilter:
+      paths:
+        - apps/api/**
