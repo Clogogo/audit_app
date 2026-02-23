@@ -1,6 +1,6 @@
 """
-AI Worker — OpenRouter provider
-  Model: qwen/qwen2.5-vl-72b-instruct:free  (OPENROUTER_MODEL env var to override)
+AI Worker — OpenRouter Qwen provider
+  Model: qwen/qwen-3.5-plus-02-15 (OPENROUTER_MODEL env var to override)
   Requires: OPENROUTER_API_KEY environment variable
 
 Two extraction modes:
@@ -12,19 +12,17 @@ import json
 import logging
 import os
 import re
-import threading
-import time
 from pathlib import Path
 
-import httpx
+from llm_providers import get_llm_client
 
 logger = logging.getLogger(__name__)
 
 
 # ── Custom exceptions ────────────────────────────────────────────────────────
 
-class OpenRouterRateLimitError(Exception):
-    """Raised when OpenRouter returns HTTP 429."""
+class AILimitError(Exception):
+    """Raised when the AI Provider returns HTTP 429."""
 
 
 class AIProviderError(Exception):
@@ -33,24 +31,7 @@ class AIProviderError(Exception):
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen3-next-80b-a3b-instruct:free")
-OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-
-# Rate limiter — free tier: 20 RPM → 3s between requests
-_OR_INTERVAL   = 3.0
-_or_lock       = threading.Lock()
-_or_last: float = 0.0
-
-
-def _or_acquire() -> None:
-    global _or_last
-    with _or_lock:
-        wait = _OR_INTERVAL - (time.monotonic() - _or_last)
-        if wait > 0:
-            logger.info(f"OpenRouter rate-limiter: sleeping {wait:.1f}s")
-            time.sleep(wait)
-        _or_last = time.monotonic()
+# OpenRouter client is initialized via llm_providers module
 
 
 # ── Shared prompt schemas ────────────────────────────────────────────────────
@@ -138,8 +119,18 @@ def _clean_json(raw: str) -> str:
 
 # ── File helpers ─────────────────────────────────────────────────────────────
 
-def _read_image_b64(file_path: str) -> str:
-    return base64.b64encode(Path(file_path).read_bytes()).decode()
+def _extract_image_text_ocr(file_path: str) -> str:
+    """Extract text from a standard image using pytesseract OCR."""
+    try:
+        from PIL import Image
+        import pytesseract
+        image = Image.open(file_path)
+        logger.info(f"OCR processing single image")
+        text = pytesseract.image_to_string(image, lang='eng')
+        return text.strip()
+    except Exception as e:
+        logger.warning(f"Image OCR failed: {e}")
+        return ""
 
 
 def _extract_pdf_text(file_path: str) -> str:
@@ -185,119 +176,73 @@ def _extract_pdf_text_ocr(file_path: str) -> str:
         return ""
 
 
-# ── OpenRouter provider ───────────────────────────────────────────────────────
+# ── OpenRouter Qwen provider ────────────────────────────────────────────
 
 def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -> list[dict]:
     """
     Build the OpenAI-style messages list.
     - PDF: extract text, send as plain text message
-    - Image: send as base64 image_url content part
+    - Image: OCR to text using pytesseract, send as plain text
     - None (text-only): send prompt as plain text
     """
     if file_path is None or mime_type is None:
         return [{"role": "user", "content": prompt}]
 
+    text = ""
     if "pdf" in mime_type.lower():
         text = _extract_pdf_text(file_path)
-        if not text:
-            return []
-        combined = f"{prompt}\n\nDocument text:\n{text[:6000]}"
-        return [{"role": "user", "content": combined}]
-
-    # Image — use vision content parts
-    b64 = _read_image_b64(file_path)
-    return [{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}},
-        ],
-    }]
+    else:
+        text = _extract_image_text_ocr(file_path)
+        
+    if not text:
+        return []
+    combined = f"{prompt}\n\nDocument text:\n{text[:6000]}"
+    return [{"role": "user", "content": combined}]
 
 
 def _call_openrouter(messages: list[dict]) -> str:
     """
-    Call OpenRouter API.
-    Raises OpenRouterRateLimitError on HTTP 429.
+    Call OpenRouter Qwen API.
     Returns raw text response or "" on failure.
     """
-    if not OPENROUTER_API_KEY:
-        raise AIProviderError(
-            "OPENROUTER_API_KEY is not set. Add it to your environment variables."
+    try:
+        client = get_llm_client()
+        text = client.create_message(
+            messages=messages,
+            max_tokens=1300,
         )
-
-    _or_acquire()
-
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://audit-app-yw5z.onrender.com",
-        "X-Title": "FinanceAudit",
-    }
-    body = {
-        "model": OPENROUTER_MODEL,
-        "messages": messages,
-        "temperature": 0.1,
-        "max_tokens": 1300,
-    }
-
-    max_retries = 3
-    for attempt in range(max_retries):
-        _or_acquire()
-        try:
-            with httpx.Client(timeout=90.0) as c:
-                resp = c.post(OPENROUTER_ENDPOINT, headers=headers, json=body)
-                resp.raise_for_status()
-                data = resp.json()
-            text = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
-            logger.info(f"OpenRouter response preview: {text[:200]}...")
-            return text
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 5
-                    logger.warning(f"OpenRouter 429 Rate Limit. Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                raise OpenRouterRateLimitError(
-                    "Rate limit reached. Please wait a moment and try again."
-                )
-            if e.response.status_code == 402:
-                raise AIProviderError(
-                    "Insufficient OpenRouter Credits: You have reached the quota limit for the selected model. "
-                    "Please upgrade your OpenRouter account or switch to a free model like 'google/gemini-2.5-flash'."
-                )
-            logger.error(f"OpenRouter HTTP error {e.response.status_code}: {e.response.text[:300]}")
-            return ""
-        except OpenRouterRateLimitError:
-            raise
-        except Exception as e:
-            if attempt < max_retries - 1:
-                wait_time = (attempt + 1) * 5
-                logger.warning(f"OpenRouter network error: {e}. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-                continue
-            logger.error(f"OpenRouter call failed after retries: {e}")
-            return ""
-            
-    return ""
+        logger.info(f"OpenRouter response preview: {text[:200]}...")
+        return text
+    except ValueError as e:
+        # OPENROUTER_API_KEY not set
+        raise AIProviderError(
+            f"OpenRouter API configuration error: {e}"
+        )
+    except Exception as e:
+        logger.error(f"OpenRouter call failed: {e}")
+        return ""
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def get_provider_status() -> dict:
     """Return current provider availability for the health endpoint."""
-    configured = bool(OPENROUTER_API_KEY)
-    return {
-        "provider": f"OpenRouter / {OPENROUTER_MODEL}" if configured else "None",
-        "model": OPENROUTER_MODEL if configured else "",
-        "configured": configured,
-        "ollama_available": False,
-    }
+    try:
+        client = get_llm_client()
+        model = client.model
+        return {
+            "provider": f"OpenRouter / {model}",
+            "model": model,
+            "configured": True,
+            "ollama_available": False,
+        }
+    except Exception:
+        return {
+            "provider": "None",
+            "model": "",
+            "configured": False,
+            "ollama_available": False,
+        }
 
 
 def process_file(file_path: str, mime_type: str) -> tuple[str, dict]:
@@ -406,15 +351,11 @@ def call_ai_text(prompt: str) -> str:
     Text-only AI call (no file). Used for categorisation and other text tasks.
     Returns "" on failure — never raises.
     """
-    if not OPENROUTER_API_KEY:
-        logger.warning("OPENROUTER_API_KEY not set; text-only AI call skipped")
-        return ""
-
     try:
         messages = _build_messages(prompt, None, None)
         return _call_openrouter(messages)
-    except OpenRouterRateLimitError:
-        logger.warning("OpenRouter rate limit on text-only call — skipping")
+    except AIProviderError:
+        logger.warning("OpenRouter not configured; text-only AI call skipped")
     except Exception as e:
         logger.error(f"OpenRouter text-only call failed: {e}")
     return ""

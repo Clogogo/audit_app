@@ -57,3 +57,11 @@ DEPLOYMENT_GUIDE.md
 README_EXTRACTION_ENHANCEMENT.md
 .idea/
 .vscode/
+.opencode/skills/link-workspace-packages/SKILL.md
+.opencode/skills/monitor-ci/SKILL.md
+.opencode/skills/nx-generate/SKILL.md
+.opencode/skills/nx-plugins/SKILL.md
+.opencode/skills/nx-run-tasks/SKILL.md
+.opencode/skills/nx-workspace/SKILL.md
+.github/skills/monitor-ci/SKILL.md
+.github/skills/monitor-ci/SKILL.md

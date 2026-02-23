@@ -207,3 +207,70 @@ export const INCOME_CATEGORIES = [
   'Internal Transfer',
   'Other',
 ];
+// ── LLM Bank Statement Parsing ────────────────────────────────────────────────
+
+export interface LLMBankStatementMetadata {
+  bank_name: string;
+  account_number?: string;
+  account_holder?: string;
+  statement_period_start?: string;
+  statement_period_end?: string;
+  opening_balance?: number;
+  closing_balance?: number;
+  currency: string;
+  statement_date?: string;
+}
+
+export interface LLMBankTransactionItem {
+  date: string;
+  description: string;
+  amount: number;
+  transaction_type: 'debit' | 'credit';
+  balance_after?: number;
+  reference?: string;
+  vendor?: string;
+  category_suggested?: string;
+  confidence: number;
+}
+
+export interface LLMStatementParseResult {
+  metadata: LLMBankStatementMetadata;
+  transactions: LLMBankTransactionItem[];
+  extraction_quality: 'high' | 'medium' | 'low';
+  validation_issues: string[];
+}
+
+export interface LLMStatementUploadResult {
+  statement_id: number;
+  file_name: string;
+  bank_name: string;
+  statement_period_start?: string;
+  statement_period_end?: string;
+  transaction_count: number;
+  extraction_quality: 'high' | 'medium' | 'low';
+  validation_issues: string[];
+  metadata: LLMBankStatementMetadata;
+}
+
+export interface LLMStatementImportItem {
+  transaction_index: number;
+  amount: number;
+  currency: string;
+  category: string;
+  description: string;
+  date: string;
+  vendor?: string;
+  type: TransactionType;
+}
+
+export interface LLMStatementImportRequest {
+  statement_id: number;
+  items: LLMStatementImportItem[];
+  bank_account_id?: number;
+}
+
+export interface LLMStatementImportResult {
+  saved: number;
+  reconciled: number;
+  statement_id: number;
+}

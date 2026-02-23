@@ -14,6 +14,10 @@ import type {
   BatchConfirmItem,
   StatementImportItem,
   StatementImportResult,
+  LLMStatementParseResult,
+  LLMStatementUploadResult,
+  LLMStatementImportRequest,
+  LLMStatementImportResult,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -186,3 +190,44 @@ export interface HealthStatus {
   };
 }
 export const getHealth = () => api.get<HealthStatus>('/health').then(unwrap);
+// ── LLM Bank Statement Parsing ────────────────────────────────────────────────
+
+export const parseBankStatementLLM = (file: File) => {
+  const form = new FormData();
+  form.append('file', file);
+  return api
+    .post<LLMStatementParseResult>('/bank-statements-llm/parse', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    .then(unwrap);
+};
+
+export const uploadBankStatementLLM = (file: File, bankAccountId?: number) => {
+  const form = new FormData();
+  form.append('file', file);
+  if (bankAccountId) {
+    form.append('bank_account_id', bankAccountId.toString());
+  }
+  return api
+    .post<LLMStatementUploadResult>('/bank-statements-llm/upload', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    .then(unwrap);
+};
+
+export const getLLMStatementTransactions = (statementId: number) =>
+  api.get<BankTransaction[]>(`/bank-statements-llm/${statementId}/transactions`).then(unwrap);
+
+export const importLLMStatementTransactions = (
+  stmtId: number,
+  items: LLMStatementImportRequest['items'],
+  bankAccountId?: number,
+) =>
+  api.post<LLMStatementImportResult>(`/bank-statements-llm/${stmtId}/import`, {
+    statement_id: stmtId,
+    items,
+    bank_account_id: bankAccountId ?? null,
+  }).then(unwrap);
+
+export const deleteLLMStatement = (stmtId: number) =>
+  api.delete(`/bank-statements-llm/${stmtId}`);

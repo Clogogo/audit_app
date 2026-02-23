@@ -147,6 +147,81 @@ class StatementImportResult(BaseModel):
     statement_id: int
 
 
+# ── LLM Bank Statement Extraction ────────────────────────────────────────────
+
+class LLMBankTransactionItem(BaseModel):
+    """Transaction extracted by LLM from bank statement."""
+    date: str  # ISO format YYYY-MM-DD
+    description: str
+    amount: float
+    transaction_type: str  # debit | credit
+    balance_after: Optional[float] = None
+    reference: Optional[str] = None
+    vendor: Optional[str] = None
+    category_suggested: Optional[str] = None
+    confidence: float = 1.0
+
+
+class LLMBankStatementMetadata(BaseModel):
+    """Metadata extracted by LLM."""
+    bank_name: str
+    account_number: Optional[str] = None
+    account_holder: Optional[str] = None
+    statement_period_start: Optional[str] = None
+    statement_period_end: Optional[str] = None
+    opening_balance: Optional[float] = None
+    closing_balance: Optional[float] = None
+    currency: str = "NGN"
+    statement_date: Optional[str] = None
+
+
+class LLMStatementParseResult(BaseModel):
+    """Result of LLM parsing a bank statement."""
+    metadata: LLMBankStatementMetadata
+    transactions: list[LLMBankTransactionItem]
+    extraction_quality: str  # high | medium | low
+    validation_issues: list[str] = []
+
+
+class LLMStatementUploadResult(BaseModel):
+    """Response when uploading a bank statement for LLM parsing."""
+    statement_id: int
+    file_name: str
+    bank_name: str
+    statement_period_start: Optional[str] = None
+    statement_period_end: Optional[str] = None
+    transaction_count: int
+    extraction_quality: str
+    validation_issues: list[str] = []
+    metadata: LLMBankStatementMetadata
+
+
+class LLMStatementImportItem(BaseModel):
+    """Item to import from LLM-extracted statement."""
+    transaction_index: int  # Index in extracted transactions
+    amount: float
+    currency: str = "NGN"
+    category: str  # Must be valid category
+    description: str
+    date: date
+    vendor: Optional[str] = None
+    type: str = "expense"
+
+
+class LLMStatementImportRequest(BaseModel):
+    """Request to import transactions from LLM-extracted statement."""
+    statement_id: int
+    items: list[LLMStatementImportItem]
+    bank_account_id: Optional[int] = None
+
+
+class LLMStatementImportResult(BaseModel):
+    """Result of importing transactions from LLM-extracted statement."""
+    saved: int  # New transactions created
+    reconciled: int  # Matched with existing transactions
+    statement_id: int
+
+
 # ── Bank Statements ───────────────────────────────────────────────────────────
 
 class BankStatementOut(BaseModel):
