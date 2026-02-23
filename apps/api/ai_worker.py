@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 # ── Custom exceptions ────────────────────────────────────────────────────────
 
-class AILimitError(Exception):
-    """Raised when the AI Provider returns HTTP 429."""
+class OpenRouterRateLimitError(Exception):
+    """Raised when OpenRouter returns HTTP 429 (rate limit)."""
 
 
 class AIProviderError(Exception):
