@@ -1,11 +1,11 @@
 """
-OpenRouter LLM Client Factory for Qwen Model
+OpenRouter LLM Client Factory
 
 Provider: OpenRouter (https://openrouter.io/)
-Model: Qwen (default: qwen-3.5-plus-02-15, configurable)
+Model: Liquid LFM 2.5 (default: liquid/lfm-2.5-1.2b-thinking:free, configurable)
 Cost: Free tier with rate limits, or pay-as-you-go
 
-This module provides a unified interface for accessing Qwen LLM via OpenRouter.
+This module provides a unified interface for accessing LLMs via OpenRouter.
 """
 
 import os
@@ -21,14 +21,14 @@ class LLMConfig:
     def get_model() -> str:
         """
         Get the OpenRouter LLM model name.
-        
+
         Environment variables:
-        - OPENROUTER_MODEL: (default: "qwen/qwen-3.5-plus-02-15")
-        
+        - OPENROUTER_MODEL: (default: "liquid/lfm-2.5-1.2b-thinking:free")
+
         Returns:
             str: The model identifier
         """
-        model = os.getenv("OPENROUTER_MODEL", "qwen/qwen-3.5-plus-02-15")
+        model = os.getenv("OPENROUTER_MODEL", "liquid/lfm-2.5-1.2b-thinking:free")
         logger.info(f"Using OpenRouter model: {model}")
         return model
 
@@ -37,7 +37,7 @@ class LLMConfig:
 
 
 class OpenRouterLLMClient:
-    """Wrapper for OpenRouter API with Qwen LLM."""
+    """Wrapper for OpenRouter API with Liquid LFM."""
     
     def __init__(self):
         from openai import OpenAI
@@ -58,7 +58,7 @@ class OpenRouterLLMClient:
     
     def create_message(self, messages: list, max_tokens: int = 4096, **kwargs) -> str:
         """
-        Create a message using OpenRouter Qwen.
+        Create a message using OpenRouter LLM.
         
         Args:
             messages: List of message dicts with "role" and "content"
@@ -86,9 +86,9 @@ class LLMClientFactory:
     def get_client(cls):
         """
         Get or create the OpenRouter LLM client.
-        
+
         Returns:
-            OpenRouterLLMClient: Configured client for Qwen model
+            OpenRouterLLMClient: Configured client for Liquid LFM model
         """
         if cls._instance is not None:
             return cls._instance

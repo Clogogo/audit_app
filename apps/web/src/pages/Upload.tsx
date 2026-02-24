@@ -345,7 +345,7 @@ export function Upload() {
               <h1 className="text-2xl font-bold tracking-tight">AI Document Import</h1>
             </div>
             <p className="text-blue-100 text-sm max-w-lg">
-              Upload a bank statement or receipt. PDF &amp; images are analysed by Qwen AI;
+              Upload a bank statement or receipt. PDF &amp; images are analysed by AI;
               CSV &amp; Excel files are parsed instantly — no AI required.
             </p>
           </div>
@@ -367,8 +367,8 @@ export function Upload() {
         {/* Format chips */}
         <div className="relative mt-5 flex flex-wrap gap-2">
           {[
-            { icon: FileText,        label: 'PDF',   sub: 'Qwen AI',      color: 'bg-white/20' },
-            { icon: Image,           label: 'Image', sub: 'Qwen AI',      color: 'bg-white/20' },
+            { icon: FileText,        label: 'PDF',   sub: 'AI',           color: 'bg-white/20' },
+            { icon: Image,           label: 'Image', sub: 'AI',           color: 'bg-white/20' },
             { icon: FileSpreadsheet, label: 'CSV',   sub: 'Instant',      color: 'bg-white/20' },
             { icon: FileSpreadsheet, label: 'Excel', sub: 'Instant',      color: 'bg-white/20' },
           ].map(({ icon: Icon, label, sub, color }) => (

@@ -90,7 +90,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           ) : aiReady ? (
             <div className="flex items-center gap-2 text-xs text-green-600">
               <Cpu className="h-3.5 w-3.5 shrink-0" />
-              <span>Qwen AI ready</span>
+              <span>AI ready</span>
             </div>
           ) : (
             <div className="flex items-center gap-2 text-xs text-amber-600" title="Set OPENROUTER_API_KEY">

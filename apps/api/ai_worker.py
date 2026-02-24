@@ -1,6 +1,6 @@
 """
-AI Worker — OpenRouter Qwen provider
-  Model: qwen/qwen-3.5-plus-02-15 (OPENROUTER_MODEL env var to override)
+AI Worker — OpenRouter LLM provider
+  Model: liquid/lfm-2.5-1.2b-thinking:free (OPENROUTER_MODEL env var to override)
   Requires: OPENROUTER_API_KEY environment variable
 
 Two extraction modes:
@@ -176,7 +176,7 @@ def _extract_pdf_text_ocr(file_path: str) -> str:
         return ""
 
 
-# ── OpenRouter Qwen provider ────────────────────────────────────────────
+# ── OpenRouter LLM provider ──────────────────────────────────────────────
 
 def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -> list[dict]:
     """
@@ -202,7 +202,7 @@ def _build_messages(prompt: str, file_path: str | None, mime_type: str | None) -
 
 def _call_openrouter(messages: list[dict]) -> str:
     """
-    Call OpenRouter Qwen API.
+    Call OpenRouter LLM API.
     Returns raw text response or "" on failure.
     """
     try:
