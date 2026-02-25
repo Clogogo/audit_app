@@ -51,10 +51,19 @@ class Transaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Duplicate detection fields
+    is_potential_duplicate: Mapped[bool] = mapped_column(Integer, default=0)  # SQLite uses 0/1 for boolean
+    duplicate_of_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True)
+    duplicate_reviewed: Mapped[bool] = mapped_column(Integer, default=0)
+    duplicate_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     file: Mapped[Optional[UploadedFile]] = relationship("UploadedFile", back_populates="transaction")
     bank_account: Mapped[Optional["BankAccount"]] = relationship("BankAccount", back_populates="transactions")
     audit_logs: Mapped[list["AuditLog"]] = relationship("AuditLog", back_populates="transaction", foreign_keys="AuditLog.entity_id", primaryjoin="and_(AuditLog.entity_id == Transaction.id, AuditLog.entity_type == 'transaction')", passive_deletes=True)
     bank_match: Mapped[Optional["BankTransaction"]] = relationship("BankTransaction", back_populates="matched_transaction", uselist=False)
+
+    # Self-referential relationship for duplicates
+    potential_duplicate: Mapped[Optional["Transaction"]] = relationship("Transaction", remote_side="Transaction.id", foreign_keys=[duplicate_of_id])
 
 
 class BankStatement(Base):
@@ -65,7 +74,7 @@ class BankStatement(Base):
     account_last4: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     statement_period_start: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     statement_period_end: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    file_path: Mapped[str] = mapped_column(String(500))
+    file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # Only PDFs are saved to disk
     file_type: Mapped[str] = mapped_column(String(20))  # csv | excel | pdf
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | reconciled
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

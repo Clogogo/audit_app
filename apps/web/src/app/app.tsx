@@ -7,6 +7,7 @@ import { Reconciliation } from '../pages/Reconciliation';
 import { AuditLog } from '../pages/AuditLog';
 import { Reports } from '../pages/Reports';
 import { Banks } from '../pages/Banks';
+import BankAccountReports from '../pages/BankAccountReports';
 
 export function App() {
   return (
@@ -19,6 +20,7 @@ export function App() {
           <Route path="/reconciliation" element={<Reconciliation />} />
           <Route path="/audit-log" element={<AuditLog />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/bank-reports" element={<BankAccountReports />} />
           <Route path="/banks" element={<Banks />} />
         </Routes>
       </Layout>

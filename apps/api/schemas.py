@@ -14,6 +14,7 @@ class TransactionCreate(BaseModel):
     date: date
     vendor: Optional[str] = None
     bank: Optional[str] = None
+    bank_account_id: Optional[int] = None
     file_id: Optional[int] = None
 
 
@@ -42,6 +43,11 @@ class TransactionOut(BaseModel):
     file_id: Optional[int]
     created_at: datetime
     updated_at: datetime
+    # Duplicate detection fields
+    is_potential_duplicate: bool = False
+    duplicate_of_id: Optional[int] = None
+    duplicate_reviewed: bool = False
+    duplicate_confidence: Optional[float] = None
 
     model_config = {"from_attributes": True}
 
@@ -139,11 +145,14 @@ class StatementImportItem(BaseModel):
 class StatementImportRequest(BaseModel):
     items: list[StatementImportItem]
     bank_account_id: Optional[int] = None  # link all saved transactions to this account
+    resolution_mode: str = "manual"  # "manual" or "auto" - how to handle duplicates
 
 
 class StatementImportResult(BaseModel):
     saved: int                   # new transactions created
     reconciled: int              # duplicates linked to existing transactions
+    duplicates_flagged: int = 0  # duplicates flagged for manual review
+    duplicates_resolved: int = 0 # duplicates auto-resolved
     statement_id: int
 
 
@@ -230,7 +239,7 @@ class BankStatementOut(BaseModel):
     account_last4: Optional[str]
     statement_period_start: Optional[date]
     statement_period_end: Optional[date]
-    file_path: str
+    file_path: Optional[str]  # None for CSV/Excel (parsed from memory)
     file_type: str
     status: str
     created_at: datetime
@@ -284,3 +293,44 @@ class AuditLogOut(BaseModel):
     timestamp: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Bank Account Reports ──────────────────────────────────────────────────────
+
+class BankAccountReportSummary(BaseModel):
+    """Summary report for a bank account - income and expense totals."""
+    bank_account_id: int
+    bank_name: str
+    account_number: Optional[str]
+    total_income: float
+    total_expense: float
+    total_transfer: float
+    net_amount: float  # income - expense
+    income_count: int
+    expense_count: int
+    transfer_count: int
+    total_transactions: int
+    first_transaction_date: Optional[date]
+    last_transaction_date: Optional[date]
+    currency: str
+
+
+class BankAccountReport(BaseModel):
+    """Detailed report for a bank account with category breakdown and monthly trends."""
+    bank_account_id: int
+    bank_name: str
+    account_number: Optional[str]
+    total_income: float
+    total_expense: float
+    total_transfer: float
+    net_amount: float
+    income_count: int
+    expense_count: int
+    transfer_count: int
+    total_transactions: int
+    expense_by_category: dict[str, float]  # category name -> total amount
+    income_by_category: dict[str, float]   # category name -> total amount
+    monthly_breakdown: dict[str, dict[str, float]]  # YYYY-MM -> {income, expense, transfer}
+    first_transaction_date: Optional[date]
+    last_transaction_date: Optional[date]
+    currency: str

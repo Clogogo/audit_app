@@ -122,6 +122,14 @@ def confirm_upload(upload_id: int, data: TransactionCreate, db: Session = Depend
     db.flush()
     db.add(AuditLog(entity_type="transaction", entity_id=tx.id, action="create",
                     new_values=json.dumps(data.model_dump(mode="json"))))
+
+    # Auto-detect duplicates after creating transaction
+    from routers.duplicates import detect_duplicates_for_transaction, mark_as_duplicates
+    matches = detect_duplicates_for_transaction(db, tx)
+    if matches:
+        best_match, confidence = matches[0]
+        mark_as_duplicates(db, tx, best_match, confidence)
+
     db.commit()
     db.refresh(tx)
     return tx
@@ -188,6 +196,14 @@ def confirm_batch(file_id: int, req: BatchConfirmRequest, db: Session = Depends(
         db.add(AuditLog(entity_type="transaction", entity_id=tx.id, action="create",
                         new_values=json.dumps(item.model_dump(mode="json"))))
         saved.append(tx)
+
+    # Auto-detect duplicates for all created transactions
+    from routers.duplicates import detect_duplicates_for_transaction, mark_as_duplicates
+    for tx in saved:
+        matches = detect_duplicates_for_transaction(db, tx)
+        if matches:
+            best_match, confidence = matches[0]
+            mark_as_duplicates(db, tx, best_match, confidence)
 
     db.commit()
     for tx in saved:

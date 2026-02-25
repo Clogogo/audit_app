@@ -10,7 +10,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Transaction
+from models import Transaction, BankAccount
+from schemas import BankAccountReport, BankAccountReportSummary
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -89,4 +90,169 @@ def export_report(
         buffer,
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=transactions.pdf"},
+    )
+
+
+# ── Bank Account Reports ──────────────────────────────────────────────────────
+
+
+@router.get("/bank-accounts", response_model=list[BankAccountReportSummary])
+def get_bank_account_reports(
+    start_date: Optional[date] = Query(None, description="Filter transactions from this date"),
+    end_date: Optional[date] = Query(None, description="Filter transactions to this date"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get income and expense summary for all bank accounts.
+    Returns totals for each bank account within the specified date range.
+    """
+    # Get all bank accounts
+    bank_accounts = db.query(BankAccount).all()
+
+    reports = []
+
+    for account in bank_accounts:
+        # Build query for this account's transactions
+        query = db.query(Transaction).filter(
+            Transaction.bank_account_id == account.id
+        )
+
+        # Apply date filters if provided
+        if start_date:
+            query = query.filter(Transaction.date >= start_date)
+        if end_date:
+            query = query.filter(Transaction.date <= end_date)
+
+        # Get all transactions for calculations
+        transactions = query.all()
+
+        # Calculate totals
+        total_income = sum(t.amount for t in transactions if t.type == 'income')
+        total_expense = sum(t.amount for t in transactions if t.type == 'expense')
+        total_transfer = sum(t.amount for t in transactions if t.type == 'transfer')
+
+        # Count transactions
+        income_count = sum(1 for t in transactions if t.type == 'income')
+        expense_count = sum(1 for t in transactions if t.type == 'expense')
+        transfer_count = sum(1 for t in transactions if t.type == 'transfer')
+
+        # Get date range
+        transaction_dates = [t.date for t in transactions]
+        first_transaction = min(transaction_dates) if transaction_dates else None
+        last_transaction = max(transaction_dates) if transaction_dates else None
+
+        # Calculate net (income - expense)
+        net_amount = total_income - total_expense
+
+        reports.append(BankAccountReportSummary(
+            bank_account_id=account.id,
+            bank_name=account.bank_name,
+            account_number=account.account_number,
+            total_income=total_income,
+            total_expense=total_expense,
+            total_transfer=total_transfer,
+            net_amount=net_amount,
+            income_count=income_count,
+            expense_count=expense_count,
+            transfer_count=transfer_count,
+            total_transactions=len(transactions),
+            first_transaction_date=first_transaction,
+            last_transaction_date=last_transaction,
+            currency="NGN",  # Default to NGN for Nigerian banks
+        ))
+
+    return reports
+
+
+@router.get("/bank-accounts/{account_id}", response_model=BankAccountReport)
+def get_bank_account_report(
+    account_id: int,
+    start_date: Optional[date] = Query(None, description="Filter transactions from this date"),
+    end_date: Optional[date] = Query(None, description="Filter transactions to this date"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed income and expense report for a specific bank account.
+    Includes breakdown by category and monthly trends.
+    """
+    from fastapi import HTTPException
+
+    account = db.get(BankAccount, account_id)
+    if not account:
+        raise HTTPException(404, "Bank account not found")
+
+    # Build query
+    query = db.query(Transaction).filter(
+        Transaction.bank_account_id == account_id
+    )
+
+    # Apply date filters
+    if start_date:
+        query = query.filter(Transaction.date >= start_date)
+    if end_date:
+        query = query.filter(Transaction.date <= end_date)
+
+    transactions = query.all()
+
+    # Calculate totals
+    total_income = sum(t.amount for t in transactions if t.type == 'income')
+    total_expense = sum(t.amount for t in transactions if t.type == 'expense')
+    total_transfer = sum(t.amount for t in transactions if t.type == 'transfer')
+
+    # Count transactions
+    income_count = sum(1 for t in transactions if t.type == 'income')
+    expense_count = sum(1 for t in transactions if t.type == 'expense')
+    transfer_count = sum(1 for t in transactions if t.type == 'transfer')
+
+    # Category breakdown for expenses
+    expense_by_category = {}
+    for t in transactions:
+        if t.type == 'expense':
+            category = t.category or 'Uncategorized'
+            expense_by_category[category] = expense_by_category.get(category, 0) + t.amount
+
+    # Category breakdown for income
+    income_by_category = {}
+    for t in transactions:
+        if t.type == 'income':
+            category = t.category or 'Uncategorized'
+            income_by_category[category] = income_by_category.get(category, 0) + t.amount
+
+    # Monthly trends
+    monthly_data = {}
+    for t in transactions:
+        month_key = t.date.strftime('%Y-%m')
+        if month_key not in monthly_data:
+            monthly_data[month_key] = {'income': 0, 'expense': 0, 'transfer': 0}
+
+        if t.type == 'income':
+            monthly_data[month_key]['income'] += t.amount
+        elif t.type == 'expense':
+            monthly_data[month_key]['expense'] += t.amount
+        elif t.type == 'transfer':
+            monthly_data[month_key]['transfer'] += t.amount
+
+    # Get date range
+    transaction_dates = [t.date for t in transactions]
+    first_transaction = min(transaction_dates) if transaction_dates else None
+    last_transaction = max(transaction_dates) if transaction_dates else None
+
+    return BankAccountReport(
+        bank_account_id=account.id,
+        bank_name=account.bank_name,
+        account_number=account.account_number,
+        total_income=total_income,
+        total_expense=total_expense,
+        total_transfer=total_transfer,
+        net_amount=total_income - total_expense,
+        income_count=income_count,
+        expense_count=expense_count,
+        transfer_count=transfer_count,
+        total_transactions=len(transactions),
+        expense_by_category=expense_by_category,
+        income_by_category=income_by_category,
+        monthly_breakdown=monthly_data,
+        first_transaction_date=first_transaction,
+        last_transaction_date=last_transaction,
+        currency="NGN",
     )

@@ -1,418 +1,311 @@
 import { useEffect, useState } from 'react';
-import { GitMerge, Zap, Link2, Unlink, AlertTriangle, CheckCircle2, Trash2, ScanLine } from 'lucide-react';
+import { GitMerge, CheckCircle2, X, AlertTriangle, ScanLine } from 'lucide-react';
 import {
-  getBankStatements,
-  uploadBankStatement,
-  getBankTransactions,
-  getTransactions,
-  autoMatch,
-  manualMatch,
-  unmatch,
-  getReconciliationStatus,
-  exportReconciliation,
-  deleteBankStatement,
-  batchDeleteBankStatements,
+  getPendingDuplicates,
+  scanDuplicates,
+  keepTransaction,
+  markNotDuplicate,
+  getDuplicateStats,
 } from '../api/client';
-import type { BankStatement, BankTransaction, Transaction, ReconciliationStatus } from '../api/types';
+import type { Transaction } from '../api/types';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { FileUploader } from '../components/FileUploader';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import { formatCurrency, formatDate, cn } from '../lib/utils';
+import { formatCurrency, formatDate } from '../lib/utils';
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+interface DuplicatePair {
+  transaction: Transaction;
+  duplicate: Transaction | null;
 }
 
 export function Reconciliation() {
-  const [statements, setStatements] = useState<BankStatement[]>([]);
-  const [selected, setSelected] = useState<BankStatement | null>(null);
-  const [bankTxs, setBankTxs] = useState<BankTransaction[]>([]);
-  const [recordedTxs, setRecordedTxs] = useState<Transaction[]>([]);
-  const [status, setStatus] = useState<ReconciliationStatus | null>(null);
-  const [bankName, setBankName] = useState('');
-  const [stagedFile, setStagedFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [matching, setMatching] = useState(false);
-  const [selectedBankTx, setSelectedBankTx] = useState<number | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<BankStatement | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
-  const [batchDeleting, setBatchDeleting] = useState(false);
-  const [showBatchConfirm, setShowBatchConfirm] = useState(false);
+  const [pairs, setPairs] = useState<DuplicatePair[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [stats, setStats] = useState<{ total_duplicates: number; pending: number; reviewed: number } | null>(null);
+
+  const loadDuplicates = async () => {
+    const [dupes, statsData] = await Promise.all([
+      getPendingDuplicates(),
+      getDuplicateStats(),
+    ]);
+    setStats(statsData);
+
+    // Group duplicates into pairs
+    const grouped = new Map<number, DuplicatePair>();
+    dupes.forEach((tx) => {
+      if (tx.duplicate_of_id) {
+        const duplicate = dupes.find((d) => d.id === tx.duplicate_of_id);
+        if (!grouped.has(tx.id) && !grouped.has(tx.duplicate_of_id)) {
+          grouped.set(tx.id, { transaction: tx, duplicate: duplicate || null });
+        }
+      }
+    });
+    setPairs(Array.from(grouped.values()));
+  };
 
   useEffect(() => {
-    getBankStatements().then(setStatements);
-    getTransactions().then(setRecordedTxs);
+    loadDuplicates();
   }, []);
 
-  const loadStatement = async (stmt: BankStatement) => {
-    setSelected(stmt);
-    const [txs, s] = await Promise.all([
-      getBankTransactions(stmt.id),
-      getReconciliationStatus(stmt.id),
-    ]);
-    setBankTxs(txs);
-    setStatus(s);
-  };
-
-  const handleFileSelect = (file: File) => {
-    setStagedFile(file);
-  };
-
   const handleScan = async () => {
-    if (!stagedFile) return;
-    if (!bankName.trim()) { alert('Please enter the bank name first.'); return; }
-    setUploading(true);
+    setScanning(true);
     try {
-      const stmt = await uploadBankStatement(stagedFile, bankName);
-      const updated = await getBankStatements();
-      setStatements(updated);
-      await loadStatement(stmt);
-      setStagedFile(null);
+      const result = await scanDuplicates();
+      alert(`Scanned ${result.scanned} transactions, flagged ${result.flagged} duplicates.`);
+      await loadDuplicates();
     } finally {
-      setUploading(false);
+      setScanning(false);
     }
   };
 
-  const handleAutoMatch = async () => {
-    if (!selected) return;
-    setMatching(true);
+  const handleKeep = async (txId: number) => {
+    setResolving(true);
     try {
-      const result = await autoMatch(selected.id);
-      await loadStatement(selected);
-      alert(`Auto-matched ${result.matched} transactions.`);
+      await keepTransaction(txId);
+      await loadDuplicates();
     } finally {
-      setMatching(false);
+      setResolving(false);
     }
   };
 
-  const handleManualMatch = async (transactionId: number) => {
-    if (!selectedBankTx) return;
-    await manualMatch(selectedBankTx, transactionId);
-    setSelectedBankTx(null);
-    if (selected) await loadStatement(selected);
-  };
-
-  const handleUnmatch = async (bankTxId: number) => {
-    await unmatch(bankTxId);
-    if (selected) await loadStatement(selected);
-  };
-
-  const handleDeleteStatement = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
+  const handleMarkNotDuplicate = async (txId: number) => {
+    setResolving(true);
     try {
-      await deleteBankStatement(deleteTarget.id);
-      const updated = await getBankStatements();
-      setStatements(updated);
-      if (selected?.id === deleteTarget.id) {
-        setSelected(null);
-        setBankTxs([]);
-        setStatus(null);
-      }
-      setCheckedIds((prev) => { const next = new Set(prev); next.delete(deleteTarget.id); return next; });
+      await markNotDuplicate(txId);
+      await loadDuplicates();
     } finally {
-      setDeleting(false);
-      setDeleteTarget(null);
+      setResolving(false);
     }
   };
-
-  const handleBatchDelete = async () => {
-    if (checkedIds.size === 0) return;
-    setBatchDeleting(true);
-    try {
-      await batchDeleteBankStatements([...checkedIds]);
-      const updated = await getBankStatements();
-      setStatements(updated);
-      if (selected && checkedIds.has(selected.id)) {
-        setSelected(null);
-        setBankTxs([]);
-        setStatus(null);
-      }
-      setCheckedIds(new Set());
-    } finally {
-      setBatchDeleting(false);
-      setShowBatchConfirm(false);
-    }
-  };
-
-  const toggleCheck = (id: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCheckedIds((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
-
-  const handleExport = async (format: 'csv' | 'pdf') => {
-    if (!selected) return;
-    const blob = await exportReconciliation(selected.id, format);
-    downloadBlob(blob, `reconciliation-${selected.id}.${format}`);
-  };
-
-  const matchStatusColor = (s: BankTransaction['match_status']) =>
-    s === 'matched' ? 'text-green-600' : s === 'discrepancy' ? 'text-yellow-600' : 'text-muted-foreground';
 
   return (
-    <div className="space-y-6">
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title="Clear reconciliation?"
-        description={`This will permanently delete the "${deleteTarget?.bank_name}" statement and all its bank transactions. Transactions you already saved to your records will not be affected.`}
-        confirmLabel="Clear"
-        loading={deleting}
-        onConfirm={handleDeleteStatement}
-        onCancel={() => setDeleteTarget(null)}
-      />
-      <ConfirmDialog
-        open={showBatchConfirm}
-        title={`Clear ${checkedIds.size} statement${checkedIds.size !== 1 ? 's' : ''}?`}
-        description={`This will permanently delete ${checkedIds.size} bank statement${checkedIds.size !== 1 ? 's' : ''} and all their bank transactions. Transactions you already saved to your records will not be affected.`}
-        confirmLabel="Clear All"
-        loading={batchDeleting}
-        onConfirm={handleBatchDelete}
-        onCancel={() => setShowBatchConfirm(false)}
-      />
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-2">
+            <GitMerge className="w-8 h-8" />
+            Duplicate Resolution
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Duplicates are automatically detected when you create or upload transactions
+          </p>
+        </div>
+        <Button onClick={handleScan} disabled={scanning} variant="outline" size="sm">
+          <ScanLine className="w-4 h-4 mr-2" />
+          {scanning ? 'Re-scanning...' : 'Re-scan All'}
+        </Button>
+      </div>
 
-      <h1 className="text-2xl font-bold">Bank Statement Reconciliation</h1>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Upload + statement list */}
-        <div className="space-y-4">
+      {/* Stats */}
+      {stats && (
+        <div className="grid grid-cols-3 gap-4 mb-6">
           <Card>
-            <CardHeader><CardTitle className="text-sm">Import Bank Statement</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <Input placeholder="Bank name (e.g. Chase)" value={bankName} onChange={(e) => setBankName(e.target.value)} />
-              <FileUploader
-                label="Drop CSV, Excel, or PDF"
-                accept={{
-                  'text/csv': ['.csv'],
-                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-                  'application/vnd.ms-excel': ['.xls'],
-                  'application/pdf': ['.pdf'],
-                }}
-                onFileSelect={handleFileSelect}
-                isLoading={uploading}
-                className="py-4"
-              />
-              {stagedFile && (
-                <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3 space-y-3">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <ScanLine className="h-4 w-4 text-primary shrink-0" />
-                    <span className="truncate font-medium text-foreground">{stagedFile.name}</span>
-                    <span className="ml-auto text-xs shrink-0">{(stagedFile.size / 1024).toFixed(0)} KB</span>
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={handleScan}
-                    disabled={uploading}
-                    size="lg"
-                    className="w-full gap-2 shadow-sm hover:shadow-md transition-all duration-200 active:scale-[0.98]"
-                  >
-                    {uploading ? (
-                      <>
-                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent inline-block shrink-0" />
-                        Scanning…
-                      </>
-                    ) : (
-                      <>
-                        <ScanLine className="h-4 w-4" />
-                        Scan Document
-                      </>
-                    )}
-                  </Button>
-                </div>
-              )}
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Pending Review
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-3xl font-bold">{stats.pending}</p>
             </CardContent>
           </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Total Flagged
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-3xl font-bold">{stats.total_duplicates}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Reviewed
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-3xl font-bold">{stats.reviewed}</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Statements</p>
-              {checkedIds.size > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setShowBatchConfirm(true)}
-                  className="flex items-center gap-1 text-xs text-destructive hover:underline"
+      {/* Empty State */}
+      {pairs.length === 0 && !scanning && (
+        <Card className="p-12 text-center">
+          <CheckCircle2 className="w-16 h-16 mx-auto text-green-500 mb-4" />
+          <h3 className="text-xl font-semibold mb-2">All Clear!</h3>
+          <p className="text-muted-foreground mb-4">
+            No duplicate transactions found. Click "Scan for Duplicates" to check for new ones.
+          </p>
+        </Card>
+      )}
+
+      {/* Duplicate Pairs */}
+      <div className="space-y-6">
+        {pairs.map((pair, idx) => (
+          <Card key={pair.transaction.id} className="overflow-hidden">
+            <CardHeader className="bg-yellow-50 border-b">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-yellow-600" />
+                  <CardTitle className="text-lg">
+                    Potential Duplicate #{idx + 1}
+                  </CardTitle>
+                  {pair.transaction.duplicate_confidence && (
+                    <Badge variant="secondary">
+                      {(pair.transaction.duplicate_confidence * 100).toFixed(0)}% confidence
+                    </Badge>
+                  )}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleMarkNotDuplicate(pair.transaction.id)}
+                  disabled={resolving}
                 >
-                  <Trash2 className="h-3 w-3" />
-                  Clear {checkedIds.size} selected
-                </button>
-              )}
-            </div>
-            {statements.length === 0 && (
-              <p className="text-sm text-muted-foreground">No statements imported yet</p>
-            )}
-            {statements.map((s) => (
-              <div
-                key={s.id}
-                className={cn(
-                  'group relative rounded-lg border p-3 text-sm transition-colors cursor-pointer',
-                  selected?.id === s.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50',
-                  checkedIds.has(s.id) && 'border-destructive/40 bg-destructive/5'
-                )}
-                onClick={() => loadStatement(s)}
-              >
-                <div className="flex items-start gap-2">
-                  <input
-                    type="checkbox"
-                    title={`Select ${s.bank_name}`}
-                    checked={checkedIds.has(s.id)}
-                    onClick={(e) => toggleCheck(s.id, e)}
-                    onChange={() => {}}
-                    className="mt-0.5 shrink-0 accent-destructive"
-                  />
-                  <div className="flex-1 min-w-0 pr-6">
-                    <div className="font-medium truncate">{s.bank_name}</div>
-                    <div className="text-xs text-muted-foreground">{s.file_type.toUpperCase()} · {formatDate(s.created_at)}</div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Badge variant={s.status === 'reconciled' ? 'income' : 'outline'} className="text-xs">
-                        {s.status}
+                  <X className="w-4 h-4 mr-1" />
+                  Not a Duplicate
+                </Button>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-0">
+              <div className="grid grid-cols-2 divide-x">
+                {/* Transaction 1 */}
+                <div className="p-6 space-y-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="font-semibold text-lg">Transaction 1</h4>
+                    <Button
+                      onClick={() => handleKeep(pair.transaction.id)}
+                      disabled={resolving}
+                      variant="default"
+                      size="sm"
+                    >
+                      <CheckCircle2 className="w-4 h-4 mr-1" />
+                      Keep This One
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Date:</span>
+                      <span className="font-medium">{formatDate(pair.transaction.date)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Amount:</span>
+                      <span className="font-medium text-lg">
+                        {formatCurrency(pair.transaction.amount, pair.transaction.currency)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Type:</span>
+                      <Badge variant={pair.transaction.type === 'income' ? 'default' : 'secondary'}>
+                        {pair.transaction.type}
                       </Badge>
-                      {s.transaction_count !== undefined && (
-                        <span className="text-xs text-muted-foreground">{s.transaction_count} txns</span>
-                      )}
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Category:</span>
+                      <span className="font-medium">{pair.transaction.category}</span>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-muted-foreground">Description:</span>
+                      <p className="font-medium text-sm break-words">
+                        {pair.transaction.description}
+                      </p>
+                    </div>
+                    {pair.transaction.vendor && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Vendor:</span>
+                        <span className="font-medium">{pair.transaction.vendor}</span>
+                      </div>
+                    )}
+                    {pair.transaction.bank && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Bank:</span>
+                        <span className="font-medium">{pair.transaction.bank}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between pt-2 border-t">
+                      <span className="text-muted-foreground text-xs">Created:</span>
+                      <span className="text-xs">{formatDate(pair.transaction.created_at)}</span>
                     </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(s); }}
-                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                  title="Clear reconciliation"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Right: Reconciliation view */}
-        <div className="lg:col-span-2 space-y-4">
-          {!selected ? (
-            <div className="flex flex-col items-center justify-center h-64 rounded-lg border-2 border-dashed text-muted-foreground gap-2">
-              <GitMerge className="h-8 w-8" />
-              <p>Select or import a bank statement to start reconciling</p>
-            </div>
-          ) : (
-            <>
-              {/* Status bar */}
-              {status && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { label: 'Total', value: status.total, icon: null },
-                    { label: 'Matched', value: status.matched, icon: CheckCircle2, color: 'text-green-600' },
-                    { label: 'Unmatched', value: status.unmatched, icon: AlertTriangle, color: 'text-yellow-600' },
-                    { label: 'Discrepancies', value: status.discrepancies, icon: AlertTriangle, color: 'text-red-600' },
-                  ].map(({ label, value, color }) => (
-                    <Card key={label}>
-                      <CardContent className="py-3 px-4">
-                        <p className="text-xs text-muted-foreground">{label}</p>
-                        <p className={`text-xl font-bold ${color ?? ''}`}>{value}</p>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex items-center gap-2">
-                <Button onClick={handleAutoMatch} disabled={matching} size="sm">
-                  <Zap className="h-4 w-4" /> {matching ? 'Matching...' : 'Auto-Match'}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => handleExport('csv')}>Export CSV</Button>
-                <Button variant="outline" size="sm" onClick={() => handleExport('pdf')}>Export PDF</Button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Bank transactions */}
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                    Bank Transactions ({bankTxs.length})
-                  </p>
-                  <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
-                    {bankTxs.map((btx) => (
-                      <div
-                        key={btx.id}
-                        onClick={() => btx.match_status !== 'matched' && setSelectedBankTx(btx.id === selectedBankTx ? null : btx.id)}
-                        className={cn(
-                          'rounded-lg border p-3 text-sm cursor-pointer transition-colors',
-                          btx.id === selectedBankTx ? 'border-primary bg-primary/5' : 'hover:bg-muted/30',
-                          btx.match_status === 'matched' && 'opacity-60 cursor-default'
-                        )}
+                {/* Transaction 2 (Duplicate) */}
+                {pair.duplicate ? (
+                  <div className="p-6 space-y-4 bg-gray-50">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="font-semibold text-lg">Transaction 2</h4>
+                      <Button
+                        onClick={() => handleKeep(pair.duplicate!.id)}
+                        disabled={resolving}
+                        variant="default"
+                        size="sm"
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium truncate max-w-[60%]">{btx.description}</span>
-                          <span className={`font-semibold ${btx.transaction_type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
-                            {formatCurrency(btx.amount)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between mt-1">
-                          <span className="text-xs text-muted-foreground">{formatDate(btx.date)}</span>
-                          <span className={`text-xs ${matchStatusColor(btx.match_status)}`}>
-                            {btx.match_status}
-                            {btx.match_confidence && ` (${Math.round(btx.match_confidence * 100)}%)`}
-                          </span>
-                        </div>
-                        {btx.match_status === 'matched' && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); handleUnmatch(btx.id); }}
-                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive mt-1"
-                          >
-                            <Unlink className="h-3 w-3" /> Unmatch
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                        <CheckCircle2 className="w-4 h-4 mr-1" />
+                        Keep This One
+                      </Button>
+                    </div>
 
-                {/* Recorded transactions */}
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                    Recorded Transactions
-                    {selectedBankTx && <span className="ml-2 text-primary normal-case font-normal">(click to match)</span>}
-                  </p>
-                  <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
-                    {recordedTxs.map((tx) => (
-                      <div
-                        key={tx.id}
-                        onClick={() => selectedBankTx && handleManualMatch(tx.id)}
-                        className={cn(
-                          'rounded-lg border p-3 text-sm transition-colors',
-                          selectedBankTx ? 'cursor-pointer hover:border-primary hover:bg-primary/5' : ''
-                        )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium truncate max-w-[60%]">{tx.description}</span>
-                          <span className={`font-semibold ${tx.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                            {formatCurrency(tx.amount, tx.currency ?? 'NGN')}
-                          </span>
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1">{tx.vendor} · {formatDate(tx.date)}</div>
-                        {selectedBankTx && (
-                          <Button size="sm" variant="outline" className="mt-2 h-6 text-xs" onClick={(e) => { e.stopPropagation(); handleManualMatch(tx.id); }}>
-                            <Link2 className="h-3 w-3 mr-1" /> Match
-                          </Button>
-                        )}
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Date:</span>
+                        <span className="font-medium">{formatDate(pair.duplicate.date)}</span>
                       </div>
-                    ))}
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Amount:</span>
+                        <span className="font-medium text-lg">
+                          {formatCurrency(pair.duplicate.amount, pair.duplicate.currency)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Type:</span>
+                        <Badge variant={pair.duplicate.type === 'income' ? 'default' : 'secondary'}>
+                          {pair.duplicate.type}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Category:</span>
+                        <span className="font-medium">{pair.duplicate.category}</span>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-muted-foreground">Description:</span>
+                        <p className="font-medium text-sm break-words">
+                          {pair.duplicate.description}
+                        </p>
+                      </div>
+                      {pair.duplicate.vendor && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Vendor:</span>
+                          <span className="font-medium">{pair.duplicate.vendor}</span>
+                        </div>
+                      )}
+                      {pair.duplicate.bank && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Bank:</span>
+                          <span className="font-medium">{pair.duplicate.bank}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between pt-2 border-t">
+                        <span className="text-muted-foreground text-xs">Created:</span>
+                        <span className="text-xs">{formatDate(pair.duplicate.created_at)}</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="p-6 flex items-center justify-center text-muted-foreground">
+                    <p>No matching transaction found</p>
+                  </div>
+                )}
               </div>
-            </>
-          )}
-        </div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     </div>
   );

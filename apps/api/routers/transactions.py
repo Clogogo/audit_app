@@ -113,10 +113,33 @@ def get_summary(
 
 @router.post("", response_model=TransactionOut, status_code=201)
 def create_transaction(data: TransactionCreate, db: Session = Depends(get_db)):
-    tx = Transaction(**data.model_dump())
+    tx_data = data.model_dump()
+    
+    # Auto-link bank account if bank name is provided but bank_account_id is not
+    if not tx_data.get("bank_account_id") and tx_data.get("bank"):
+        from models import BankAccount
+        # Try to find bank account by matching bank name (case-insensitive)
+        bank_name = tx_data["bank"].strip().lower()
+        bank_account = db.query(BankAccount).filter(
+            func.lower(BankAccount.bank_name) == bank_name
+        ).first()
+        
+        if bank_account:
+            tx_data["bank_account_id"] = bank_account.id
+    
+    tx = Transaction(**tx_data)
     db.add(tx)
     db.flush()
     _log(db, tx.id, "create", new=data.model_dump(mode="json"))
+
+    # Auto-detect duplicates using fuzzy matching
+    from routers.duplicates import detect_duplicates_for_transaction, mark_as_duplicates
+    matches = detect_duplicates_for_transaction(db, tx)
+    if matches:
+        # Link to the best match (highest confidence)
+        best_match, confidence = matches[0]
+        mark_as_duplicates(db, tx, best_match, confidence)
+
     db.commit()
     db.refresh(tx)
     return tx

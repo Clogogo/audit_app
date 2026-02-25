@@ -8,7 +8,7 @@ from sqlalchemy import text
 from database import engine, Base
 import models  # noqa: ensure all models are registered before create_all
 
-from routers import transactions, upload, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements
+from routers import transactions, upload, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates
 
 # Create all tables on startup
 Base.metadata.create_all(bind=engine)
@@ -21,6 +21,11 @@ with engine.connect() as _conn:
         "ALTER TABLE bank_transactions ADD COLUMN suggested_type VARCHAR(20)",
         "ALTER TABLE bank_transactions ADD COLUMN vendor VARCHAR(200)",
         "ALTER TABLE transactions ADD COLUMN bank_account_id INTEGER REFERENCES bank_accounts(id) ON DELETE SET NULL",
+        # Duplicate detection fields
+        "ALTER TABLE transactions ADD COLUMN is_potential_duplicate INTEGER DEFAULT 0",
+        "ALTER TABLE transactions ADD COLUMN duplicate_of_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL",
+        "ALTER TABLE transactions ADD COLUMN duplicate_reviewed INTEGER DEFAULT 0",
+        "ALTER TABLE transactions ADD COLUMN duplicate_confidence FLOAT",
     ]:
         try:
             _conn.execute(text(_col_sql))
@@ -63,6 +68,7 @@ app.include_router(bank_statements.router)
 app.include_router(llm_bank_statements.router)
 app.include_router(bank_accounts.router)
 app.include_router(reconciliation.router)
+app.include_router(duplicates.router)
 app.include_router(reports.router)
 app.include_router(audit_log.router)
 

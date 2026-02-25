@@ -65,3 +65,7 @@ README_EXTRACTION_ENHANCEMENT.md
 .opencode/skills/nx-workspace/SKILL.md
 .github/skills/monitor-ci/SKILL.md
 .github/skills/monitor-ci/SKILL.md
+test-local.sh
+restore-production.sh
+TESTING.md
+deploy-production.sh

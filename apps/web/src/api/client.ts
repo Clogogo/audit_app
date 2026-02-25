@@ -18,6 +18,8 @@ import type {
   LLMStatementUploadResult,
   LLMStatementImportRequest,
   LLMStatementImportResult,
+  BankAccountReportSummary,
+  BankAccountReport,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -113,10 +115,12 @@ export const importStatementTransactions = (
   stmtId: number,
   items: StatementImportItem[],
   bankAccountId?: number,
+  resolutionMode: 'manual' | 'auto' = 'manual',
 ) =>
   api.post<StatementImportResult>(`/bank-statements/${stmtId}/import-transactions`, {
     items,
     bank_account_id: bankAccountId ?? null,
+    resolution_mode: resolutionMode,
   }).then(unwrap);
 
 export const autoMatch = (statementId: number) =>
@@ -143,6 +147,22 @@ export const exportReconciliation = (statementId: number, format: 'csv' | 'pdf')
       responseType: 'blob',
     })
     .then(unwrap);
+
+// Duplicate Detection
+export const scanDuplicates = () =>
+  api.post<{ scanned: number; flagged: number }>('/duplicates/scan').then(unwrap);
+
+export const getPendingDuplicates = () =>
+  api.get<Transaction[]>('/duplicates/pending').then(unwrap);
+
+export const keepTransaction = (txId: number) =>
+  api.post<{ ok: boolean }>(`/duplicates/${txId}/keep`).then(unwrap);
+
+export const markNotDuplicate = (txId: number) =>
+  api.post<{ ok: boolean }>(`/duplicates/${txId}/mark-not-duplicate`).then(unwrap);
+
+export const getDuplicateStats = () =>
+  api.get<{ total_duplicates: number; pending: number; reviewed: number }>('/duplicates/stats').then(unwrap);
 
 // Bank Accounts
 export const getBankAccounts = () =>
@@ -231,3 +251,14 @@ export const importLLMStatementTransactions = (
 
 export const deleteLLMStatement = (stmtId: number) =>
   api.delete(`/bank-statements-llm/${stmtId}`);
+
+// ── Bank Account Reports ──────────────────────────────────────────────────────
+
+export const getBankAccountReports = (params?: { start_date?: string; end_date?: string }) =>
+  api.get<BankAccountReportSummary[]>('/bank-statements/bank-accounts', { params }).then(unwrap);
+
+export const getBankAccountReport = (
+  accountId: number,
+  params?: { start_date?: string; end_date?: string }
+) =>
+  api.get<BankAccountReport>(`/bank-statements/bank-accounts/${accountId}`, { params }).then(unwrap);

@@ -16,6 +16,11 @@ export interface Transaction {
   file_id?: number;
   created_at: string;
   updated_at: string;
+  // Duplicate detection fields
+  is_potential_duplicate?: boolean;
+  duplicate_of_id?: number;
+  duplicate_reviewed?: boolean;
+  duplicate_confidence?: number;
 }
 
 export interface TransactionCreate {
@@ -170,8 +175,10 @@ export interface StatementImportRequest {
 }
 
 export interface StatementImportResult {
-  saved: number;       // new transactions created
-  reconciled: number;  // duplicates linked to reconciliation
+  saved: number;            // new transactions created
+  reconciled: number;       // duplicates linked to reconciliation
+  duplicates_flagged: number;   // duplicates flagged for manual review
+  duplicates_resolved: number;  // duplicates auto-resolved
   statement_id: number;
 }
 
@@ -273,4 +280,29 @@ export interface LLMStatementImportResult {
   saved: number;
   reconciled: number;
   statement_id: number;
+}
+
+// ── Bank Account Reports ──────────────────────────────────────────────────────
+
+export interface BankAccountReportSummary {
+  bank_account_id: number;
+  bank_name: string;
+  account_number: string | null;
+  total_income: number;
+  total_expense: number;
+  total_transfer: number;
+  net_amount: number;
+  income_count: number;
+  expense_count: number;
+  transfer_count: number;
+  total_transactions: number;
+  first_transaction_date: string | null;
+  last_transaction_date: string | null;
+  currency: string;
+}
+
+export interface BankAccountReport extends BankAccountReportSummary {
+  expense_by_category: Record<string, number>;
+  income_by_category: Record<string, number>;
+  monthly_breakdown: Record<string, { income: number; expense: number; transfer: number }>;
 }

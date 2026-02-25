@@ -209,7 +209,7 @@ def _call_openrouter(messages: list[dict]) -> str:
         client = get_llm_client()
         text = client.create_message(
             messages=messages,
-            max_tokens=1300,
+            max_tokens=900,  # Reduced to stay within free tier credits
         )
         logger.info(f"OpenRouter response preview: {text[:200]}...")
         return text
@@ -219,7 +219,17 @@ def _call_openrouter(messages: list[dict]) -> str:
             f"OpenRouter API configuration error: {e}"
         )
     except Exception as e:
-        logger.error(f"OpenRouter call failed: {e}")
+        error_msg = str(e)
+        # Check for specific HTTP errors
+        if "402" in error_msg:
+            logger.error(f"OpenRouter HTTP error 402: Insufficient credits. Visit https://openrouter.ai/settings/credits to add credits.")
+        elif "429" in error_msg:
+            logger.error(f"OpenRouter rate limit exceeded (429). Please wait and try again.")
+            raise OpenRouterRateLimitError(error_msg)
+        elif "405" in error_msg:
+            logger.error(f"OpenRouter HTTP error 405: Method not allowed. Check API configuration.")
+        else:
+            logger.error(f"OpenRouter call failed: {e}")
         return ""
 
 

@@ -25,6 +25,7 @@ const navItems = [
   { to: '/reconciliation', icon: GitMerge, label: 'Reconciliation' },
   { to: '/audit-log', icon: ScrollText, label: 'Audit Log' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
+  { to: '/bank-reports', icon: Wallet, label: 'Bank Reports' },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {

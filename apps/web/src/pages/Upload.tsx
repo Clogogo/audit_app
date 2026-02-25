@@ -85,6 +85,7 @@ export function Upload() {
   const [bankAccounts, setBankAccounts]       = useState<BankAccount[]>([]);
   const [selectedBank, setSelectedBank]       = useState('');
   const [importResult, setImportResult]       = useState<StatementImportResult | null>(null);
+  const [resolutionMode, setResolutionMode]   = useState<'manual' | 'auto'>('manual');
   const aiBatchRef   = useRef<BatchUploadResult | null>(null);
   const stmtRef      = useRef<BankStatement | null>(null);
   const previewUrlRef = useRef<string | null>(null);
@@ -120,10 +121,6 @@ export function Upload() {
 
     try {
       if (isStructured(file)) {
-        if (!selectedBank.trim()) {
-          setUploadError('Enter a bank name before uploading a CSV or Excel file.');
-          return;
-        }
         const stmt = await uploadBankStatement(file, selectedBank.trim());
         stmtRef.current = stmt;
         const txs = await getBankTransactions(stmt.id);
@@ -235,7 +232,7 @@ export function Upload() {
           vendor:      r.vendor || undefined,
           type:        r.type,
         }));
-        const res = await importStatementTransactions(stmtRef.current.id, items);
+        const res = await importStatementTransactions(stmtRef.current.id, items, undefined, resolutionMode);
         setImportResult(res);
       } else if (aiBatchRef.current) {
         const items: BatchConfirmItem[] = selected.map((r) => ({
@@ -298,7 +295,19 @@ export function Upload() {
                 {importResult.reconciled > 0 && (
                   <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-center">
                     <p className="text-2xl font-bold text-amber-700">{importResult.reconciled}</p>
-                    <p className="text-xs text-amber-600 font-medium mt-0.5">Duplicate{importResult.reconciled !== 1 ? 's' : ''} Flagged</p>
+                    <p className="text-xs text-amber-600 font-medium mt-0.5">Reconciled</p>
+                  </div>
+                )}
+                {importResult.duplicates_flagged > 0 && (
+                  <div className="rounded-xl bg-yellow-50 border border-yellow-200 px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-yellow-700">{importResult.duplicates_flagged}</p>
+                    <p className="text-xs text-yellow-600 font-medium mt-0.5">Duplicate{importResult.duplicates_flagged !== 1 ? 's' : ''} Flagged</p>
+                  </div>
+                )}
+                {importResult.duplicates_resolved > 0 && (
+                  <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-blue-700">{importResult.duplicates_resolved}</p>
+                    <p className="text-xs text-blue-600 font-medium mt-0.5">Duplicate{importResult.duplicates_resolved !== 1 ? 's' : ''} Auto-Resolved</p>
                   </div>
                 )}
               </div>
@@ -311,9 +320,9 @@ export function Upload() {
             <Button onClick={() => navigate('/transactions')} className="gap-2">
               View Transactions
             </Button>
-            {importResult && importResult.reconciled > 0 && (
+            {importResult && importResult.duplicates_flagged > 0 && (
               <Button variant="outline" onClick={() => navigate('/reconciliation')} className="gap-2">
-                <GitMerge className="h-4 w-4" /> Review Reconciliation
+                <GitMerge className="h-4 w-4" /> Review Duplicates
               </Button>
             )}
             <Button variant="ghost" onClick={reset} className="gap-2">
@@ -388,7 +397,8 @@ export function Upload() {
           <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
           <p className="text-sm text-red-700 flex-1">{uploadError}</p>
           <button type="button" onClick={() => setUploadError(null)}
-            className="text-red-400 hover:text-red-600 transition-colors shrink-0">
+            className="text-red-400 hover:text-red-600 transition-colors shrink-0"
+            title="Close error message" aria-label="Close error message">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -406,7 +416,7 @@ export function Upload() {
               </CardHeader>
               <CardContent className="space-y-4 pt-0">
                 {[
-                  { step: '01', title: 'Select bank', desc: 'Choose or type your bank name. Required for CSV/Excel.' },
+                  { step: '01', title: 'Select bank', desc: 'Choose or type your bank name (required).' },
                   { step: '02', title: 'Drop file',   desc: 'Drag & drop or click to browse. Accepts PDF, image, CSV, Excel.' },
                   { step: '03', title: 'Scan',        desc: 'Click "Scan Document" to extract all transactions.' },
                   { step: '04', title: 'Review & save', desc: 'Edit, select rows you want, then save to your ledger.' },
@@ -426,10 +436,10 @@ export function Upload() {
               <CardContent className="py-4 px-5">
                 <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1.5">Tips</p>
                 <ul className="text-xs text-amber-800 space-y-1.5 list-disc list-inside">
-                  <li>Bank name is <strong>required</strong> for CSV / Excel files</li>
+                  <li>Bank account selection is <strong>required</strong> before scanning</li>
                   <li>Clear, high-resolution images improve AI accuracy</li>
                   <li>You can edit any field before saving</li>
-                  <li>Duplicate transactions are flagged for reconciliation</li>
+                  <li>Duplicate transactions are automatically flagged</li>
                 </ul>
               </CardContent>
             </Card>
@@ -439,13 +449,9 @@ export function Upload() {
           <div className="lg:col-span-3">
             <Card className="shadow-sm">
               <CardHeader className="pb-4">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <UploadIcon className="h-4 w-4 text-primary" />
-                  Upload Bank Statement
+                <CardTitle className="text-base">
+                  Select Bank &amp; Upload File
                 </CardTitle>
-                <CardDescription>
-                  Drag &amp; drop your file or click to browse
-                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
 
@@ -453,7 +459,7 @@ export function Upload() {
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium flex items-center gap-1.5">
                     Bank Account
-                    <span className="text-xs text-muted-foreground font-normal">(required for CSV / Excel)</span>
+                    <span className="text-xs text-red-500 font-normal">*</span>
                   </label>
                   {bankAccounts.length > 0 ? (
                     <Select value={selectedBank || '__none__'} onValueChange={(v) => setSelectedBank(v === '__none__' ? '' : v)}>
@@ -479,78 +485,74 @@ export function Upload() {
                 </div>
 
                 {/* Drop zone */}
-                <FileUploader
-                  onFileSelect={handleFileSelect}
-                  isLoading={uploading}
-                  accept={{
-                    'application/pdf':   ['.pdf'],
-                    'image/png':         ['.png'],
-                    'image/jpeg':        ['.jpg', '.jpeg'],
-                    'image/webp':        ['.webp'],
-                    'text/csv':          ['.csv'],
-                    'application/vnd.ms-excel': ['.xls'],
-                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-                  }}
-                  label="Drop bank statement here — PDF, image, CSV, or Excel"
-                />
+                {!stagedFile && !uploading && (
+                  <FileUploader
+                    onFileSelect={handleFileSelect}
+                    isLoading={uploading}
+                    accept={{
+                      'application/pdf':   ['.pdf'],
+                      'image/png':         ['.png'],
+                      'image/jpeg':        ['.jpg', '.jpeg'],
+                      'image/webp':        ['.webp'],
+                      'text/csv':          ['.csv'],
+                      'application/vnd.ms-excel': ['.xls'],
+                      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+                    }}
+                    label="Drop bank statement here — PDF, image, CSV, or Excel"
+                  />
+                )}
 
-                {/* Staged file card */}
-                {stagedFile && (() => {
+                {/* Staged file - ready to scan */}
+                {stagedFile && !uploading && (() => {
                   const FileIcon = getFileIcon(stagedFile.name);
                   return (
-                    <div className="rounded-xl border border-primary/30 bg-gradient-to-br from-primary/5 to-indigo-50/50 p-4 space-y-4">
-                      {/* File info row */}
-                      <div className="flex items-center gap-3">
+                    <div className="space-y-3">
+                      {/* File preview */}
+                      <div className="rounded-lg border bg-muted/30 p-3 flex items-center gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                           <FileIcon className="h-5 w-5 text-primary" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-foreground truncate">{stagedFile.name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{formatFileSize(stagedFile.size)}</p>
+                          <p className="text-sm font-medium truncate">{stagedFile.name}</p>
+                          <p className="text-xs text-muted-foreground">{formatFileSize(stagedFile.size)}</p>
                         </div>
                         <button
                           type="button"
                           onClick={() => setStagedFile(null)}
-                          className="shrink-0 rounded-lg p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                          className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
                           aria-label="Remove file"
-                          title="Remove file"
                         >
                           <X className="h-4 w-4" />
                         </button>
                       </div>
 
-                      {/* Divider */}
-                      <div className="h-px bg-primary/10" />
-
                       {/* Scan button */}
                       <Button
                         type="button"
                         onClick={handleScan}
-                        disabled={uploading}
+                        disabled={!selectedBank.trim()}
                         size="lg"
-                        className="w-full gap-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold shadow-md hover:shadow-lg transition-all duration-200 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed rounded-lg"
+                        className="w-full gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                       >
-                        {uploading ? (
-                          <>
-                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent shrink-0" />
-                            <span>Processing document…</span>
-                          </>
-                        ) : (
-                          <>
-                            <ScanLine className="h-5 w-5 shrink-0" />
-                            <span>Scan Document</span>
-                          </>
-                        )}
+                        <ScanLine className="h-5 w-5" />
+                        <span>Scan Document</span>
                       </Button>
-
-                      {uploading && (
-                        <p className="text-center text-xs text-muted-foreground animate-pulse">
-                          Extracting transactions — this may take a moment
-                        </p>
-                      )}
                     </div>
                   );
                 })()}
+
+                {/* Processing state */}
+                {uploading && (
+                  <div className="rounded-lg border bg-muted/30 p-6 text-center space-y-3">
+                    <div className="flex justify-center">
+                      <span className="h-8 w-8 animate-spin rounded-full border-3 border-primary border-t-transparent" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Processing document…</p>
+                      <p className="text-xs text-muted-foreground mt-1">Extracting transactions</p>
+                    </div>
+                  </div>
+                )}
 
               </CardContent>
             </Card>
@@ -705,6 +707,31 @@ export function Upload() {
               <Button variant="outline" size="sm" onClick={addRow} className="gap-1.5 bg-background">
                 <Plus className="h-3.5 w-3.5" /> Add Row
               </Button>
+
+              {/* Duplicate Resolution Mode Selector */}
+              <div className="flex items-center gap-2 ml-4">
+                <span className="text-xs text-muted-foreground font-medium">Duplicates:</span>
+                <Select value={resolutionMode} onValueChange={(v: 'manual' | 'auto') => setResolutionMode(v)}>
+                  <SelectTrigger className="h-8 w-[140px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual">
+                      <div className="flex flex-col items-start py-0.5">
+                        <span className="font-medium">Manual Review</span>
+                        <span className="text-xs text-muted-foreground">Flag for review</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="auto">
+                      <div className="flex flex-col items-start py-0.5">
+                        <span className="font-medium">Auto Resolve</span>
+                        <span className="text-xs text-muted-foreground">Keep most recent</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <span className="text-sm text-muted-foreground ml-auto">
                 <strong className="text-foreground">{selectedCount}</strong> row{selectedCount !== 1 ? 's' : ''} selected
               </span>
