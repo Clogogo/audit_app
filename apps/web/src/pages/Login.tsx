@@ -104,12 +104,13 @@ export function Login() {
             </Button>
           </form>
 
-          <p className="text-center text-sm text-muted-foreground mt-4">
+          {/* Registration temporarily hidden */}
+          {/* <p className="text-center text-sm text-muted-foreground mt-4">
             Don't have an account?{' '}
             <Link to="/register" className="text-primary hover:underline font-medium">
               Register here
             </Link>
-          </p>
+          </p> */}
         </CardContent>
       </Card>
     </div>
