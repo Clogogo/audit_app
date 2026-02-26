@@ -1,4 +1,3 @@
-import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -7,6 +6,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import AuditLog
 from schemas import AuditLogOut
+from utils import JSONHelper
 
 router = APIRouter(prefix="/audit-log", tags=["audit-log"])
 
@@ -28,15 +28,7 @@ def get_audit_log(
     result = []
     for log in logs:
         out = AuditLogOut.model_validate(log)
-        if log.old_values:
-            try:
-                out.old_values = json.loads(log.old_values)
-            except Exception:
-                out.old_values = log.old_values
-        if log.new_values:
-            try:
-                out.new_values = json.loads(log.new_values)
-            except Exception:
-                out.new_values = log.new_values
+        out.old_values = JSONHelper.safe_loads(log.old_values)
+        out.new_values = JSONHelper.safe_loads(log.new_values)
         result.append(out)
     return result

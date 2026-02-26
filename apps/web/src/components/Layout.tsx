@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -13,14 +13,18 @@ import {
   X,
   Cpu,
   WifiOff,
+  LogOut,
+  User,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { getHealth } from '../api/client';
+import { useAuth } from '../contexts/AuthContext';
+import { Button } from './ui/button';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/transactions', icon: ArrowLeftRight, label: 'Transactions' },
-  { to: '/banks', icon: Building2, label: 'Banks' },
+  { to: '/banks', icon: Building2, label: 'Bank Accounts' },
   { to: '/upload', icon: Upload, label: 'Upload Receipt' },
   { to: '/reconciliation', icon: GitMerge, label: 'Reconciliation' },
   { to: '/audit-log', icon: ScrollText, label: 'Audit Log' },
@@ -29,8 +33,15 @@ const navItems = [
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [aiReady, setAiReady] = useState<boolean | null>(null);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   // Poll AI status every 30 s
   useEffect(() => {
@@ -99,6 +110,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <span>AI not configured</span>
             </div>
           )}
+        </div>
+
+        {/* User info and logout */}
+        <div className="px-4 py-3 border-t bg-muted/20">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+              <User className="h-4 w-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{user?.full_name || 'User'}</p>
+              <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={handleLogout}
+          >
+            <LogOut className="h-3.5 w-3.5 mr-2" />
+            Logout
+          </Button>
         </div>
       </>
     );

@@ -1,6 +1,38 @@
 from datetime import date, datetime
 from typing import Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
+
+
+# ── Authentication ────────────────────────────────────────────────────────────
+
+class UserRegister(BaseModel):
+    """Schema for user registration."""
+    email: EmailStr
+    password: str
+    full_name: Optional[str] = None
+
+
+class UserLogin(BaseModel):
+    """Schema for user login."""
+    email: EmailStr
+    password: str
+
+
+class Token(BaseModel):
+    """Schema for JWT token response."""
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserOut(BaseModel):
+    """Schema for user information response."""
+    id: int
+    email: str
+    full_name: Optional[str]
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # ── Transactions ──────────────────────────────────────────────────────────────
@@ -231,11 +263,33 @@ class LLMStatementImportResult(BaseModel):
     statement_id: int
 
 
+# ── Bank Accounts ─────────────────────────────────────────────────────────────
+
+
+class BankAccountCreate(BaseModel):
+    """Create or update a bank account."""
+    bank_name: str
+    account_holder_name: Optional[str] = None
+    account_number: Optional[str] = None
+
+
+class BankAccountOut(BaseModel):
+    """Bank account for management/CRUD operations."""
+    id: int
+    bank_name: str
+    account_holder_name: Optional[str]
+    account_number: Optional[str]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ── Bank Statements ───────────────────────────────────────────────────────────
 
 class BankStatementOut(BaseModel):
     id: int
     bank_name: str
+    bank_account_id: Optional[int]
     account_last4: Optional[str]
     statement_period_start: Optional[date]
     statement_period_end: Optional[date]
@@ -301,14 +355,15 @@ class BankAccountReportSummary(BaseModel):
     """Summary report for a bank account - income and expense totals."""
     bank_account_id: int
     bank_name: str
+    account_holder_name: Optional[str]
     account_number: Optional[str]
     total_income: float
-    total_expense: float
-    total_transfer: float
-    net_amount: float  # income - expense
+    total_expense: float  # Includes transfers (money OUT of account)
+    total_transfer: float  # Subset of expense - for reference only
+    net_amount: float  # income - expense (transfers already included in expense)
     income_count: int
-    expense_count: int
-    transfer_count: int
+    expense_count: int  # Includes transfer count
+    transfer_count: int  # Subset of expense_count - for reference only
     total_transactions: int
     first_transaction_date: Optional[date]
     last_transaction_date: Optional[date]
@@ -319,6 +374,7 @@ class BankAccountReport(BaseModel):
     """Detailed report for a bank account with category breakdown and monthly trends."""
     bank_account_id: int
     bank_name: str
+    account_holder_name: Optional[str]
     account_number: Optional[str]
     total_income: float
     total_expense: float
@@ -330,6 +386,7 @@ class BankAccountReport(BaseModel):
     total_transactions: int
     expense_by_category: dict[str, float]  # category name -> total amount
     income_by_category: dict[str, float]   # category name -> total amount
+    transfer_by_category: dict[str, float]  # category name -> total amount
     monthly_breakdown: dict[str, dict[str, float]]  # YYYY-MM -> {income, expense, transfer}
     first_transaction_date: Optional[date]
     last_transaction_date: Optional[date]

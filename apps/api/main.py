@@ -8,7 +8,7 @@ from sqlalchemy import text
 from database import engine, Base
 import models  # noqa: ensure all models are registered before create_all
 
-from routers import transactions, upload, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates
+from routers import transactions, upload, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates, auth
 
 # Create all tables on startup
 Base.metadata.create_all(bind=engine)
@@ -62,6 +62,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(transactions.router)
 app.include_router(upload.router)
 app.include_router(bank_statements.router)

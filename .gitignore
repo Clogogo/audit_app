@@ -69,3 +69,4 @@ test-local.sh
 restore-production.sh
 TESTING.md
 deploy-production.sh
+AUTHENTICATION_SETUP.md

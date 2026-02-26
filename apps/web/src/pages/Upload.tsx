@@ -121,7 +121,9 @@ export function Upload() {
 
     try {
       if (isStructured(file)) {
-        const stmt = await uploadBankStatement(file, selectedBank.trim());
+        // Get account holder name from selected bank account
+        const selectedAccount = bankAccounts.find(b => b.bank_name === selectedBank);
+        const stmt = await uploadBankStatement(file, selectedBank.trim(), selectedAccount?.account_holder_name);
         stmtRef.current = stmt;
         const txs = await getBankTransactions(stmt.id);
         setRows(

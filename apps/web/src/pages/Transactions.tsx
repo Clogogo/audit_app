@@ -63,7 +63,10 @@ export function Transactions() {
     return { start_date: startDate || undefined, end_date: endDate || undefined };
   };
 
-  const load = () => {
+  const load = (preserveScroll = false) => {
+    // Save current scroll position if preserveScroll is true
+    const scrollPosition = preserveScroll ? window.scrollY : 0;
+
     setLoading(true);
     setSelected(new Set());
     getTransactions({
@@ -71,7 +74,13 @@ export function Transactions() {
       ..._apiDates(),
     })
       .then(setTransactions)
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        // Restore scroll position after a brief delay to ensure DOM has updated
+        if (preserveScroll) {
+          setTimeout(() => window.scrollTo(0, scrollPosition), 0);
+        }
+      });
   };
 
   useEffect(() => { load(); }, [filterType, filterYear, filterMonth, startDate, endDate]);
@@ -100,7 +109,7 @@ export function Transactions() {
       }
       setDialogOpen(false);
       setEditTarget(null);
-      load();
+      load(true); // Preserve scroll position after edit
     } catch (err: unknown) {
       const res = (err as { response?: { data?: unknown; status?: number } })?.response;
       const body = res?.data;
@@ -153,7 +162,7 @@ export function Transactions() {
       setDeleting(false);
       setConfirmOpen(false);
       setConfirmId(null);
-      load();
+      load(true); // Preserve scroll position after delete
     }
   };
 
@@ -241,7 +250,7 @@ export function Transactions() {
       await batchUpdateCategory([...selected], batchCategory);
       setBatchCategory('');
       setSelected(new Set());
-      load();
+      load(true); // Preserve scroll position after batch update
     } finally {
       setBatchCategoryApplying(false);
     }

@@ -1,3 +1,15 @@
+// ── Authentication ────────────────────────────────────────────────────────────
+
+export interface User {
+  id: number;
+  email: string;
+  full_name?: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+// ── Transactions ──────────────────────────────────────────────────────────────
+
 export type TransactionType = 'expense' | 'income' | 'transfer';
 
 export type MatchStatus = 'unmatched' | 'matched' | 'discrepancy';
@@ -104,6 +116,7 @@ export interface ReconciliationStatus {
 export interface BankAccount {
   id: number;
   bank_name: string;
+  account_holder_name?: string;
   account_number?: string;
   created_at: string;
   transaction_count?: number;
@@ -111,6 +124,7 @@ export interface BankAccount {
 
 export interface BankAccountCreate {
   bank_name: string;
+  account_holder_name?: string;
   account_number?: string;
 }
 
@@ -287,6 +301,7 @@ export interface LLMStatementImportResult {
 export interface BankAccountReportSummary {
   bank_account_id: number;
   bank_name: string;
+  account_holder_name: string | null;
   account_number: string | null;
   total_income: number;
   total_expense: number;

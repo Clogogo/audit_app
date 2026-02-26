@@ -33,6 +33,15 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Add Authorization header to all requests if token exists
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 const unwrap = <T>(r: AxiosResponse<T>) => r.data;
 
 // Transactions
@@ -88,10 +97,13 @@ export const confirmBatch = (fileId: number, items: BatchConfirmItem[]) =>
 export const getFilePreviewUrl = (fileId: number) => `/api/upload/${fileId}/preview`;
 
 // Bank Statements
-export const uploadBankStatement = (file: File, bankName: string) => {
+export const uploadBankStatement = (file: File, bankName: string, accountHolderName?: string) => {
   const form = new FormData();
   form.append('file', file);
   form.append('bank_name', bankName);
+  if (accountHolderName) {
+    form.append('account_holder_name', accountHolderName);
+  }
   return api
     .post<BankStatement>('/bank-statements', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -170,6 +182,9 @@ export const getBankAccounts = () =>
 
 export const createBankAccount = (body: BankAccountCreate) =>
   api.post<BankAccount>('/bank-accounts', body).then(unwrap);
+
+export const updateBankAccount = (id: number, body: BankAccountCreate) =>
+  api.put<BankAccount>(`/bank-accounts/${id}`, body).then(unwrap);
 
 export const deleteBankAccount = (id: number) =>
   api.delete<void>(`/bank-accounts/${id}`).then(unwrap);
@@ -262,3 +277,14 @@ export const getBankAccountReport = (
   params?: { start_date?: string; end_date?: string }
 ) =>
   api.get<BankAccountReport>(`/bank-statements/bank-accounts/${accountId}`, { params }).then(unwrap);
+
+// ── Authentication ────────────────────────────────────────────────────────────
+
+export const login = (email: string, password: string) =>
+  api.post<{ access_token: string; token_type: string }>('/auth/login', { email, password }).then(unwrap);
+
+export const register = (email: string, password: string, fullName?: string) =>
+  api.post('/auth/register', { email, password, full_name: fullName }).then(unwrap);
+
+export const getCurrentUser = () =>
+  api.get('/auth/me').then(unwrap);

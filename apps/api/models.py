@@ -20,6 +20,18 @@ class MatchStatus(str, enum.Enum):
     discrepancy = "discrepancy"
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Integer, default=1)  # SQLite uses INTEGER for bool
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class UploadedFile(Base):
     __tablename__ = "uploaded_files"
 
@@ -71,6 +83,7 @@ class BankStatement(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     bank_name: Mapped[str] = mapped_column(String(200))
+    bank_account_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("bank_accounts.id", ondelete="SET NULL"), nullable=True)
     account_last4: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     statement_period_start: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     statement_period_end: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
@@ -79,6 +92,7 @@ class BankStatement(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | reconciled
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    bank_account: Mapped[Optional["BankAccount"]] = relationship("BankAccount", back_populates="statements")
     bank_transactions: Mapped[list["BankTransaction"]] = relationship("BankTransaction", back_populates="statement", cascade="all, delete-orphan")
 
 
@@ -110,10 +124,12 @@ class BankAccount(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     bank_name: Mapped[str] = mapped_column(String(200))
+    account_holder_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     account_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="bank_account")
+    statements: Mapped[list["BankStatement"]] = relationship("BankStatement", back_populates="bank_account")
 
 
 class AuditLog(Base):

@@ -11,12 +11,14 @@ from typing import Optional
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import ai_worker
 from database import get_db
 from models import AuditLog, BankAccount, BankStatement, BankTransaction, Transaction
 from parsers.category_suggester import ai_suggest_categories_batch, suggest_category_keyword
+from utils import get_or_404, AuditLogger, TransactionQueryBuilder
 from parsers.file_parsers import detect_file_type, parse_csv, parse_excel, parse_pdf
 from parsers.statement_parser import (
     find_header_row_index,
@@ -129,6 +131,7 @@ def _find_duplicate_transaction(
 async def upload_bank_statement(
     file: UploadFile = File(...),
     bank_name: str = Form(...),
+    account_holder_name: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     """Upload and parse a bank statement (CSV, Excel, or PDF)."""
@@ -191,9 +194,28 @@ async def upload_bank_statement(
     # Pass 2: AI for rows marked as "Other"
     rows = ai_suggest_categories_batch(rows)
 
+    # Find or create bank account
+    from sqlalchemy import func
+    bank_account = db.query(BankAccount).filter(
+        func.lower(BankAccount.bank_name) == bank_name.lower()
+    ).first()
+
+    if not bank_account:
+        bank_account = BankAccount(
+            bank_name=bank_name,
+            account_holder_name=account_holder_name
+        )
+        db.add(bank_account)
+        db.flush()
+    elif account_holder_name and not bank_account.account_holder_name:
+        # Update existing account if holder name is provided and not set
+        bank_account.account_holder_name = account_holder_name
+        db.flush()
+
     # Save statement and transactions
     stmt = BankStatement(
         bank_name=bank_name,
+        bank_account_id=bank_account.id,
         file_path=str(stored_path) if stored_path else None,
         file_type=file_type,
         status="pending",
@@ -229,9 +251,7 @@ def list_bank_statements(db: Session = Depends(get_db)):
 @router.delete("/{stmt_id}", status_code=204)
 def delete_bank_statement(stmt_id: int, db: Session = Depends(get_db)):
     """Delete a bank statement and all its bank transactions."""
-    stmt = db.get(BankStatement, stmt_id)
-    if not stmt:
-        raise HTTPException(404, "Statement not found")
+    stmt = get_or_404(db, BankStatement, stmt_id, "Statement")
     db.delete(stmt)  # cascade deletes all BankTransaction rows
     db.commit()
 
@@ -248,10 +268,13 @@ def batch_delete_bank_statements(body: _BatchDeleteRequest, db: Session = Depend
     """Delete multiple bank statements by ID."""
     deleted = 0
     for stmt_id in body.ids:
-        stmt = db.get(BankStatement, stmt_id)
-        if stmt:
+        try:
+            stmt = get_or_404(db, BankStatement, stmt_id, "Statement")
             db.delete(stmt)
             deleted += 1
+        except HTTPException:
+            # Skip if not found
+            continue
     db.commit()
     return {"deleted": deleted}
 
@@ -259,9 +282,7 @@ def batch_delete_bank_statements(body: _BatchDeleteRequest, db: Session = Depend
 @router.get("/{stmt_id}/transactions", response_model=list[BankTransactionOut])
 def list_bank_transactions(stmt_id: int, db: Session = Depends(get_db)):
     """List all bank transactions for a statement."""
-    stmt = db.get(BankStatement, stmt_id)
-    if not stmt:
-        raise HTTPException(404, "Statement not found")
+    get_or_404(db, BankStatement, stmt_id, "Statement")
     return (
         db.query(BankTransaction)
         .filter(BankTransaction.statement_id == stmt_id)
@@ -281,9 +302,7 @@ def import_statement_transactions(
     Automatically detects duplicates and links them to existing transactions
     for reconciliation instead of creating duplicates.
     """
-    stmt = db.get(BankStatement, stmt_id)
-    if not stmt:
-        raise HTTPException(404, "Statement not found")
+    stmt = get_or_404(db, BankStatement, stmt_id, "Statement")
 
     saved_count = 0
     reconciled_count = 0
@@ -308,20 +327,17 @@ def import_statement_transactions(
             bank_tx.matched_transaction_id = existing.id
             bank_tx.match_status = "matched"
             bank_tx.match_confidence = 1.0
-            db.add(
-                AuditLog(
-                    entity_type="reconciliation",
-                    entity_id=bank_tx.id,
-                    action="match",
-                    new_values=json.dumps(
-                        {
-                            "bank_tx_id": bank_tx.id,
-                            "transaction_id": existing.id,
-                            "method": "duplicate_import",
-                            "reason": "same date and amount already in transactions",
-                        }
-                    ),
-                )
+            AuditLogger.log_action(
+                db,
+                "reconciliation",
+                bank_tx.id,
+                "match",
+                new_values={
+                    "bank_tx_id": bank_tx.id,
+                    "transaction_id": existing.id,
+                    "method": "duplicate_import",
+                    "reason": "same date and amount already in transactions",
+                },
             )
             reconciled_count += 1
             continue
@@ -338,7 +354,7 @@ def import_statement_transactions(
             date=item.date,
             vendor=tx_vendor,
             bank=stmt.bank_name,
-            bank_account_id=req.bank_account_id,
+            bank_account_id=req.bank_account_id or stmt.bank_account_id,
         )
         db.add(tx)
         db.flush()
@@ -435,6 +451,34 @@ def import_statement_transactions(
 # ── Bank Account Reports ─────────────────────────────────────────────────────
 
 
+def _is_intra_account_transfer(t: Transaction) -> bool:
+    """
+    Check if this is an intra-account transfer (within same bank/account).
+    Examples: Auto-save to OWealth, savings wallet, vault transfers.
+    These should NOT be counted in bank reports.
+    """
+    if t.type != "transfer":
+        return False
+
+    keywords = ["owealth", "auto-save", "auto save", "savings wallet", "vault", "pocket"]
+    text = (t.description + " " + (t.vendor or "")).lower()
+    return any(keyword in text for keyword in keywords)
+
+
+def _is_incoming_transfer(t: Transaction) -> bool:
+    """
+    Check if this is an incoming transfer (money coming IN).
+    Examples: "Transfer from COMPANY", "Received from Person"
+    These should be counted as INCOME in bank reports.
+    """
+    if t.type != "transfer":
+        return False
+
+    text = (t.description + " " + (t.vendor or "")).lower()
+    incoming_keywords = ["transfer from", "received from", "payment from", "refund from", "credit from"]
+    return any(keyword in text for keyword in incoming_keywords)
+
+
 @router.get("/bank-accounts", response_model=list[BankAccountReportSummary])
 def get_bank_account_reports(
     start_date: Optional[date] = Query(
@@ -448,35 +492,67 @@ def get_bank_account_reports(
     reports = []
 
     for account in bank_accounts:
-        query = db.query(Transaction).filter(
-            Transaction.bank_account_id == account.id
+        transactions = (
+            TransactionQueryBuilder(db)
+            .filter_bank_account(account.id)
+            .filter_date_range(start_date, end_date)
+            .build()
+            .all()
         )
 
-        if start_date:
-            query = query.filter(Transaction.date >= start_date)
-        if end_date:
-            query = query.filter(Transaction.date <= end_date)
+        # Income: regular income + incoming transfers (e.g., "Transfer from Company")
+        total_income = sum(
+            t.amount for t in transactions
+            if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t))
+        )
 
-        transactions = query.all()
+        # Expense: regular expenses + outgoing transfers (exclude intra-account & incoming)
+        total_expense = sum(
+            t.amount for t in transactions
+            if t.type == "expense" or (
+                t.type == "transfer"
+                and not _is_intra_account_transfer(t)
+                and not _is_incoming_transfer(t)
+            )
+        )
 
-        total_income = sum(t.amount for t in transactions if t.type == "income")
-        total_expense = sum(t.amount for t in transactions if t.type == "expense")
-        total_transfer = sum(t.amount for t in transactions if t.type == "transfer")
+        # Total transfers (excluding intra-account like OWealth)
+        total_transfer = sum(
+            t.amount for t in transactions
+            if t.type == "transfer" and not _is_intra_account_transfer(t)
+        )
 
-        income_count = sum(1 for t in transactions if t.type == "income")
-        expense_count = sum(1 for t in transactions if t.type == "expense")
-        transfer_count = sum(1 for t in transactions if t.type == "transfer")
+        income_count = sum(
+            1 for t in transactions
+            if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t))
+        )
+
+        expense_count = sum(
+            1 for t in transactions
+            if t.type == "expense" or (
+                t.type == "transfer"
+                and not _is_intra_account_transfer(t)
+                and not _is_incoming_transfer(t)
+            )
+        )
+
+        transfer_count = sum(
+            1 for t in transactions
+            if t.type == "transfer" and not _is_intra_account_transfer(t)
+        )
 
         transaction_dates = [t.date for t in transactions]
         first_transaction = min(transaction_dates) if transaction_dates else None
         last_transaction = max(transaction_dates) if transaction_dates else None
 
+        # Net amount = Income - Expense
         net_amount = total_income - total_expense
 
         reports.append(
             BankAccountReportSummary(
                 bank_account_id=account.id,
                 bank_name=account.bank_name,
+                account_holder_name=account.account_holder_name,
                 account_number=account.account_number,
                 total_income=total_income,
                 total_expense=total_expense,
@@ -505,38 +581,81 @@ def get_bank_account_report(
     db: Session = Depends(get_db),
 ):
     """Get detailed income and expense report for a specific bank account."""
-    account = db.get(BankAccount, account_id)
-    if not account:
-        raise HTTPException(404, "Bank account not found")
+    account = get_or_404(db, BankAccount, account_id, "Bank account")
 
-    query = db.query(Transaction).filter(Transaction.bank_account_id == account_id)
+    transactions = (
+        TransactionQueryBuilder(db)
+        .filter_bank_account(account_id)
+        .filter_date_range(start_date, end_date)
+        .build()
+        .all()
+    )
 
-    if start_date:
-        query = query.filter(Transaction.date >= start_date)
-    if end_date:
-        query = query.filter(Transaction.date <= end_date)
+    # Income: regular income + incoming transfers (e.g., "Transfer from Company")
+    total_income = sum(
+        t.amount for t in transactions
+        if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t))
+    )
 
-    transactions = query.all()
+    # Expense: regular expenses + outgoing transfers (exclude intra-account & incoming)
+    total_expense = sum(
+        t.amount for t in transactions
+        if t.type == "expense" or (
+            t.type == "transfer"
+            and not _is_intra_account_transfer(t)
+            and not _is_incoming_transfer(t)
+        )
+    )
 
-    total_income = sum(t.amount for t in transactions if t.type == "income")
-    total_expense = sum(t.amount for t in transactions if t.type == "expense")
-    total_transfer = sum(t.amount for t in transactions if t.type == "transfer")
+    # Total transfers (excluding intra-account like OWealth)
+    total_transfer = sum(
+        t.amount for t in transactions
+        if t.type == "transfer" and not _is_intra_account_transfer(t)
+    )
 
-    income_count = sum(1 for t in transactions if t.type == "income")
-    expense_count = sum(1 for t in transactions if t.type == "expense")
-    transfer_count = sum(1 for t in transactions if t.type == "transfer")
+    income_count = sum(
+        1 for t in transactions
+        if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t))
+    )
 
+    expense_count = sum(
+        1 for t in transactions
+        if t.type == "expense" or (
+            t.type == "transfer"
+            and not _is_intra_account_transfer(t)
+            and not _is_incoming_transfer(t)
+        )
+    )
+
+    transfer_count = sum(
+        1 for t in transactions
+        if t.type == "transfer" and not _is_intra_account_transfer(t)
+    )
+
+    # Expense breakdown: regular expenses + outgoing transfers
     expense_by_category = {}
     for t in transactions:
-        if t.type == "expense":
+        if t.type == "expense" or (
+            t.type == "transfer"
+            and not _is_intra_account_transfer(t)
+            and not _is_incoming_transfer(t)
+        ):
             category = t.category or "Uncategorized"
             expense_by_category[category] = expense_by_category.get(category, 0) + t.amount
 
+    # Income breakdown: regular income + incoming transfers
     income_by_category = {}
     for t in transactions:
-        if t.type == "income":
+        if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t)):
             category = t.category or "Uncategorized"
             income_by_category[category] = income_by_category.get(category, 0) + t.amount
+
+    transfer_by_category = {}
+    for t in transactions:
+        # Only include inter-account transfers, exclude intra-account
+        if t.type == "transfer" and not _is_intra_account_transfer(t):
+            category = t.category or "Uncategorized"
+            transfer_by_category[category] = transfer_by_category.get(category, 0) + t.amount
 
     monthly_data = {}
     for t in transactions:
@@ -544,11 +663,19 @@ def get_bank_account_report(
         if month_key not in monthly_data:
             monthly_data[month_key] = {"income": 0, "expense": 0, "transfer": 0}
 
-        if t.type == "income":
+        # Income: regular income + incoming transfers
+        if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t)):
             monthly_data[month_key]["income"] += t.amount
-        elif t.type == "expense":
+        # Expense: regular expenses + outgoing transfers (exclude intra-account & incoming)
+        elif t.type == "expense" or (
+            t.type == "transfer"
+            and not _is_intra_account_transfer(t)
+            and not _is_incoming_transfer(t)
+        ):
             monthly_data[month_key]["expense"] += t.amount
-        elif t.type == "transfer":
+
+        # Track all inter-account transfers separately for reference
+        if t.type == "transfer" and not _is_intra_account_transfer(t):
             monthly_data[month_key]["transfer"] += t.amount
 
     transaction_dates = [t.date for t in transactions]
@@ -558,17 +685,19 @@ def get_bank_account_report(
     return BankAccountReport(
         bank_account_id=account.id,
         bank_name=account.bank_name,
+        account_holder_name=account.account_holder_name,
         account_number=account.account_number,
         total_income=total_income,
-        total_expense=total_expense,
+        total_expense=total_expense,  # Includes transfers
         total_transfer=total_transfer,
-        net_amount=total_income - total_expense,
+        net_amount=total_income - total_expense,  # Transfers already included in expense
         income_count=income_count,
         expense_count=expense_count,
         transfer_count=transfer_count,
         total_transactions=len(transactions),
         expense_by_category=expense_by_category,
         income_by_category=income_by_category,
+        transfer_by_category=transfer_by_category,
         monthly_breakdown=monthly_data,
         first_transaction_date=first_transaction,
         last_transaction_date=last_transaction,

@@ -1,121 +1,106 @@
 """
-Bank account management: store bank name + account number for reuse.
-Transactions can be linked to a bank account via bank_account_id FK.
+Bank Account Management API
+CRUD operations for managing bank accounts
 """
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Optional
-from datetime import datetime, date
 
 from database import get_db
-from models import BankAccount, Transaction
+from models import BankAccount, BankStatement, Transaction
+from schemas import BankAccountCreate, BankAccountOut
+from utils import get_or_404
 
-router = APIRouter(prefix="/bank-accounts", tags=["bank-accounts"])
-
-
-class BankAccountCreate(BaseModel):
-    bank_name: str
-    account_number: Optional[str] = None
-
-
-class BankAccountOut(BaseModel):
-    id: int
-    bank_name: str
-    account_number: Optional[str]
-    created_at: datetime
-    transaction_count: int = 0
-
-    model_config = {"from_attributes": True}
-
-
-class LinkedTransactionOut(BaseModel):
-    id: int
-    type: str
-    amount: float
-    currency: str
-    category: str
-    description: str
-    date: date
-    vendor: Optional[str]
-
-    model_config = {"from_attributes": True}
+router = APIRouter(prefix="/bank-accounts", tags=["Bank Accounts"])
 
 
 @router.get("", response_model=list[BankAccountOut])
 def list_bank_accounts(db: Session = Depends(get_db)):
+    """List all bank accounts."""
     accounts = db.query(BankAccount).order_by(BankAccount.bank_name).all()
-    result = []
-    for acc in accounts:
-        out = BankAccountOut.model_validate(acc)
-        out.transaction_count = len(acc.transactions)
-        result.append(out)
-    return result
-
-
-@router.get("/{account_id}/transactions", response_model=list[LinkedTransactionOut])
-def get_account_transactions(account_id: int, db: Session = Depends(get_db)):
-    account = db.get(BankAccount, account_id)
-    if not account:
-        raise HTTPException(404, "Bank account not found")
-    return (
-        db.query(Transaction)
-        .filter(Transaction.bank_account_id == account_id)
-        .order_by(Transaction.date.desc())
-        .all()
-    )
+    return accounts
 
 
 @router.post("", response_model=BankAccountOut, status_code=201)
-def create_bank_account(body: BankAccountCreate, db: Session = Depends(get_db)):
+def create_bank_account(data: BankAccountCreate, db: Session = Depends(get_db)):
+    """Create a new bank account."""
+    # Check if bank account with same name already exists
     existing = (
         db.query(BankAccount)
-        .filter(
-            BankAccount.bank_name == body.bank_name,
-            BankAccount.account_number == body.account_number,
-        )
+        .filter(BankAccount.bank_name == data.bank_name)
         .first()
     )
     if existing:
-        raise HTTPException(400, "A bank account with this name and number already exists")
-    account = BankAccount(bank_name=body.bank_name, account_number=body.account_number)
+        raise HTTPException(
+            400,
+            f"Bank account '{data.bank_name}' already exists. "
+            "Update the existing account instead.",
+        )
+
+    account = BankAccount(
+        bank_name=data.bank_name,
+        account_holder_name=data.account_holder_name,
+        account_number=data.account_number,
+    )
     db.add(account)
     db.commit()
     db.refresh(account)
-    out = BankAccountOut.model_validate(account)
-    out.transaction_count = 0
-    return out
+    return account
 
 
-@router.patch("/{account_id}/transactions/{tx_id}", status_code=200)
-def link_transaction(account_id: int, tx_id: int, db: Session = Depends(get_db)):
-    """Manually link a transaction to a bank account."""
-    account = db.get(BankAccount, account_id)
-    if not account:
-        raise HTTPException(404, "Bank account not found")
-    tx = db.get(Transaction, tx_id)
-    if not tx:
-        raise HTTPException(404, "Transaction not found")
-    tx.bank_account_id = account_id
+@router.get("/{account_id}", response_model=BankAccountOut)
+def get_bank_account(account_id: int, db: Session = Depends(get_db)):
+    """Get a specific bank account."""
+    return get_or_404(db, BankAccount, account_id, "Bank account")
+
+
+@router.put("/{account_id}", response_model=BankAccountOut)
+def update_bank_account(
+    account_id: int, data: BankAccountCreate, db: Session = Depends(get_db)
+):
+    """Update an existing bank account."""
+    account = get_or_404(db, BankAccount, account_id, "Bank account")
+
+    account.bank_name = data.bank_name
+    account.account_holder_name = data.account_holder_name
+    account.account_number = data.account_number
     db.commit()
-    return {"ok": True}
-
-
-@router.delete("/{account_id}/transactions/{tx_id}", status_code=200)
-def unlink_transaction(account_id: int, tx_id: int, db: Session = Depends(get_db)):
-    """Remove the bank account link from a transaction."""
-    tx = db.get(Transaction, tx_id)
-    if not tx or tx.bank_account_id != account_id:
-        raise HTTPException(404, "Transaction not found in this account")
-    tx.bank_account_id = None
-    db.commit()
-    return {"ok": True}
+    db.refresh(account)
+    return account
 
 
 @router.delete("/{account_id}", status_code=204)
 def delete_bank_account(account_id: int, db: Session = Depends(get_db)):
-    account = db.get(BankAccount, account_id)
-    if not account:
-        raise HTTPException(404, "Bank account not found")
+    """
+    Delete a bank account.
+    Only allowed if no transactions or statements are linked.
+    """
+    account = get_or_404(db, BankAccount, account_id, "Bank account")
+
+    # Check if account has transactions
+    tx_count = (
+        db.query(Transaction)
+        .filter(Transaction.bank_account_id == account_id)
+        .count()
+    )
+    if tx_count > 0:
+        raise HTTPException(
+            400,
+            f"Cannot delete bank account with {tx_count} linked transactions. "
+            "Delete or reassign transactions first.",
+        )
+
+    # Check if account has statements
+    stmt_count = (
+        db.query(BankStatement)
+        .filter(BankStatement.bank_account_id == account_id)
+        .count()
+    )
+    if stmt_count > 0:
+        raise HTTPException(
+            400,
+            f"Cannot delete bank account with {stmt_count} linked statements. "
+            "Delete statements first.",
+        )
+
     db.delete(account)
     db.commit()
