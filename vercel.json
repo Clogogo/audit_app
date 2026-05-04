@@ -4,6 +4,10 @@
   "installCommand": "npm install",
   "rewrites": [
     {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
@@ -11,14 +15,5 @@
   "env": {
     "NX_DAEMON": "false"
   },
-  "ignoreCommand": "npx dlx nx-ignore web",
-  "api": {
-    "runtime": "python@3.11",
-    "builder": "@vercel/python"
-  },
-  "functions": {
-    "apps/api/**": {
-      "runtime": "python@3.11"
-    }
-  }
+  "ignoreCommand": "npx dlx nx-ignore web"
 }
