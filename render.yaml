@@ -7,14 +7,45 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
-      - key: DATABASE_URL
-        sync: false          # paste your Supabase connection string in Render dashboard
+      # Database Configuration
+      # SQLite is automatically configured to use /tmp (ephemeral storage on Render free tier)
+      # For persistent database on Render, upgrade to paid plan and set:
+      # DB_PATH=/var/data  (requires persistent disk volume)
+      - key: DB_PATH
+        value: /tmp          # SQLite stores database here (auto-created on startup)
+      
+      # Frontend Configuration
       - key: FRONTEND_URL
-        sync: false          # paste your Vercel URL e.g. https://financeaudit.vercel.app
-      - key: GEMINI_API_KEY
-        sync: false          # optional — enables AI fallback when Ollama is unavailable
+        sync: false          # Set to your Vercel URL e.g. https://financeaudit.vercel.app
+      
+      # API Configuration
+      - key: OPENAI_API_KEY
+        sync: false          # Required for AI features
+      - key: SECRET_KEY
+        sync: false          # Required for JWT authentication
+      - key: ALGORITHM
+        value: HS256         # JWT algorithm
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "30"
+      - key: CORS_ORIGINS
+        sync: false          # Set to your frontend URL
+      
+      # File Upload Configuration
       - key: UPLOAD_DIR
-        value: /tmp/uploads  # Render free tier has no persistent disk; use /tmp
+        value: /tmp/uploads  # Render free tier has no persistent disk
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "50"
+      
+      # Debug
+      - key: SQL_ECHO
+        value: "False"       # Set to "True" for SQL query logging
+    
+    # Optional: Persistent disk for production (requires paid plan)
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 10
+    
     buildFilter:
       paths:
         - apps/api/**

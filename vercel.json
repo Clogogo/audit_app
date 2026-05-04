@@ -11,5 +11,14 @@
   "env": {
     "NX_DAEMON": "false"
   },
-  "ignoreCommand": "npx dlx nx-ignore web"
+  "ignoreCommand": "npx dlx nx-ignore web",
+  "api": {
+    "runtime": "python@3.11",
+    "builder": "@vercel/python"
+  },
+  "functions": {
+    "apps/api/**": {
+      "runtime": "python@3.11"
+    }
+  }
 }

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nslookup db.spsvhtzcfqnnlbttmpgr.supabase.co)",
+      "Read(//Users/luckyogogo/Personal-Project/Audit_app/**)"
+    ]
+  }
+}
