@@ -1,0 +1,23 @@
+# Python files (API runs on Render, not Vercel)
+api/
+apps/
+*.py
+
+# Ignore local development files
+.env
+.env.local
+.venv
+node_modules
+dist
+.git
+.gitignore
+.DS_Store
+
+# Ignore documentation
+*.md
+
+# Ignore test files
+__pycache__
+*.pyc
+
+
