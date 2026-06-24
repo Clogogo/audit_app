@@ -73,7 +73,7 @@ def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tupl
         db.query(Transaction)
         .filter(
             Transaction.id != tx.id,
-            Transaction.duplicate_reviewed == 0,
+            Transaction.duplicate_reviewed == False,
             Transaction.date == tx.date,
         )
         .all()
@@ -125,7 +125,7 @@ def scan_all_duplicates(db: Session = Depends(get_db)):
     """
     transactions = (
         db.query(Transaction)
-        .filter(Transaction.duplicate_reviewed == 0)
+        .filter(Transaction.duplicate_reviewed == False)
         .order_by(Transaction.date.desc())
         .all()
     )
@@ -150,8 +150,8 @@ def list_pending_duplicates(db: Session = Depends(get_db)):
     duplicates = (
         db.query(Transaction)
         .filter(
-            Transaction.is_potential_duplicate == 1,
-            Transaction.duplicate_reviewed == 0,
+            Transaction.is_potential_duplicate == True,
+            Transaction.duplicate_reviewed == False,
         )
         .order_by(Transaction.date.desc())
         .all()
@@ -231,16 +231,16 @@ def mark_not_duplicate(tx_id: int, db: Session = Depends(get_db)):
 def get_duplicate_stats(db: Session = Depends(get_db)):
     """Get statistics about duplicate detection."""
     total_duplicates = db.query(func.count(Transaction.id)).filter(
-        Transaction.is_potential_duplicate == 1
+        Transaction.is_potential_duplicate == True
     ).scalar()
 
     pending = db.query(func.count(Transaction.id)).filter(
-        Transaction.is_potential_duplicate == 1,
-        Transaction.duplicate_reviewed == 0,
+        Transaction.is_potential_duplicate == True,
+        Transaction.duplicate_reviewed == False,
     ).scalar()
 
     reviewed = db.query(func.count(Transaction.id)).filter(
-        Transaction.duplicate_reviewed == 1
+        Transaction.duplicate_reviewed == True
     ).scalar()
 
     return {

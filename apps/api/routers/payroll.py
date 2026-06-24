@@ -23,7 +23,7 @@ def _active_loans_for_staff(staff_id: int, employee_name: str, db: Session) -> l
     return (
         db.query(StaffLoan)
         .filter(
-            StaffLoan.is_active == 1,
+            StaffLoan.is_active == True,
             or_(
                 StaffLoan.staff_id == staff_id,
                 StaffLoan.employee_name.ilike(f"%{employee_name}%"),
@@ -117,7 +117,7 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
     staff_list = (
         db.query(Staff)
         .filter(
-            Staff.is_active == 1,
+            Staff.is_active == True,
             # started on or before the last day of this month (or no start date set)
             or_(Staff.start_date == None, Staff.start_date <= month_last),  # noqa: E711
             # not yet ended before the first day of this month (or no end date set)

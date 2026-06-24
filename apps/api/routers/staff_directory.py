@@ -46,7 +46,7 @@ class StaffOut(BaseModel):
 def list_staff(active_only: bool = False, db: Session = Depends(get_db)):
     q = db.query(Staff).order_by(Staff.full_name)
     if active_only:
-        q = q.filter(Staff.is_active == 1)
+        q = q.filter(Staff.is_active == True)
     return q.all()
 
 

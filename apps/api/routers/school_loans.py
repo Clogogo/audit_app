@@ -293,6 +293,6 @@ def get_outstanding_total(as_at: str, db: Session = Depends(get_db)):
         date.fromisoformat(as_at)
     except ValueError:
         raise HTTPException(400, "as_at must be YYYY-MM-DD")
-    loans = db.query(SchoolLoan).filter(SchoolLoan.is_active == 1).all()
+    loans = db.query(SchoolLoan).filter(SchoolLoan.is_active == True).all()
     total = round(sum(_outstanding(l) for l in loans), 2)
     return {"as_at": as_at, "total_outstanding": total}

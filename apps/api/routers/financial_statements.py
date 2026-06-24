@@ -354,7 +354,7 @@ def _run_computation(db: Session, start_date: str, end_date: str, company: str) 
     total_asset_nbv = round(sum(asset_nbv_by_cat.values()), 2)
 
     # ── Staff Loans Receivable ────────────────────────────────────────────────
-    active_staff_loans = db.query(StaffLoan).filter(StaffLoan.is_active == 1).all()
+    active_staff_loans = db.query(StaffLoan).filter(StaffLoan.is_active == True).all()
     staff_loan_items: list[dict] = []
     for sl in sorted(active_staff_loans, key=lambda x: x.employee_name):
         bal = _staff_loan_outstanding(sl)
