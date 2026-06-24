@@ -4,7 +4,7 @@ import { AuthProvider } from '../contexts/AuthContext';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 import { Layout } from '../components/Layout';
 import { Login } from '../pages/Login';
-// import { Register } from '../pages/Register'; // Registration temporarily hidden
+import { Register } from '../pages/Register';
 import { Dashboard } from '../pages/Dashboard';
 import { Transactions } from '../pages/Transactions';
 import { Upload } from '../pages/Upload';
@@ -31,8 +31,7 @@ export function App() {
           <Routes>
             {/* Public routes */}
             <Route path="/login" element={<Login />} />
-            {/* Registration temporarily hidden */}
-            {/* <Route path="/register" element={<Register />} /> */}
+            <Route path="/register" element={<Register />} />
 
             {/* Protected routes */}
             <Route
