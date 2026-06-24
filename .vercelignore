@@ -1,6 +1,7 @@
 # Python files (API runs on Render, not Vercel)
+# Note: do NOT ignore apps/ wholesale — apps/web is the frontend Vercel builds.
 api/
-apps/
+apps/api/
 *.py
 
 # Ignore local development files

@@ -1,6 +1,6 @@
 {
   "buildCommand": "cd apps/web && npx vite build",
-  "outputDirectory": "apps/web/dist",
+  "outputDirectory": "dist/apps/web",
   "installCommand": "npm install",
   "rewrites": [
     {
@@ -11,5 +11,5 @@
   "env": {
     "NX_DAEMON": "false"
   },
-  "ignoreCommand": "npx dlx nx-ignore web"
+  "ignoreCommand": "npx nx-ignore web"
 }
