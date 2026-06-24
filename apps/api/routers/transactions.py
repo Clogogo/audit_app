@@ -5,12 +5,13 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, select as sa_select
 
 from database import get_db
-from models import Transaction, AuditLog
+from models import Transaction, AuditLog, BankAccount
 from pydantic import BaseModel as _BaseModel
-from schemas import TransactionCreate, TransactionOut, TransactionUpdate, TransactionSummary, MonthlySummary
+from schemas import TransactionCreate, TransactionOut, TransactionPage, TransactionUpdate, TransactionSummary, MonthlySummary
+from routers.bank_statements import _transfer_is_income, _is_intra_account_transfer
 
 
 class _BatchCategoryUpdate(_BaseModel):
@@ -30,80 +31,163 @@ def _log(db: Session, entity_id: int, action: str, old: dict = None, new: dict =
     ))
 
 
-@router.get("", response_model=list[TransactionOut])
+@router.get("", response_model=TransactionPage)
 def list_transactions(
     type: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    bank: Optional[str] = Query(None),
+    vendor: Optional[str] = Query(None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     q = db.query(Transaction)
     if type:
         q = q.filter(Transaction.type == type)
     if category:
-        q = q.filter(Transaction.category.ilike(f"%{category}%"))
+        cats = [c.strip() for c in category.split(",") if c.strip()]
+        if len(cats) == 1:
+            q = q.filter(Transaction.category.ilike(f"%{cats[0]}%"))
+        elif cats:
+            q = q.filter(Transaction.category.in_(cats))
+    if bank:
+        q = q.filter(Transaction.bank.ilike(f"%{bank}%"))
+    if vendor:
+        q = q.filter(Transaction.vendor.ilike(f"%{vendor}%"))
     if start_date:
         q = q.filter(Transaction.date >= start_date)
     if end_date:
         q = q.filter(Transaction.date <= end_date)
-    return q.order_by(Transaction.date.desc(), Transaction.created_at.desc()).all()
+    total = q.count()
+    items = q.order_by(Transaction.date.desc(), Transaction.created_at.desc()).limit(limit).offset(offset).all()
+    return TransactionPage(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/years", response_model=list[int])
+def get_transaction_years(db: Session = Depends(get_db)):
+    """Return distinct years that have at least one transaction, sorted descending."""
+    rows = (
+        db.query(func.strftime('%Y', Transaction.date))
+        .distinct()
+        .order_by(func.strftime('%Y', Transaction.date).desc())
+        .all()
+    )
+    return [int(r[0]) for r in rows if r[0]]
 
 
 @router.get("/summary", response_model=TransactionSummary)
 def get_summary(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    bank: Optional[str] = Query(None),
+    vendor: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Transaction)
+    # Shared WHERE conditions — transfer direction is resolved per-row below,
+    # the same way Bank Account Reports' Book Balance does it, so the two pages
+    # reconcile instead of silently disagreeing.
+    base_conds = []
     if start_date:
-        q = q.filter(Transaction.date >= start_date)
+        base_conds.append(Transaction.date >= start_date)
     if end_date:
-        q = q.filter(Transaction.date <= end_date)
+        base_conds.append(Transaction.date <= end_date)
+    if bank:
+        base_conds.append(Transaction.bank.ilike(f"%{bank}%"))
+    if vendor:
+        base_conds.append(Transaction.vendor.ilike(f"%{vendor}%"))
 
-    transactions = q.all()
+    # Total income / expense via SQL SUM — no full ORM load
+    income_total: float = db.execute(
+        sa_select(func.coalesce(func.sum(Transaction.amount), 0.0))
+        .where(Transaction.type == "income", *base_conds)
+    ).scalar() or 0.0
 
-    # "transfer" type and "Internal Transfer" category are excluded from all
-    # aggregate calculations — they are inter-account movements, not real
-    # income or expenses.  They remain visible as individual transactions.
-    def _is_internal(t: Transaction) -> bool:
-        return t.type == "transfer" or t.category == "Internal Transfer"
+    expense_total: float = db.execute(
+        sa_select(func.coalesce(func.sum(Transaction.amount), 0.0))
+        .where(Transaction.type == "expense", *base_conds)
+    ).scalar() or 0.0
 
-    total_income = sum(t.amount for t in transactions if t.type == "income" and not _is_internal(t))
-    total_expenses = sum(t.amount for t in transactions if t.type == "expense" and not _is_internal(t))
+    # Category breakdowns via GROUP BY (transfers handled separately below)
+    cat_rows = db.execute(
+        sa_select(Transaction.type, Transaction.category, func.sum(Transaction.amount).label("total"))
+        .where(Transaction.type != "transfer", *base_conds)
+        .group_by(Transaction.type, Transaction.category)
+    ).all()
 
     by_category: dict[str, float] = defaultdict(float)
     expense_by_category: dict[str, float] = defaultdict(float)
     income_by_category: dict[str, float] = defaultdict(float)
-    for t in transactions:
-        if _is_internal(t):
-            continue  # internal transfers don't contribute to category breakdowns
-        by_category[t.category] += t.amount
-        if t.type == "expense":
-            expense_by_category[t.category] += t.amount
+    for tx_type, cat, total in cat_rows:
+        by_category[cat] += total
+        if tx_type == "expense":
+            expense_by_category[cat] += total
         else:
-            income_by_category[t.category] += t.amount
+            income_by_category[cat] += total
 
-    # Build monthly data — sort by YYYY-MM key (not display string) for correct order
+    # Monthly aggregation via GROUP BY (transfers handled separately below)
+    monthly_rows = db.execute(
+        sa_select(
+            func.strftime("%Y-%m", Transaction.date).label("ym"),
+            Transaction.type,
+            func.sum(Transaction.amount).label("total"),
+        )
+        .where(Transaction.type != "transfer", *base_conds)
+        .group_by("ym", Transaction.type)
+        .order_by("ym")
+    ).all()
+
     monthly_map: dict[str, dict] = {}
-    for t in transactions:
-        if _is_internal(t):
-            continue  # exclude internal transfers from monthly chart
-        key = t.date.strftime("%Y-%m")
-        if key not in monthly_map:
-            monthly_map[key] = {"month": t.date.strftime("%b %Y"), "income": 0.0, "expenses": 0.0}
-        if t.type == "income":
-            monthly_map[key]["income"] += t.amount
+    for ym, tx_type, total in monthly_rows:
+        if ym not in monthly_map:
+            y, m = ym.split("-")
+            monthly_map[ym] = {"month": date(int(y), int(m), 1).strftime("%b %Y"), "income": 0.0, "expenses": 0.0}
+        if tx_type == "income":
+            monthly_map[ym]["income"] += total
         else:
-            monthly_map[key]["expenses"] += t.amount
+            monthly_map[ym]["expenses"] += total
+
+    # ── Transfers: direction by actual debit/credit, mirroring Book Balance ──
+    # Intra-account transfers (auto-saves, vaults) are excluded entirely. Every
+    # other transfer counts as income or expense by its own recorded direction
+    # (not by account type — any account can both send and receive). Transfers
+    # with no linked account are skipped — direction can't be determined without one.
+    transfers = (
+        db.query(Transaction)
+        .filter(Transaction.type == "transfer", Transaction.bank_account_id.isnot(None), *base_conds)
+        .all()
+    )
+    for t in transfers:
+        if not t.bank_account or _is_intra_account_transfer(t):
+            continue
+        ym = t.date.strftime("%Y-%m")
+        if ym not in monthly_map:
+            monthly_map[ym] = {"month": t.date.strftime("%b %Y"), "income": 0.0, "expenses": 0.0}
+
+        by_category[t.category] += t.amount
+        if _transfer_is_income(t, t.bank_account.bank_name, db):
+            income_total += t.amount
+            income_by_category[t.category] += t.amount
+            monthly_map[ym]["income"] += t.amount
+        else:
+            expense_total += t.amount
+            expense_by_category[t.category] += t.amount
+            monthly_map[ym]["expenses"] += t.amount
 
     monthly = [MonthlySummary(**monthly_map[k]) for k in sorted(monthly_map.keys())]
 
+    # ── Opening balances: sum across accounts in scope, mirroring Book Balance's
+    # "opening + income − expense" so the headline balance reconciles too.
+    accounts_q = db.query(BankAccount)
+    if bank:
+        accounts_q = accounts_q.filter(BankAccount.bank_name.ilike(f"%{bank}%"))
+    total_opening_balance = sum(a.opening_balance or 0.0 for a in accounts_q.all())
+
     return TransactionSummary(
-        total_income=total_income,
-        total_expenses=total_expenses,
-        balance=total_income - total_expenses,
+        total_income=income_total,
+        total_expenses=expense_total,
+        balance=total_opening_balance + income_total - expense_total,
         by_category=dict(by_category),
         expense_by_category=dict(expense_by_category),
         income_by_category=dict(income_by_category),
@@ -195,6 +279,25 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Transaction not found")
     old = {c.name: str(getattr(tx, c.name)) for c in Transaction.__table__.columns}
     _log(db, tx_id, "delete", old=old)
+
+    # Clear reconciliation links so bank transactions don't keep a dangling reference
+    from models import BankTransaction
+    db.query(BankTransaction).filter(
+        BankTransaction.matched_transaction_id == tx_id
+    ).update(
+        {"matched_transaction_id": None, "match_status": "unmatched"},
+        synchronize_session=False,
+    )
+
+    # Clear duplicate links on transactions that pointed at this one
+    db.query(Transaction).filter(
+        Transaction.duplicate_of_id == tx_id
+    ).update(
+        {"duplicate_of_id": None, "is_potential_duplicate": False,
+         "duplicate_reviewed": False, "duplicate_confidence": None},
+        synchronize_session=False,
+    )
+
     db.delete(tx)
     db.commit()
     return {"ok": True}

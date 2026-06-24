@@ -13,6 +13,15 @@ import { AuditLog } from '../pages/AuditLog';
 import { Reports } from '../pages/Reports';
 import { Banks } from '../pages/Banks';
 import BankAccountReports from '../pages/BankAccountReports';
+import { Tax } from '../pages/Tax';
+import { FinancialStatements } from '../pages/FinancialStatements';
+import { Assets } from '../pages/Assets';
+import { TaxCalendar } from '../pages/TaxCalendar';
+import { StaffLoans } from '../pages/StaffLoans';
+import { StaffDirectory } from '../pages/StaffDirectory';
+import { Payroll } from '../pages/Payroll';
+import { Terms } from '../pages/Terms';
+import { SchoolLoans } from '../pages/SchoolLoans';
 
 export function App() {
   return (
@@ -40,6 +49,15 @@ export function App() {
                       <Route path="/reports" element={<Reports />} />
                       <Route path="/bank-reports" element={<BankAccountReports />} />
                       <Route path="/banks" element={<Banks />} />
+                      <Route path="/tax" element={<Tax />} />
+                      <Route path="/tax/financial-statements" element={<FinancialStatements />} />
+                      <Route path="/tax/assets" element={<Assets />} />
+                      <Route path="/tax/calendar" element={<TaxCalendar />} />
+                      <Route path="/tax/school-loans" element={<SchoolLoans />} />
+                      <Route path="/staff/directory" element={<StaffDirectory />} />
+                      <Route path="/staff/loans" element={<StaffLoans />} />
+                      <Route path="/staff/payroll" element={<Payroll />} />
+                      <Route path="/staff/terms" element={<Terms />} />
                     </Routes>
                   </Layout>
                 </ProtectedRoute>

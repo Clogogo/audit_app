@@ -7,7 +7,8 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, joinedload
 
 from database import get_db
 from models import BankStatement, BankTransaction, Transaction, AuditLog
@@ -30,29 +31,36 @@ def _fuzzy_score(a: str, b: str) -> float:
         return len(wa & wb) / max(len(wa), len(wb))
 
 
-def _auto_match_statement(db: Session, stmt_id: int) -> int:
+def _auto_match_statement(db: Session, stmt_id: int, stmt_account_id: int | None) -> int:
     unmatched = (
         db.query(BankTransaction)
         .filter(BankTransaction.statement_id == stmt_id, BankTransaction.match_status == "unmatched")
         .all()
     )
-    all_tx = db.query(Transaction).all()
     matched_count = 0
 
     for btx in unmatched:
+        date_start = btx.date - timedelta(days=3)
+        date_end = btx.date + timedelta(days=3)
+
+        candidate_query = db.query(Transaction).filter(
+            Transaction.amount.between(btx.amount - 0.01, btx.amount + 0.01),
+            Transaction.date.between(date_start, date_end),
+        )
+        if stmt_account_id is not None:
+            candidate_query = candidate_query.filter(
+                or_(
+                    Transaction.bank_account_id == stmt_account_id,
+                    Transaction.bank_account_id.is_(None),
+                )
+            )
+
+        candidate_tx = candidate_query.all()
         best_tx = None
         best_score = 0.0
 
-        for tx in all_tx:
-            # Amount must match within 1 cent
-            if abs(btx.amount - tx.amount) > 0.01:
-                continue
-
-            # Date must be within 3 days
+        for tx in candidate_tx:
             delta = abs((btx.date - tx.date).days)
-            if delta > 3:
-                continue
-
             # Fuzzy description / vendor match
             vendor = tx.vendor or ""
             score = max(
@@ -93,7 +101,7 @@ def auto_match(stmt_id: int, db: Session = Depends(get_db)):
     stmt = db.get(BankStatement, stmt_id)
     if not stmt:
         raise HTTPException(404, "Statement not found")
-    matched = _auto_match_statement(db, stmt_id)
+    matched = _auto_match_statement(db, stmt_id, stmt.bank_account_id)
     return {"matched": matched}
 
 
@@ -150,11 +158,16 @@ def unmatch(bank_tx_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{stmt_id}/status", response_model=ReconciliationStatus)
 def reconciliation_status(stmt_id: int, db: Session = Depends(get_db)):
-    btxs = db.query(BankTransaction).filter(BankTransaction.statement_id == stmt_id).all()
-    total = len(btxs)
-    matched = sum(1 for t in btxs if t.match_status == "matched")
-    discrepancies = sum(1 for t in btxs if t.match_status == "discrepancy")
-    unmatched = total - matched - discrepancies
+    counts = dict(
+        db.query(BankTransaction.match_status, func.count(BankTransaction.id))
+        .filter(BankTransaction.statement_id == stmt_id)
+        .group_by(BankTransaction.match_status)
+        .all()
+    )
+    total = sum(counts.values())
+    matched = counts.get("matched", 0)
+    discrepancies = counts.get("discrepancy", 0)
+    unmatched = counts.get("unmatched", 0)
     return ReconciliationStatus(
         statement_id=stmt_id,
         total=total,
@@ -176,6 +189,7 @@ def export_reconciliation(
 
     btxs = (
         db.query(BankTransaction)
+        .options(joinedload(BankTransaction.matched_transaction))
         .filter(BankTransaction.statement_id == stmt_id)
         .order_by(BankTransaction.date)
         .all()

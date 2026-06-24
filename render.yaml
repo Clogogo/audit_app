@@ -8,12 +8,13 @@ services:
     plan: free
     envVars:
       # Database Configuration
-      # SQLite is automatically configured to use /tmp (ephemeral storage on Render free tier)
-      # For persistent database on Render, upgrade to paid plan and set:
-      # DB_PATH=/var/data  (requires persistent disk volume)
-      - key: DB_PATH
-        value: /tmp          # SQLite stores database here (auto-created on startup)
-      
+      # Managed Postgres on Neon (https://neon.tech) — reliable and persistent,
+      # unlike SQLite on /tmp which is wiped on every restart/redeploy.
+      # Set the actual value in the Render dashboard (Environment tab), never
+      # commit it here — it contains a live password.
+      - key: DATABASE_URL
+        sync: false
+
       # Frontend Configuration
       - key: FRONTEND_URL
         sync: false          # Set to your Vercel URL e.g. https://financeaudit.vercel.app
@@ -39,12 +40,6 @@ services:
       # Debug
       - key: SQL_ECHO
         value: "False"       # Set to "True" for SQL query logging
-    
-    # Optional: Persistent disk for production (requires paid plan)
-    # disk:
-    #   name: data
-    #   mountPath: /var/data
-    #   sizeGB: 10
     
     buildFilter:
       paths:

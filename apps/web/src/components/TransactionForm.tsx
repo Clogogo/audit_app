@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { CategoryCombobox } from './ui/category-combobox';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../api/types';
 import type { TransactionCreate, TransactionType, BankAccount } from '../api/types';
 import { getBankAccounts } from '../api/client';
@@ -108,19 +109,11 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
 
       <div className="space-y-2">
         <Label>Category</Label>
-        <Select
-          defaultValue={defaultValues?.category}
-          onValueChange={(v) => setValue('category', v)}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select category" />
-          </SelectTrigger>
-          <SelectContent>
-            {categories.map((c) => (
-              <SelectItem key={c} value={c}>{c}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <CategoryCombobox
+          value={watch('category')}
+          categories={categories}
+          onChange={(v) => setValue('category', v, { shouldValidate: true })}
+        />
         {errors.category && <p className="text-xs text-destructive">Category is required</p>}
       </div>
 

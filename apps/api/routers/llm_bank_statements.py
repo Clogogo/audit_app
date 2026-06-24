@@ -6,10 +6,12 @@ import io
 import json
 import logging
 from datetime import date as date_type
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -68,6 +70,45 @@ def _metadata_to_schema(metadata) -> LLMBankStatementMetadata:
         currency=metadata.currency,
         statement_date=metadata.statement_date,
     )
+
+
+def _resolve_bank_account_id(db: Session, requested_account_id: Optional[int], metadata) -> Optional[int]:
+    if requested_account_id is not None:
+        return requested_account_id
+
+    bank_name = getattr(metadata, "bank_name", None)
+    account_number = getattr(metadata, "account_number", None)
+    if not bank_name or not account_number:
+        return None
+
+    normalized_bank_name = bank_name.strip().lower()
+    normalized_account_number = account_number.strip()
+
+    exact_match = (
+        db.query(BankAccount.id)
+        .filter(
+            func.lower(BankAccount.bank_name) == normalized_bank_name,
+            BankAccount.account_number == normalized_account_number,
+        )
+        .scalar()
+    )
+
+    if exact_match is not None:
+        return exact_match
+
+    if len(normalized_account_number) >= 4:
+        suffix_matches = (
+            db.query(BankAccount.id)
+            .filter(
+                func.lower(BankAccount.bank_name) == normalized_bank_name,
+                BankAccount.account_number.like(f"%{normalized_account_number[-4:]}")
+            )
+            .all()
+        )
+        if len(suffix_matches) == 1:
+            return suffix_matches[0][0]
+
+    return None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -189,6 +230,11 @@ async def upload_bank_statement(
 
         # Identify bank
         bank_code = NigerianBankClassifier.identify_bank(parsed_statement.metadata.bank_name)
+        resolved_bank_account_id = _resolve_bank_account_id(
+            db,
+            bank_account_id,
+            parsed_statement.metadata,
+        )
 
         # Create BankStatement record
         account_last4 = None
@@ -198,10 +244,11 @@ async def upload_bank_statement(
         stmt = BankStatement(
             bank_name=parsed_statement.metadata.bank_name,
             account_last4=account_last4,
-            statement_period_start=self._parse_date(
+            bank_account_id=resolved_bank_account_id,
+            statement_period_start=_parse_date(
                 parsed_statement.metadata.statement_period_start
             ),
-            statement_period_end=self._parse_date(
+            statement_period_end=_parse_date(
                 parsed_statement.metadata.statement_period_end
             ),
             file_path=file_path,
@@ -215,7 +262,7 @@ async def upload_bank_statement(
         for idx, tx in enumerate(parsed_statement.transactions):
             bank_tx = BankTransaction(
                 statement_id=stmt.id,
-                date=self._parse_date(tx.date),
+                date=_parse_date(tx.date),
                 description=tx.description,
                 amount=tx.amount,
                 transaction_type=tx.transaction_type,
@@ -235,11 +282,13 @@ async def upload_bank_statement(
             entity_type="bank_statement",
             entity_id=stmt.id,
             action="created",
-            new_values={
-                "bank_name": stmt.bank_name,
-                "transaction_count": len(parsed_statement.transactions),
-                "extraction_quality": parsed_statement.extraction_quality,
-            },
+            new_values=json.dumps(
+                {
+                    "bank_name": stmt.bank_name,
+                    "transaction_count": len(parsed_statement.transactions),
+                    "extraction_quality": parsed_statement.extraction_quality,
+                }
+            ),
         )
         db.add(audit_log)
         db.commit()
@@ -320,23 +369,42 @@ async def import_statement_transactions(
 
     saved_count = 0
     reconciled_count = 0
+    bank_transactions = (
+        db.query(BankTransaction)
+        .filter(BankTransaction.statement_id == stmt_id)
+        .order_by(BankTransaction.id)
+        .all()
+    )
+    request_dates = sorted({item.date for item in request.items})
+    item_indices = [item.transaction_index for item in request.items]
+    if len(set(item_indices)) != len(item_indices):
+        raise HTTPException(status_code=400, detail="Duplicate transaction_index values in import request")
+    existing_transactions = (
+        db.query(Transaction)
+        .filter(Transaction.date.in_(request_dates))
+        .all()
+    )
+    transactions_by_date: dict[date_type, list[Transaction]] = defaultdict(list)
+    for candidate in existing_transactions:
+        transactions_by_date[candidate.date].append(candidate)
+    used_transaction_ids: set[int] = set()
 
     for item in request.items:
         # Get the bank transaction for context
-        bank_tx = db.query(BankTransaction).filter(
-            BankTransaction.statement_id == stmt_id,
-            # Match by date and amount for simplicity (could use index)
-        ).first()
+        bank_tx = bank_transactions[item.transaction_index] if 0 <= item.transaction_index < len(bank_transactions) else None
 
         # Create or find matching transaction
-        existing_tx = (
-            db.query(Transaction)
-            .filter(
-                Transaction.date == item.date,
-                abs(Transaction.amount - item.amount) < 0.01,
-                Transaction.description.ilike(f"%{item.description}%"),
-            )
-            .first()
+        item_description = item.description.lower()
+        candidates_for_date = transactions_by_date.get(item.date, [])
+        existing_tx = next(
+            (
+                candidate
+                for candidate in candidates_for_date
+                if abs(candidate.amount - item.amount) < 0.01
+                and item_description in candidate.description.lower()
+                and candidate.id not in used_transaction_ids
+            ),
+            None,
         )
 
         if existing_tx:
@@ -344,6 +412,7 @@ async def import_statement_transactions(
             if bank_tx:
                 bank_tx.matched_transaction_id = existing_tx.id
                 bank_tx.match_status = "matched"
+            used_transaction_ids.add(existing_tx.id)
             reconciled_count += 1
         else:
             # Create new transaction
@@ -356,7 +425,7 @@ async def import_statement_transactions(
                 date=item.date,
                 vendor=item.vendor,
                 bank=stmt.bank_name,
-                bank_account_id=request.bank_account_id,
+                bank_account_id=request.bank_account_id or stmt.bank_account_id,
             )
             db.add(tx)
             db.flush()
@@ -379,10 +448,12 @@ async def import_statement_transactions(
         entity_type="bank_statement",
         entity_id=stmt_id,
         action="imported",
-        new_values={
-            "saved_transactions": saved_count,
-            "reconciled_transactions": reconciled_count,
-        },
+        new_values=json.dumps(
+            {
+                "saved_transactions": saved_count,
+                "reconciled_transactions": reconciled_count,
+            }
+        ),
     )
     db.add(audit_log)
     db.commit()

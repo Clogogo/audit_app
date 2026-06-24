@@ -5,40 +5,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from sqlalchemy import text
-from database import engine, Base
+from database import engine, Base, initialize_database
 import models  # noqa: ensure all models are registered before create_all
 
 from routers import transactions, upload, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates, auth
+from routers import tax, financial_statements, assets, staff_loans, staff_directory, payroll, terms, school_loans
 
-# Create all tables on startup
-Base.metadata.create_all(bind=engine)
-
-# Run lightweight migrations for new columns
-with engine.connect() as _conn:
-    for _col_sql in [
-        "ALTER TABLE transactions ADD COLUMN bank VARCHAR(200)",
-        "ALTER TABLE bank_transactions ADD COLUMN suggested_category VARCHAR(100)",
-        "ALTER TABLE bank_transactions ADD COLUMN suggested_type VARCHAR(20)",
-        "ALTER TABLE bank_transactions ADD COLUMN vendor VARCHAR(200)",
-        "ALTER TABLE transactions ADD COLUMN bank_account_id INTEGER REFERENCES bank_accounts(id) ON DELETE SET NULL",
-        # Duplicate detection fields
-        "ALTER TABLE transactions ADD COLUMN is_potential_duplicate INTEGER DEFAULT 0",
-        "ALTER TABLE transactions ADD COLUMN duplicate_of_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL",
-        "ALTER TABLE transactions ADD COLUMN duplicate_reviewed INTEGER DEFAULT 0",
-        "ALTER TABLE transactions ADD COLUMN duplicate_confidence FLOAT",
-    ]:
-        try:
-            _conn.execute(text(_col_sql))
-            _conn.commit()
-        except Exception:
-            _conn.rollback()  # PostgreSQL requires rollback after a failed statement
-
-    # Normalize legacy USD entries to NGN (this app is NGN-primary)
+if __name__ != "__pytest_main__":
+    # Ensure local SQLite DB is initialized when running the app normally.
     try:
-        _conn.execute(text("UPDATE transactions SET currency = 'NGN' WHERE currency = 'USD' OR currency IS NULL"))
-        _conn.commit()
+        initialize_database()
     except Exception:
-        _conn.rollback()
+        # Keep startup resilient; initialization can also be run via init_db.py
+        pass
 
 app = FastAPI(
     title="FinanceAudit API",
@@ -72,6 +51,14 @@ app.include_router(reconciliation.router)
 app.include_router(duplicates.router)
 app.include_router(reports.router)
 app.include_router(audit_log.router)
+app.include_router(tax.router)
+app.include_router(financial_statements.router)
+app.include_router(assets.router)
+app.include_router(staff_loans.router)
+app.include_router(staff_directory.router)
+app.include_router(payroll.router)
+app.include_router(terms.router)
+app.include_router(school_loans.router)
 
 
 @app.get("/health")

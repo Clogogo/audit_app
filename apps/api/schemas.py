@@ -84,6 +84,13 @@ class TransactionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TransactionPage(BaseModel):
+    items: list["TransactionOut"]
+    total: int
+    limit: int
+    offset: int
+
+
 class MonthlySummary(BaseModel):
     month: str
     income: float
@@ -271,6 +278,8 @@ class BankAccountCreate(BaseModel):
     bank_name: str
     account_holder_name: Optional[str] = None
     account_number: Optional[str] = None
+    opening_balance: Optional[float] = None
+    current_balance: Optional[float] = None
 
 
 class BankAccountOut(BaseModel):
@@ -279,6 +288,8 @@ class BankAccountOut(BaseModel):
     bank_name: str
     account_holder_name: Optional[str]
     account_number: Optional[str]
+    opening_balance: Optional[float]
+    current_balance: Optional[float]
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -357,10 +368,11 @@ class BankAccountReportSummary(BaseModel):
     bank_name: str
     account_holder_name: Optional[str]
     account_number: Optional[str]
+    opening_balance: float  # Balance at start of period (e.g. Dec 31 prior year)
     total_income: float
-    total_expense: float  # Includes transfers (money OUT of account)
-    total_transfer: float  # Subset of expense - for reference only
-    net_amount: float  # income - expense (transfers already included in expense)
+    total_expense: float
+    total_transfer: float  # Inter-account transfers shown separately for reference
+    net_amount: float  # opening_balance + income - expense
     income_count: int
     expense_count: int  # Includes transfer count
     transfer_count: int  # Subset of expense_count - for reference only
@@ -376,10 +388,11 @@ class BankAccountReport(BaseModel):
     bank_name: str
     account_holder_name: Optional[str]
     account_number: Optional[str]
+    opening_balance: float
     total_income: float
     total_expense: float
     total_transfer: float
-    net_amount: float
+    net_amount: float  # opening_balance + income - expense
     income_count: int
     expense_count: int
     transfer_count: int

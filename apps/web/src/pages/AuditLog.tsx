@@ -4,6 +4,7 @@ import type { AuditLogEntry } from '../api/types';
 import { Badge } from '../components/ui/badge';
 import { formatDate } from '../lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { HelpTooltip } from '../components/HelpTooltip';
 
 const actionColor: Record<string, string> = {
   create: 'bg-green-100 text-green-800',
@@ -27,7 +28,14 @@ export function AuditLog() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h1 className="text-2xl font-bold">Audit Log</h1>
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          Audit Log
+          <HelpTooltip
+            title="Audit Trail"
+            content={"Every create, update, and delete action on your transactions is automatically recorded here.\n\nWhy it matters:\n· Accountability — see who changed what and when\n· Error recovery — the 'Before' snapshot lets you restore accidental edits\n· Compliance — auditors can verify no records were tampered with\n\nEntries are immutable and cannot be deleted."}
+            align="left"
+          />
+        </h1>
         <Select value={filterEntity} onValueChange={setFilterEntity}>
           <SelectTrigger className="w-48">
             <SelectValue />
@@ -54,7 +62,15 @@ export function AuditLog() {
                 <th className="text-left px-4 py-3 font-medium">Entity</th>
                 <th className="text-left px-4 py-3 font-medium">ID</th>
                 <th className="text-left px-4 py-3 font-medium">Action</th>
-                <th className="text-left px-4 py-3 font-medium">Changes</th>
+                <th className="text-left px-4 py-3 font-medium">
+                  <span className="flex items-center gap-1.5">
+                    Changes
+                    <HelpTooltip
+                      content={"'View changes' expands to show Before and After snapshots of the record.\n\nBefore: the values prior to the edit\nAfter: the values saved\n\nFor deletions, only 'Before' is shown. For new records, only 'After'."}
+                      align="right"
+                    />
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y">

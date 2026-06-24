@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Plus, Trash2, Building2, CreditCard, Pencil, Search } from 'lucide-react';
+import { HelpTooltip } from '../components/HelpTooltip';
 import { getBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount } from '../api/client';
 import type { BankAccount, BankAccountCreate } from '../api/types';
 import { useAsync, useNotification } from '../hooks';
@@ -125,7 +126,14 @@ export function Banks() {
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Bank Accounts</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            Bank Accounts
+            <HelpTooltip
+              title="Bank Accounts"
+              content={"Bank accounts serve two purposes:\n\n1. Statement Import — when you upload a CSV/Excel statement, you select which bank account it belongs to. This tags each transaction with the correct bank.\n\n2. Internal Transfer Detection — the Account Holder Name is used to detect transfers between your own accounts (e.g. from Access Bank to Opay) so they don't inflate income or expenses.\n\nYou need at least one bank account before you can import a statement."}
+              align="left"
+            />
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Manage bank accounts and set holder names to identify internal transfers
           </p>
@@ -141,7 +149,7 @@ export function Banks() {
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                {editing ? <><Pencil className="h-5 w-5 text-blue-600" />Edit Bank Account</> : <><Plus className="h-5 w-5" />New Bank Account</>}
+                {editing ? <><Pencil className="h-5 w-5 text-primary" />Edit Bank Account</> : <><Plus className="h-5 w-5" />New Bank Account</>}
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-2">
@@ -155,7 +163,14 @@ export function Banks() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Account Holder Name <span className="text-muted-foreground text-xs">(helps identify internal transfers)</span></Label>
+                <Label className="flex items-center gap-1.5">
+                  Account Holder Name
+                  <HelpTooltip
+                    content={"Used to detect transfers between your own accounts.\n\nExample: If your name is 'Ade Okafor' and you transfer ₦50,000 from GTBank to Access Bank, the system will see 'Ade Okafor' in the description and classify it as an Internal Transfer instead of income.\n\nThis prevents double-counting when both sides of the transfer appear in different statements."}
+                    align="left"
+                  />
+                  <span className="text-muted-foreground text-xs font-normal">(optional)</span>
+                </Label>
                 <Input
                   placeholder="e.g. COMPANY LTD"
                   value={form.account_holder_name}

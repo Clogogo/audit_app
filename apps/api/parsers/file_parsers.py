@@ -105,7 +105,13 @@ def parse_csv(contents: bytes, bank_name: str = None) -> List[dict]:
 # ── Excel Parser ──────────────────────────────────────────────────────────────
 
 def parse_excel(contents: bytes, bank_name: str = None) -> List[dict]:
-    """Parse Excel file, trying all sheets."""
+    """
+    Parse an Excel file, accumulating transactions from EVERY sheet.
+
+    Multi-account workbooks (e.g. OPay exports a 'Wallet Account' sheet and a
+    separate 'Savings Account' sheet) must all be imported — parsing only the
+    first sheet silently drops entire accounts.
+    """
     from . import statement_parser  # Avoid circular import
 
     contents = fix_xlsx_xml(contents)
@@ -115,32 +121,33 @@ def parse_excel(contents: bytes, bank_name: str = None) -> List[dict]:
         logger.warning(f"ExcelFile open failed: {e}")
         return []
 
+    all_rows: List[dict] = []
     for sheet in xl.sheet_names:
         try:
             # Try with first row as header (most common case)
             df_raw = xl.parse(sheet, header=0)
             df = statement_parser.replace_blank_column_names(df_raw)
             rows = statement_parser.normalize_dataframe(df, bank_name=bank_name)
-            if rows:
-                logger.info(f"Excel sheet {sheet!r}: {len(rows)} rows (header=0)")
-                return rows
 
-            # Fallback: scan for header row if first attempt failed
-            df_raw_no_header = xl.parse(sheet, header=None)
-            header_idx = statement_parser.find_header_row_index(df_raw_no_header)
-            if header_idx is not None:
-                # Re-parse with the detected header row
-                df_with_header = df_raw_no_header.iloc[header_idx + 1:].copy()
-                df_with_header.columns = [str(v) for v in df_raw_no_header.iloc[header_idx]]
-                df = statement_parser.replace_blank_column_names(df_with_header)
-                rows = statement_parser.normalize_dataframe(df, bank_name=bank_name)
-                if rows:
-                    logger.info(f"Excel sheet {sheet!r}: {len(rows)} rows (header at row {header_idx})")
-                    return rows
+            # Fallback: scan for the header row if the first attempt found nothing
+            if not rows:
+                df_raw_no_header = xl.parse(sheet, header=None)
+                header_idx = statement_parser.find_header_row_index(df_raw_no_header)
+                if header_idx is not None:
+                    df_with_header = df_raw_no_header.iloc[header_idx + 1:].copy()
+                    df_with_header.columns = [str(v) for v in df_raw_no_header.iloc[header_idx]]
+                    df = statement_parser.replace_blank_column_names(df_with_header)
+                    rows = statement_parser.normalize_dataframe(df, bank_name=bank_name)
+
+            if rows:
+                logger.info(f"Excel sheet {sheet!r}: {len(rows)} rows")
+                all_rows.extend(rows)
         except Exception as e:
             logger.warning(f"Excel sheet {sheet!r} failed: {e}")
             continue
-    return []
+
+    logger.info(f"Excel parsed: {len(all_rows)} rows across {len(xl.sheet_names)} sheet(s)")
+    return all_rows
 
 
 # ── PDF Parser (import from pdf_extraction if available) ──────────────────────

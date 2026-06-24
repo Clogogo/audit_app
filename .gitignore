@@ -3,7 +3,6 @@ node_modules/
 dist/
 .cache/
 *.local
-.md
 
 # Vite
 vite.config.*.timestamp*
@@ -48,31 +47,31 @@ uploads/
 Thumbs.db
 *.swp
 *.swo
+.idea/
+.vscode/
 
-# ── Documentation (Development Only) ──────────────────────────────────────────
+# ── Local agent/tooling scratch dirs (installed skills, session logs, not app code) ──
+.agents/
+.claude/skills/
+.opencode/skills/
+.github/hooks/
+.github/skills/
+.playwright-cli/
+skills-lock.json
+
+# ── Legacy / superseded docs (kept locally, not for the repo) ────────────────
 EXTRACTION_IMPROVEMENTS.md
 EXTRACTION_ENHANCEMENT_SUMMARY.md
 EXTRACTION_QUICK_REFERENCE.md
 DEPLOYMENT_GUIDE.md
 README_EXTRACTION_ENHANCEMENT.md
-.idea/
-.vscode/
-.opencode/skills/link-workspace-packages/SKILL.md
-.opencode/skills/monitor-ci/SKILL.md
-.opencode/skills/nx-generate/SKILL.md
-.opencode/skills/nx-plugins/SKILL.md
-.opencode/skills/nx-run-tasks/SKILL.md
-.opencode/skills/nx-workspace/SKILL.md
-.github/skills/monitor-ci/SKILL.md
-.github/skills/monitor-ci/SKILL.md
-test-local.sh
-restore-production.sh
 TESTING.md
-deploy-production.sh
 AUTHENTICATION_SETUP.md
 VERCEL_DEPLOYMENT.md
 DATABASE_MIGRATION.md
-RENDER_DEPLOYMENT_CONFIRMATION.md
-.gitignore
-RENDER_DEPLOYMENT.md
 DATABASE_RECONFIGURATION_SUMMARY.md
+RENDER_DEPLOYMENT.md
+RENDER_DEPLOYMENT_CONFIRMATION.md
+test-local.sh
+restore-production.sh
+deploy-production.sh

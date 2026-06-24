@@ -320,6 +320,7 @@ def normalize_dataframe(df: pd.DataFrame, bank_name: str = None) -> list[dict]:
                 "transaction_type": tx_type,
                 "reference": reference,
                 "vendor": vendor_name,  # Extracted recipient/merchant name
+                "balance": prev_balance,  # Running balance after this row, if the statement had one
             })
 
         except Exception as e:

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -9,50 +9,90 @@ import {
   BarChart3,
   Wallet,
   Building2,
+  Calculator,
+  CalendarClock,
+  Building,
+  Package,
   Menu,
   X,
-  Cpu,
-  WifiOff,
   LogOut,
   User,
+  ChevronDown,
+  ChevronRight,
+  Users,
+  CreditCard,
+  Landmark,
+  CalendarRange,
+  HandCoins,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { getHealth } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 
-const navItems = [
+const topNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/transactions', icon: ArrowLeftRight, label: 'Transactions' },
+];
+
+const bankingSubItems = [
   { to: '/banks', icon: Building2, label: 'Bank Accounts' },
-  { to: '/upload', icon: Upload, label: 'Upload Receipt' },
+  { to: '/upload', icon: Upload, label: 'Import Statement' },
   { to: '/reconciliation', icon: GitMerge, label: 'Reconciliation' },
-  { to: '/audit-log', icon: ScrollText, label: 'Audit Log' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
   { to: '/bank-reports', icon: Wallet, label: 'Bank Reports' },
 ];
 
+const bottomNavItems = [
+  { to: '/audit-log', icon: ScrollText, label: 'Audit Log' },
+];
+
+const taxSubItems = [
+  { to: '/tax', icon: Calculator, label: 'CIT (Nigeria)' },
+  { to: '/tax/financial-statements', icon: Building, label: 'Financial Statements' },
+  { to: '/tax/assets', icon: Package, label: 'Asset Register' },
+  { to: '/tax/school-loans', icon: HandCoins, label: 'School Loans' },
+  { to: '/tax/calendar', icon: CalendarClock, label: 'Tax Calendar' },
+];
+
+const staffSubItems = [
+  { to: '/staff/directory', icon: Users, label: 'Staff Directory' },
+  { to: '/staff/loans', icon: CreditCard, label: 'Staff Loans' },
+  { to: '/staff/payroll', icon: Calculator, label: 'Payroll' },
+  { to: '/staff/terms', icon: CalendarRange, label: 'Terms' },
+];
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [aiReady, setAiReady] = useState<boolean | null>(null);
+
+  const isTaxActive = location.pathname.startsWith('/tax');
+  const isStaffActive = location.pathname.startsWith('/staff');
+  const isBankingActive = ['/banks', '/upload', '/reconciliation', '/reports', '/bank-reports'].some(
+    (p) => location.pathname === p
+  );
+  const [taxOpen, setTaxOpen] = useState(isTaxActive);
+  const [staffOpen, setStaffOpen] = useState(isStaffActive);
+  const [bankingOpen, setBankingOpen] = useState(isBankingActive);
+
+  // Auto-expand sections when on their routes
+  useEffect(() => {
+    if (isTaxActive) setTaxOpen(true);
+  }, [isTaxActive]);
+
+  useEffect(() => {
+    if (isStaffActive) setStaffOpen(true);
+  }, [isStaffActive]);
+
+  useEffect(() => {
+    if (isBankingActive) setBankingOpen(true);
+  }, [isBankingActive]);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
-
-  // Poll AI status every 30 s
-  useEffect(() => {
-    const check = () =>
-      getHealth()
-        .then((h) => setAiReady(h.ai.configured))
-        .catch(() => setAiReady(false));
-    check();
-    const id = setInterval(check, 30_000);
-    return () => clearInterval(id);
-  }, []);
 
   // Close sidebar on Escape key
   useEffect(() => {
@@ -71,7 +111,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <span className="font-bold text-lg">FinanceAudit</span>
         </div>
         <nav className="flex-1 p-4 space-y-1">
-          {navItems.map(({ to, icon: Icon, label }) => (
+          {topNavItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
@@ -90,27 +130,157 @@ export function Layout({ children }: { children: React.ReactNode }) {
               {label}
             </NavLink>
           ))}
-        </nav>
 
-        {/* AI status footer */}
-        <div className="px-4 py-3 border-t">
-          {aiReady === null ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="h-2 w-2 rounded-full bg-muted-foreground animate-pulse" />
-              Checking AI…
-            </div>
-          ) : aiReady ? (
-            <div className="flex items-center gap-2 text-xs text-green-600">
-              <Cpu className="h-3.5 w-3.5 shrink-0" />
-              <span>AI ready</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-xs text-amber-600" title="Set OPENROUTER_API_KEY">
-              <WifiOff className="h-3.5 w-3.5 shrink-0" />
-              <span>AI not configured</span>
-            </div>
-          )}
-        </div>
+          {/* Banking section — collapsible */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setBankingOpen((v) => !v)}
+              className={cn(
+                'w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isBankingActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              )}
+            >
+              <Landmark className="h-4 w-4 shrink-0" />
+              <span className="flex-1 text-left">Banking</span>
+              {bankingOpen
+                ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+
+            {bankingOpen && (
+              <div className="ml-4 mt-1 space-y-0.5 border-l border-border/50 pl-3">
+                {bankingSubItems.map(({ to, icon: Icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    onClick={() => setSidebarOpen(false)}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                      )
+                    }
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Tax section — collapsible parent */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setTaxOpen((v) => !v)}
+              className={cn(
+                'w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isTaxActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              )}
+            >
+              <Calculator className="h-4 w-4 shrink-0" />
+              <span className="flex-1 text-left">Tax</span>
+              {taxOpen
+                ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+
+            {taxOpen && (
+              <div className="ml-4 mt-1 space-y-0.5 border-l border-border/50 pl-3">
+                {taxSubItems.map(({ to, icon: Icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === '/tax'}
+                    onClick={() => setSidebarOpen(false)}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                      )
+                    }
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Staff section — collapsible parent */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setStaffOpen((v) => !v)}
+              className={cn(
+                'w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isStaffActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              )}
+            >
+              <Users className="h-4 w-4 shrink-0" />
+              <span className="flex-1 text-left">Staff</span>
+              {staffOpen
+                ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+
+            {staffOpen && (
+              <div className="ml-4 mt-1 space-y-0.5 border-l border-border/50 pl-3">
+                {staffSubItems.map(({ to, icon: Icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    onClick={() => setSidebarOpen(false)}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                      )
+                    }
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Bottom standalone items */}
+          {bottomNavItems.map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              onClick={() => setSidebarOpen(false)}
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                )
+              }
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              {label}
+            </NavLink>
+          ))}
+        </nav>
 
         {/* User info and logout */}
         <div className="px-4 py-3 border-t bg-muted/20">

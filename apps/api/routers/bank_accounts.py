@@ -2,7 +2,9 @@
 Bank Account Management API
 CRUD operations for managing bank accounts
 """
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -40,6 +42,8 @@ def create_bank_account(data: BankAccountCreate, db: Session = Depends(get_db)):
         bank_name=data.bank_name,
         account_holder_name=data.account_holder_name,
         account_number=data.account_number,
+        opening_balance=data.opening_balance,
+        current_balance=data.current_balance,
     )
     db.add(account)
     db.commit()
@@ -63,6 +67,36 @@ def update_bank_account(
     account.bank_name = data.bank_name
     account.account_holder_name = data.account_holder_name
     account.account_number = data.account_number
+    account.opening_balance = data.opening_balance
+    account.current_balance = data.current_balance
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+class _BalanceUpdate(BaseModel):
+    current_balance: Optional[float]
+
+
+class _OpeningBalanceUpdate(BaseModel):
+    opening_balance: Optional[float]
+
+
+@router.patch("/{account_id}/balance", response_model=BankAccountOut)
+def update_balance(account_id: int, data: _BalanceUpdate, db: Session = Depends(get_db)):
+    """Set the actual (real-world) current balance for reconciliation."""
+    account = get_or_404(db, BankAccount, account_id, "Bank account")
+    account.current_balance = data.current_balance
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@router.patch("/{account_id}/opening-balance", response_model=BankAccountOut)
+def update_opening_balance(account_id: int, data: _OpeningBalanceUpdate, db: Session = Depends(get_db)):
+    """Set the opening balance (closing balance of prior period) for book balance calculation."""
+    account = get_or_404(db, BankAccount, account_id, "Bank account")
+    account.opening_balance = data.opening_balance
     db.commit()
     db.refresh(account)
     return account

@@ -8,6 +8,8 @@ interface FileUploaderProps {
   onFileSelect: (file: File) => void;
   accept?: Record<string, string[]>;
   label?: string;
+  hint?: string;
+  loadingText?: string;
   className?: string;
   isLoading?: boolean;
 }
@@ -15,10 +17,13 @@ interface FileUploaderProps {
 export function FileUploader({
   onFileSelect,
   accept = {
-    'image/*': ['.jpg', '.jpeg', '.png', '.webp'],
-    'application/pdf': ['.pdf'],
+    'text/csv': ['.csv'],
+    'application/vnd.ms-excel': ['.xls'],
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
   },
-  label = 'Drop receipt or invoice here',
+  label = 'Drop bank statement here',
+  hint = 'or click to browse',
+  loadingText = 'Processing…',
   className,
   isLoading,
 }: FileUploaderProps) {
@@ -75,13 +80,13 @@ export function FileUploader({
           <Upload className="h-10 w-10 text-muted-foreground mb-3" />
           <p className="text-sm font-medium">{label}</p>
           <p className="text-xs text-muted-foreground mt-1">
-            {isDragActive ? 'Release to upload' : 'or click to browse — JPG, PNG, PDF'}
+            {isDragActive ? 'Release to upload' : hint}
           </p>
         </>
       )}
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-background/80">
-          <div className="text-sm text-muted-foreground animate-pulse">Processing with AI...</div>
+          <div className="text-sm text-muted-foreground animate-pulse">{loadingText}</div>
         </div>
       )}
     </div>

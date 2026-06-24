@@ -1,6 +1,9 @@
 """
 Bank statement import: CSV, Excel, PDF
-Leverages modular parsers for all file formats with AI fallback for PDF
+
+Parsing and categorization are fully deterministic (pandas + pdfplumber +
+keyword rules) and require no AI. An optional AI categorization pass can be
+enabled for residual "Other" rows via ENABLE_AI_CATEGORIZATION=true.
 """
 import json
 import logging
@@ -14,10 +17,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-import ai_worker
 from database import get_db
 from models import AuditLog, BankAccount, BankStatement, BankTransaction, Transaction
-from parsers.category_suggester import ai_suggest_categories_batch, suggest_category_keyword
+from parsers.category_suggester import ai_suggest_categories_batch, suggest_category_keyword, is_self_transfer
 from utils import get_or_404, AuditLogger, TransactionQueryBuilder
 from parsers.file_parsers import detect_file_type, parse_csv, parse_excel, parse_pdf
 from parsers.statement_parser import (
@@ -79,45 +81,76 @@ def _find_duplicate_transaction(
     item: StatementImportItem,
     bank_name: str,
     reference: Optional[str] = None,
+    already_matched_ids: Optional[set[int]] = None,
 ) -> Optional[Transaction]:
     """
     Check if a matching Transaction already exists in the database.
 
     Priority:
-    1. Reference match — if the bank transaction has a unique reference (e.g. OPay
-       transaction ID), look for an existing Transaction whose description contains it.
-    2. Exact date + exact amount + same bank — high-confidence duplicate.
-    3. Exact date + exact amount (no bank info) — medium-confidence duplicate,
-       only returned if there is exactly one candidate.
+    1. Reference match — unique transaction reference (e.g. OPay transaction ID).
+    2. Exact date + amount + bank + compatible description — the description check
+       is critical: multiple workers can receive the same salary amount on the same
+       date, so date+amount alone is insufficient.  Two descriptions are "compatible"
+       when they share the same first 40 normalised characters.
+    3. Exact date + amount + compatible description (no bank info) — only when there
+       is exactly one such candidate.
+
+    already_matched_ids: transaction IDs already consumed as matches in this import
+    session.  Excluding them ensures that when a bank uses identical descriptions for
+    multiple same-amount rows (e.g. "SEPT SALARY" × 3), each row finds a distinct
+    existing transaction rather than all mapping to the same one.
     """
     from sqlalchemy import func
 
+    excluded = already_matched_ids or set()
+    item_desc = (item.description or "").strip().lower()
+
+    def _desc_compatible(existing: Optional[str]) -> bool:
+        ed = (existing or "").strip().lower()
+        if not item_desc or not ed:
+            return True  # Can't distinguish empty descriptions; be conservative
+        return item_desc[:40] == ed[:40]
+
     # ── Reference-based match ─────────────────────────────────────────────────
     if reference:
-        ref_match = db.query(Transaction).filter(Transaction.description.contains(reference)).first()
+        ref_match = (
+            db.query(Transaction)
+            .filter(
+                Transaction.description.contains(reference),
+                Transaction.id.notin_(excluded) if excluded else True,
+            )
+            .first()
+        )
         if ref_match:
             return ref_match
 
-    # ── Exact date + exact amount ─────────────────────────────────────────────
+    # ── Exact date + exact amount (excluding already-consumed matches) ─────────
     candidates = (
         db.query(Transaction)
         .filter(
             Transaction.date == item.date,
             func.abs(Transaction.amount - item.amount) <= 0.01,
+            Transaction.id.notin_(excluded) if excluded else True,
         )
         .all()
     )
     if not candidates:
         return None
 
-    # Prefer matches that also share the same bank
+    # Require matching bank AND compatible description.
     bank_matches = [tx for tx in candidates if tx.bank and tx.bank.lower() == bank_name.lower()]
     if bank_matches:
-        return bank_matches[0]
+        desc_matches = [tx for tx in bank_matches if _desc_compatible(tx.description)]
+        return desc_matches[0] if desc_matches else None
 
-    # Only return if unambiguous (exactly one candidate)
-    if len(candidates) == 1:
-        return candidates[0]
+    # No same-bank match. Only fall back to an unattributed candidate (no bank
+    # set at all) — a candidate already tagged to a *different* bank is a
+    # same-day, same-amount coincidence across two real accounts, not a
+    # duplicate, no matter how compatible the description looks.
+    unattributed = [tx for tx in candidates if not tx.bank]
+    desc_matches = [tx for tx in unattributed if _desc_compatible(tx.description)]
+    if len(desc_matches) == 1:
+        return desc_matches[0]
 
     return None
 
@@ -185,13 +218,21 @@ async def upload_bank_statement(
         raise HTTPException(422, error_msg)
 
     # ── Category & type suggestions ──────────────────────────────────────────
-    # Pass 1: fast keyword rules (~85% of common descriptions)
+    # Pass 1: deterministic keyword rules — handles the vast majority of common
+    # Nigerian statement descriptions with no AI/network dependency.
+    # Self-transfers (movements between the holder's own accounts) are forced to
+    # type=transfer so they're excluded from income/expense and not double-counted.
     for r in rows:
-        cat, stype = suggest_category_keyword(r["description"], r["transaction_type"])
-        r["suggested_category"] = cat
-        r["suggested_type"] = stype
+        if is_self_transfer(r["description"], account_holder_name):
+            r["suggested_category"] = "Internal Transfer"
+            r["suggested_type"] = "transfer"
+        else:
+            cat, stype = suggest_category_keyword(r["description"], r["transaction_type"])
+            r["suggested_category"] = cat
+            r["suggested_type"] = stype
 
-    # Pass 2: AI for rows marked as "Other"
+    # Pass 2 (optional): AI refinement for rows still marked "Other".
+    # No-op unless ENABLE_AI_CATEGORIZATION=true, so upload stays AI-free by default.
     rows = ai_suggest_categories_batch(rows)
 
     # Find or create bank account
@@ -201,9 +242,16 @@ async def upload_bank_statement(
     ).first()
 
     if not bank_account:
+        # Seed the actual balance from the statement's own running-balance
+        # column (the most recent dated row), so new accounts aren't left
+        # blank until someone manually types a balance in.
+        dated_balances = [(r["date"], r["balance"]) for r in rows if r.get("balance")]
+        latest_balance = max(dated_balances, default=(None, None))[1]
+
         bank_account = BankAccount(
             bank_name=bank_name,
-            account_holder_name=account_holder_name
+            account_holder_name=account_holder_name,
+            current_balance=latest_balance,
         )
         db.add(bank_account)
         db.flush()
@@ -224,7 +272,22 @@ async def upload_bank_statement(
     db.flush()
 
     for row in rows:
-        db.add(BankTransaction(statement_id=stmt.id, **row))
+        bt_fields = {k: v for k, v in row.items() if k != "balance"}
+        db.add(BankTransaction(statement_id=stmt.id, **bt_fields))
+
+    # Record statement period from transaction dates for future overlap checks
+    raw_dates = [r["date"] for r in rows if r.get("date") is not None]
+    if raw_dates:
+        from datetime import date as _date_type
+        parsed_dates = []
+        for d in raw_dates:
+            if isinstance(d, _date_type):
+                parsed_dates.append(d)
+            elif hasattr(d, "date"):  # pd.Timestamp
+                parsed_dates.append(d.date())
+        if parsed_dates:
+            stmt.statement_period_start = min(parsed_dates)
+            stmt.statement_period_end = max(parsed_dates)
 
     db.commit()
     db.refresh(stmt)
@@ -279,6 +342,220 @@ def batch_delete_bank_statements(body: _BatchDeleteRequest, db: Session = Depend
     return {"deleted": deleted}
 
 
+class _ValidationCheck(_PydanticBase):
+    name: str
+    status: str  # "pass" | "warn" | "fail"
+    message: str
+    count: int = 0
+    details: list[dict] = []
+
+
+class _ValidationReport(_PydanticBase):
+    statement_id: int
+    total_transactions: int
+    can_import: bool
+    error_count: int
+    warning_count: int
+    checks: list[_ValidationCheck]
+
+
+@router.get("/{stmt_id}/validate", response_model=_ValidationReport)
+def validate_bank_statement(stmt_id: int, db: Session = Depends(get_db)):
+    """
+    3-tier pre-import validation of a parsed bank statement.
+
+    Tier 1 — Row completeness: missing fields, zero amounts.
+    Tier 2 — Duplicate risk: transactions already present in the ledger.
+    Tier 3 — Period overlap + category coverage.
+    """
+    stmt = get_or_404(db, BankStatement, stmt_id, "Statement")
+    txs = (
+        db.query(BankTransaction)
+        .filter(BankTransaction.statement_id == stmt_id)
+        .order_by(BankTransaction.date)
+        .all()
+    )
+
+    checks: list[_ValidationCheck] = []
+
+    # ── Tier 1: Row completeness ──────────────────────────────────────────────
+    incomplete: list[dict] = []
+    for tx in txs:
+        issues = []
+        if not tx.description or not tx.description.strip():
+            issues.append("missing description")
+        if tx.amount is None or tx.amount == 0:
+            issues.append("zero/missing amount")
+        if tx.date is None:
+            issues.append("missing date")
+        if issues:
+            incomplete.append({
+                "id": tx.id,
+                "date": str(tx.date),
+                "description": (tx.description or "")[:40],
+                "issues": issues,
+            })
+
+    if not incomplete:
+        checks.append(_ValidationCheck(
+            name="Row Completeness",
+            status="pass",
+            message=f"All {len(txs)} rows have required fields.",
+        ))
+    else:
+        ratio = len(incomplete) / len(txs) if txs else 1.0
+        checks.append(_ValidationCheck(
+            name="Row Completeness",
+            status="fail" if ratio > 0.2 else "warn",
+            message=f"{len(incomplete)} row(s) have missing or invalid fields.",
+            count=len(incomplete),
+            details=incomplete[:10],
+        ))
+
+    # ── Tier 2: Duplicate risk ────────────────────────────────────────────────
+    duplicate_hits: list[dict] = []
+    for tx in txs:
+        candidates = (
+            db.query(Transaction)
+            .filter(
+                Transaction.date == tx.date,
+                func.abs(Transaction.amount - tx.amount) <= 0.01,
+            )
+            .all()
+        )
+        if candidates:
+            bank_matches = [
+                c for c in candidates
+                if c.bank and c.bank.lower() == stmt.bank_name.lower()
+            ]
+            # A candidate already tagged to a *different* bank is a same-day,
+            # same-amount coincidence across two real accounts, not a duplicate —
+            # only fall back to an unattributed (no bank set) single candidate.
+            unattributed = [c for c in candidates if not c.bank]
+            match = bank_matches[0] if bank_matches else (unattributed[0] if len(unattributed) == 1 else None)
+            if match:
+                duplicate_hits.append({
+                    "bank_tx_id": tx.id,
+                    "date": str(tx.date),
+                    "amount": tx.amount,
+                    "description": (tx.description or "")[:40],
+                    "existing_id": match.id,
+                })
+
+    if not duplicate_hits:
+        checks.append(_ValidationCheck(
+            name="Duplicate Transactions",
+            status="pass",
+            message="No transactions match existing ledger records.",
+        ))
+    else:
+        dup_pct = len(duplicate_hits) / len(txs) if txs else 0.0
+        msg = (
+            f"{len(duplicate_hits)} of {len(txs)} transactions ({dup_pct:.0%}) already exist — "
+            "this may be a re-upload."
+            if dup_pct > 0.4
+            else f"{len(duplicate_hits)} transaction(s) match existing records and will be reconciled automatically."
+        )
+        checks.append(_ValidationCheck(
+            name="Duplicate Transactions",
+            status="warn",
+            message=msg,
+            count=len(duplicate_hits),
+            details=duplicate_hits[:10],
+        ))
+
+    # ── Tier 3a: Period overlap ───────────────────────────────────────────────
+    if txs:
+        tx_dates = [tx.date for tx in txs if tx.date]
+        this_start = min(tx_dates)
+        this_end = max(tx_dates)
+
+        overlap_hits: list[dict] = []
+        if stmt.bank_account_id:
+            other_stmts = (
+                db.query(BankStatement)
+                .filter(
+                    BankStatement.bank_account_id == stmt.bank_account_id,
+                    BankStatement.id != stmt_id,
+                )
+                .all()
+            )
+            for other in other_stmts:
+                if other.statement_period_start and other.statement_period_end:
+                    o_start, o_end = other.statement_period_start, other.statement_period_end
+                else:
+                    other_rows = (
+                        db.query(BankTransaction.date)
+                        .filter(BankTransaction.statement_id == other.id)
+                        .all()
+                    )
+                    other_dates = [r[0] for r in other_rows if r[0]]
+                    if not other_dates:
+                        continue
+                    o_start, o_end = min(other_dates), max(other_dates)
+
+                if this_start <= o_end and this_end >= o_start:
+                    overlap_hits.append({
+                        "statement_id": other.id,
+                        "period": f"{o_start} – {o_end}",
+                        "uploaded": other.created_at.strftime("%Y-%m-%d"),
+                    })
+
+        if not overlap_hits:
+            checks.append(_ValidationCheck(
+                name="Period Overlap",
+                status="pass",
+                message=f"Date range {this_start} – {this_end} has no overlap with other statements.",
+            ))
+        else:
+            checks.append(_ValidationCheck(
+                name="Period Overlap",
+                status="warn",
+                message=(
+                    f"Date range overlaps with {len(overlap_hits)} other statement(s). "
+                    "Transactions may already be imported."
+                ),
+                count=len(overlap_hits),
+                details=overlap_hits,
+            ))
+    else:
+        checks.append(_ValidationCheck(
+            name="Period Overlap",
+            status="pass",
+            message="No transactions to validate.",
+        ))
+
+    # ── Tier 3b: Category coverage ───────────────────────────────────────────
+    uncategorized = [
+        tx for tx in txs
+        if not tx.suggested_category or tx.suggested_category == "Other"
+    ]
+    coverage = 1.0 - len(uncategorized) / len(txs) if txs else 1.0
+    checks.append(_ValidationCheck(
+        name="Category Coverage",
+        status="pass" if coverage >= 0.8 else "warn",
+        message=(
+            f"{coverage:.0%} of transactions auto-categorized ({len(uncategorized)} as 'Other')."
+            if coverage >= 0.8
+            else f"Only {coverage:.0%} auto-categorized — {len(uncategorized)} row(s) need manual categories."
+        ),
+        count=len(uncategorized),
+    ))
+
+    # ── Aggregate ─────────────────────────────────────────────────────────────
+    error_count = sum(1 for c in checks if c.status == "fail")
+    warning_count = sum(1 for c in checks if c.status == "warn")
+
+    return _ValidationReport(
+        statement_id=stmt_id,
+        total_transactions=len(txs),
+        can_import=error_count == 0,
+        error_count=error_count,
+        warning_count=warning_count,
+        checks=checks,
+    )
+
+
 @router.get("/{stmt_id}/transactions", response_model=list[BankTransactionOut])
 def list_bank_transactions(stmt_id: int, db: Session = Depends(get_db)):
     """List all bank transactions for a statement."""
@@ -307,6 +584,10 @@ def import_statement_transactions(
     saved_count = 0
     reconciled_count = 0
     new_transactions = []
+    # Track which existing transaction IDs have been consumed as matches so far.
+    # This prevents multiple identical rows (same date + amount + description, e.g.
+    # "SEPT SALARY" × 3) from all matching the same single existing transaction.
+    already_matched_ids: set[int] = set()
 
     for item in req.items:
         bank_tx = db.get(BankTransaction, item.bank_transaction_id)
@@ -315,15 +596,17 @@ def import_statement_transactions(
 
         # Already matched — skip entirely
         if bank_tx.match_status == "matched" and bank_tx.matched_transaction_id:
+            already_matched_ids.add(bank_tx.matched_transaction_id)
             reconciled_count += 1
             continue
 
-        # Duplicate check
+        # Duplicate check — pass the consumed-IDs set so each match is unique
         existing = _find_duplicate_transaction(
-            db, item, stmt.bank_name, bank_tx.reference
+            db, item, stmt.bank_name, bank_tx.reference, already_matched_ids
         )
 
         if existing:
+            already_matched_ids.add(existing.id)  # consume this match
             bank_tx.matched_transaction_id = existing.id
             bank_tx.match_status = "matched"
             bank_tx.match_confidence = 1.0
@@ -358,6 +641,13 @@ def import_statement_transactions(
         )
         db.add(tx)
         db.flush()
+
+        # Never match a *later* row in this same import against a transaction
+        # *this same import* just created — two statement rows are siblings,
+        # not duplicates of each other, even when same-day/same-amount/same
+        # generic description (e.g. two families both paying a "school fee"
+        # of the same amount). Re-import dedup is for separate, earlier imports.
+        already_matched_ids.add(tx.id)
 
         bank_tx.matched_transaction_id = tx.id
         bank_tx.match_status = "matched"
@@ -405,35 +695,22 @@ def import_statement_transactions(
                 duplicates_flagged += 1
 
             elif resolution_mode == "auto":
-                if tx.created_at >= best_match.created_at:
-                    best_match.is_potential_duplicate = False
-                    best_match.duplicate_reviewed = True
-                    db.add(
-                        AuditLog(
-                            entity_type="transaction",
-                            entity_id=best_match.id,
-                            action="auto_resolve_duplicate",
-                            old_values=json.dumps(
-                                {"deleted_as_duplicate_of": tx.id}
-                            ),
-                        )
+                # Always keep the transaction already in the DB — never override
+                # an existing record with one from a re-upload.
+                best_match.is_potential_duplicate = False
+                best_match.duplicate_reviewed = True
+                db.add(
+                    AuditLog(
+                        entity_type="transaction",
+                        entity_id=tx.id,
+                        action="auto_resolve_duplicate",
+                        old_values=json.dumps(
+                            {"deleted_as_duplicate_of": best_match.id}
+                        ),
                     )
-                    db.delete(best_match)
-                else:
-                    tx.is_potential_duplicate = False
-                    tx.duplicate_reviewed = True
-                    db.add(
-                        AuditLog(
-                            entity_type="transaction",
-                            entity_id=tx.id,
-                            action="auto_resolve_duplicate",
-                            old_values=json.dumps(
-                                {"deleted_as_duplicate_of": best_match.id}
-                            ),
-                        )
-                    )
-                    db.delete(tx)
-                    saved_count -= 1
+                )
+                db.delete(tx)
+                saved_count -= 1
 
                 duplicates_resolved += 1
 
@@ -453,9 +730,8 @@ def import_statement_transactions(
 
 def _is_intra_account_transfer(t: Transaction) -> bool:
     """
-    Check if this is an intra-account transfer (within same bank/account).
+    Check if this is an intra-account transfer to a savings wallet or pocket.
     Examples: Auto-save to OWealth, savings wallet, vault transfers.
-    These should NOT be counted in bank reports.
     """
     if t.type != "transfer":
         return False
@@ -465,18 +741,43 @@ def _is_intra_account_transfer(t: Transaction) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
-def _is_incoming_transfer(t: Transaction) -> bool:
-    """
-    Check if this is an incoming transfer (money coming IN).
-    Examples: "Transfer from COMPANY", "Received from Person"
-    These should be counted as INCOME in bank reports.
-    """
-    if t.type != "transfer":
-        return False
+# Keywords that identify savings / wallet accounts where incoming transfers are
+# the primary funding source (e.g. OPay, OWealth, PiggyVest). For these accounts
+# transfers should NOT reduce the book balance because they are inflows.
+_SAVINGS_WALLET_KEYWORDS = frozenset(["opay", "owealth", "wealth", "piggyvest", "cowrywise", "kuda"])
 
-    text = (t.description + " " + (t.vendor or "")).lower()
-    incoming_keywords = ["transfer from", "received from", "payment from", "refund from", "credit from"]
-    return any(keyword in text for keyword in incoming_keywords)
+
+def _is_savings_wallet_account(bank_name: str) -> bool:
+    """Return True when the account is a savings/wallet that receives transfers as income."""
+    lower = bank_name.lower()
+    return any(kw in lower for kw in _SAVINGS_WALLET_KEYWORDS)
+
+
+def _transfer_is_income(t: Transaction, bank_name: str, db: Session) -> bool:
+    """
+    Direction of a (non-intra-account) transfer: True = money received (income),
+    False = money sent (expense).
+
+    Uses the original debit/credit recorded on the linked bank statement row —
+    the authoritative source — not an account-type guess. A transfer can go
+    either direction regardless of account (a "savings wallet" can send money
+    out too), so the per-account heuristic alone misclassifies real transfers.
+
+    Statements re-imported more than once can link multiple bank_transactions
+    rows to the same Transaction; when their recorded directions disagree, the
+    earliest import wins (deterministic — never an arbitrary lazy-loaded row).
+    Falls back to the account-type heuristic only when no statement row is
+    linked (e.g. a manually entered transfer with no import history).
+    """
+    earliest_match = (
+        db.query(BankTransaction)
+        .filter(BankTransaction.matched_transaction_id == t.id)
+        .order_by(BankTransaction.created_at.asc(), BankTransaction.id.asc())
+        .first()
+    )
+    if earliest_match is not None:
+        return earliest_match.transaction_type == "credit"
+    return _is_savings_wallet_account(bank_name)
 
 
 @router.get("/bank-accounts", response_model=list[BankAccountReportSummary])
@@ -500,42 +801,36 @@ def get_bank_account_reports(
             .all()
         )
 
-        # Income: regular income + incoming transfers (e.g., "Transfer from Company")
-        total_income = sum(
-            t.amount for t in transactions
-            if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t))
+        # Transfers (excluding intra-account auto-saves/vaults) count as income or
+        # expense per-transaction, by their actual debit/credit direction — not by
+        # an account-type guess, since any account can both send and receive.
+        inter_transfers = [
+            t for t in transactions
+            if t.type == "transfer" and not _is_intra_account_transfer(t)
+        ]
+        transfer_income = [t for t in inter_transfers if _transfer_is_income(t, account.bank_name, db)]
+        transfer_expense = [t for t in inter_transfers if not _transfer_is_income(t, account.bank_name, db)]
+
+        total_income = (
+            sum(t.amount for t in transactions if t.type == "income")
+            + sum(t.amount for t in transfer_income)
+        )
+        income_count = (
+            sum(1 for t in transactions if t.type == "income") + len(transfer_income)
+        )
+        total_expense = (
+            sum(t.amount for t in transactions if t.type == "expense")
+            + sum(t.amount for t in transfer_expense)
+        )
+        expense_count = (
+            sum(1 for t in transactions if t.type == "expense") + len(transfer_expense)
         )
 
-        # Expense: regular expenses + outgoing transfers (exclude intra-account & incoming)
-        total_expense = sum(
-            t.amount for t in transactions
-            if t.type == "expense" or (
-                t.type == "transfer"
-                and not _is_intra_account_transfer(t)
-                and not _is_incoming_transfer(t)
-            )
-        )
-
-        # Total transfers (excluding intra-account like OWealth)
+        # Inter-account transfers shown separately for reference (never intra-account).
         total_transfer = sum(
             t.amount for t in transactions
             if t.type == "transfer" and not _is_intra_account_transfer(t)
         )
-
-        income_count = sum(
-            1 for t in transactions
-            if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t))
-        )
-
-        expense_count = sum(
-            1 for t in transactions
-            if t.type == "expense" or (
-                t.type == "transfer"
-                and not _is_intra_account_transfer(t)
-                and not _is_incoming_transfer(t)
-            )
-        )
-
         transfer_count = sum(
             1 for t in transactions
             if t.type == "transfer" and not _is_intra_account_transfer(t)
@@ -545,8 +840,8 @@ def get_bank_account_reports(
         first_transaction = min(transaction_dates) if transaction_dates else None
         last_transaction = max(transaction_dates) if transaction_dates else None
 
-        # Net amount = Income - Expense
-        net_amount = total_income - total_expense
+        opening_balance = account.opening_balance or 0.0
+        net_amount = opening_balance + total_income - total_expense
 
         reports.append(
             BankAccountReportSummary(
@@ -554,6 +849,7 @@ def get_bank_account_reports(
                 bank_name=account.bank_name,
                 account_holder_name=account.account_holder_name,
                 account_number=account.account_number,
+                opening_balance=opening_balance,
                 total_income=total_income,
                 total_expense=total_expense,
                 total_transfer=total_transfer,
@@ -591,106 +887,94 @@ def get_bank_account_report(
         .all()
     )
 
-    # Income: regular income + incoming transfers (e.g., "Transfer from Company")
-    total_income = sum(
-        t.amount for t in transactions
-        if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t))
-    )
-
-    # Expense: regular expenses + outgoing transfers (exclude intra-account & incoming)
-    total_expense = sum(
-        t.amount for t in transactions
-        if t.type == "expense" or (
-            t.type == "transfer"
-            and not _is_intra_account_transfer(t)
-            and not _is_incoming_transfer(t)
-        )
-    )
-
-    # Total transfers (excluding intra-account like OWealth)
-    total_transfer = sum(
-        t.amount for t in transactions
+    # Transfers (excluding intra-account auto-saves/vaults) count as income or
+    # expense per-transaction, by their actual debit/credit direction — not by
+    # an account-type guess, since any account can both send and receive.
+    inter_transfers = [
+        t for t in transactions
         if t.type == "transfer" and not _is_intra_account_transfer(t)
+    ]
+    transfer_income = [t for t in inter_transfers if _transfer_is_income(t, account.bank_name, db)]
+    transfer_expense = [t for t in inter_transfers if not _transfer_is_income(t, account.bank_name, db)]
+
+    total_income = (
+        sum(t.amount for t in transactions if t.type == "income")
+        + sum(t.amount for t in transfer_income)
+    )
+    income_count = (
+        sum(1 for t in transactions if t.type == "income") + len(transfer_income)
+    )
+    total_expense = (
+        sum(t.amount for t in transactions if t.type == "expense")
+        + sum(t.amount for t in transfer_expense)
+    )
+    expense_count = (
+        sum(1 for t in transactions if t.type == "expense") + len(transfer_expense)
     )
 
-    income_count = sum(
-        1 for t in transactions
-        if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t))
-    )
+    # Inter-account transfers for the separate reference strip (never intra-account).
+    total_transfer = sum(t.amount for t in inter_transfers)
+    transfer_count = len(inter_transfers)
 
-    expense_count = sum(
-        1 for t in transactions
-        if t.type == "expense" or (
-            t.type == "transfer"
-            and not _is_intra_account_transfer(t)
-            and not _is_incoming_transfer(t)
-        )
-    )
-
-    transfer_count = sum(
-        1 for t in transactions
-        if t.type == "transfer" and not _is_intra_account_transfer(t)
-    )
-
-    # Expense breakdown: regular expenses + outgoing transfers
-    expense_by_category = {}
+    # Expense breakdown.
+    expense_by_category: dict[str, float] = {}
     for t in transactions:
-        if t.type == "expense" or (
-            t.type == "transfer"
-            and not _is_intra_account_transfer(t)
-            and not _is_incoming_transfer(t)
-        ):
+        if t.type == "expense":
             category = t.category or "Uncategorized"
             expense_by_category[category] = expense_by_category.get(category, 0) + t.amount
+    for t in transfer_expense:
+        category = t.category or "Uncategorized"
+        expense_by_category[category] = expense_by_category.get(category, 0) + t.amount
 
-    # Income breakdown: regular income + incoming transfers
-    income_by_category = {}
+    # Income breakdown.
+    income_by_category: dict[str, float] = {}
     for t in transactions:
-        if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t)):
+        if t.type == "income":
             category = t.category or "Uncategorized"
             income_by_category[category] = income_by_category.get(category, 0) + t.amount
+    for t in transfer_income:
+        category = t.category or "Uncategorized"
+        income_by_category[category] = income_by_category.get(category, 0) + t.amount
 
-    transfer_by_category = {}
-    for t in transactions:
-        # Only include inter-account transfers, exclude intra-account
-        if t.type == "transfer" and not _is_intra_account_transfer(t):
-            category = t.category or "Uncategorized"
-            transfer_by_category[category] = transfer_by_category.get(category, 0) + t.amount
+    # Keep transfer_by_category for backward compat (inter-account only).
+    transfer_by_category: dict[str, float] = {}
+    for t in inter_transfers:
+        category = t.category or "Uncategorized"
+        transfer_by_category[category] = transfer_by_category.get(category, 0) + t.amount
 
-    monthly_data = {}
+    transfer_income_ids = {t.id for t in transfer_income}
+    inter_transfer_ids = {t.id for t in inter_transfers}
+    monthly_data: dict[str, dict[str, float]] = {}
     for t in transactions:
         month_key = t.date.strftime("%Y-%m")
         if month_key not in monthly_data:
             monthly_data[month_key] = {"income": 0, "expense": 0, "transfer": 0}
 
-        # Income: regular income + incoming transfers
-        if t.type == "income" or (t.type == "transfer" and _is_incoming_transfer(t)):
+        if t.type == "income":
             monthly_data[month_key]["income"] += t.amount
-        # Expense: regular expenses + outgoing transfers (exclude intra-account & incoming)
-        elif t.type == "expense" or (
-            t.type == "transfer"
-            and not _is_intra_account_transfer(t)
-            and not _is_incoming_transfer(t)
-        ):
+        elif t.type == "expense":
             monthly_data[month_key]["expense"] += t.amount
-
-        # Track all inter-account transfers separately for reference
-        if t.type == "transfer" and not _is_intra_account_transfer(t):
-            monthly_data[month_key]["transfer"] += t.amount
+        elif t.id in inter_transfer_ids:
+            if t.id in transfer_income_ids:
+                monthly_data[month_key]["income"] += t.amount
+            else:
+                monthly_data[month_key]["expense"] += t.amount
 
     transaction_dates = [t.date for t in transactions]
     first_transaction = min(transaction_dates) if transaction_dates else None
     last_transaction = max(transaction_dates) if transaction_dates else None
 
+    opening_balance = account.opening_balance or 0.0
     return BankAccountReport(
         bank_account_id=account.id,
         bank_name=account.bank_name,
         account_holder_name=account.account_holder_name,
         account_number=account.account_number,
+        opening_balance=opening_balance,
         total_income=total_income,
-        total_expense=total_expense,  # Includes transfers
+        total_expense=total_expense,
         total_transfer=total_transfer,
-        net_amount=total_income - total_expense,  # Transfers already included in expense
+        net_amount=opening_balance + total_income - total_expense,
         income_count=income_count,
         expense_count=expense_count,
         transfer_count=transfer_count,

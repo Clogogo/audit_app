@@ -1,8 +1,10 @@
+const { join } = require('path');
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
-    './index.html',
-    './src/**/*.{js,ts,jsx,tsx}',
+    join(__dirname, 'index.html'),
+    join(__dirname, 'src/**/*.{js,ts,jsx,tsx}'),
   ],
   theme: {
     extend: {
@@ -40,11 +42,20 @@ module.exports = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        'brand-accent': {
+          DEFAULT: 'hsl(var(--brand-accent))',
+          foreground: 'hsl(var(--brand-accent-foreground))',
+        },
+        income: 'hsl(var(--income))',
+        expense: 'hsl(var(--expense))',
       },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+      },
+      fontFamily: {
+        display: ['Petrona', 'Georgia', 'serif'],
       },
     },
   },

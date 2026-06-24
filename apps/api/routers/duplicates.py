@@ -1,9 +1,9 @@
 """
 Duplicate Detection Engine
-Reuses the fuzzy matching algorithm from reconciliation to detect duplicate transactions.
+A transaction is a duplicate only when it matches another on ALL of:
+Date, Amount, Type, Category, Description, Bank — exact match, no fuzzy logic.
 """
 import json
-from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -15,112 +15,85 @@ from schemas import TransactionOut
 
 router = APIRouter(prefix="/duplicates", tags=["duplicates"])
 
+# Amount tolerance to absorb floating-point rounding only (not a fuzzy window).
+_AMOUNT_EPSILON = 0.01
 
-def _fuzzy_score(a: str, b: str) -> float:
-    """Simple token-based similarity score (0-1). Reused from reconciliation."""
-    try:
-        from rapidfuzz import fuzz
-        return fuzz.token_sort_ratio(a.lower(), b.lower()) / 100.0
-    except ImportError:
-        # Fallback: word overlap
-        wa = set(a.lower().split())
-        wb = set(b.lower().split())
-        if not wa or not wb:
-            return 0.0
-        return len(wa & wb) / max(len(wa), len(wb))
+# Recurring per-transaction fees / system entries that carry no unique reference
+# in their description. Two of these on the same day at the same amount are
+# legitimately two separate charges (e.g. ₦50 stamp duty on each of several
+# transfers that day), not a re-imported duplicate — never flag them.
+_RECURRING_FEE_KEYWORDS = (
+    "stamp duty",
+    "stamp duties",
+    "vat on transfer fee",
+    "owealth withdrawal",
+    "auto-save to owealth",
+    "electronic money transfer levy",
+)
 
 
-def _extract_ref_id(reference: str | None) -> str | None:
-    """Extract last 6 characters from transaction reference for comparison."""
-    if not reference or len(reference) < 6:
-        return None
-    return reference[-6:].upper()
+def _norm(value: str | None) -> str:
+    """Normalize a text field for exact comparison: trim + lowercase."""
+    return (value or "").strip().lower()
+
+
+def _is_recurring_fee(description: str | None) -> bool:
+    text = _norm(description)
+    return any(keyword in text for keyword in _RECURRING_FEE_KEYWORDS)
 
 
 def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tuple[Transaction, float]]:
     """
-    Find potential duplicates for a given transaction using reference-based and fuzzy matching.
-    Returns list of (transaction, confidence_score) tuples.
+    Find exact duplicates of `tx`.
 
-    Matching strategy:
-    1. If BOTH transactions have references:
-       - Same ref (last 6 chars) → Duplicate (100% confidence)
-       - Different refs → NOT duplicate (skip fuzzy matching)
-       - Exception: Stamp Duty charges are recurring, not duplicates
+    Two transactions are duplicates only when EVERY one of these fields is
+    identical:
+        - Date         (same calendar day)
+        - Amount       (within ₦0.01, float-rounding tolerance only)
+        - Type         (income / expense / transfer)
+        - Category
+        - Description
+        - Bank
 
-    2. If EITHER transaction lacks a reference:
-       - Use fuzzy matching:
-         * Amount within ₦0.01
-         * Date within 3 days
-         * Description similarity >= 0.4
-         * Vendor name must match (if both present)
+    Text fields are compared case-insensitively after trimming whitespace.
+    Matching is fully deterministic — no references, fuzzy scoring, vendor
+    heuristics, or date windows.
+
+    Returns a list of (transaction, 1.0) tuples. Confidence is always 1.0
+    because every reported match is exact. The signature and return shape are
+    unchanged so all existing callers keep working.
     """
+    if _is_recurring_fee(tx.description):
+        return []
+
+    # Narrow candidates in SQL on the cheap exact keys (date + type + bank),
+    # then confirm amount and the remaining text fields in Python so string
+    # comparison is case-insensitive and whitespace-insensitive.
     candidates = (
         db.query(Transaction)
         .filter(
             Transaction.id != tx.id,
             Transaction.duplicate_reviewed == 0,
-            Transaction.date >= tx.date - timedelta(days=3),
-            Transaction.date <= tx.date + timedelta(days=3),
+            Transaction.date == tx.date,
         )
         .all()
     )
 
-    matches = []
-    # Transaction model doesn't have a reference field, use description instead
-    tx_ref_id = _extract_ref_id(getattr(tx, 'reference', None) or tx.description)
-
+    matches: list[tuple[Transaction, float]] = []
     for candidate in candidates:
-        candidate_ref_id = _extract_ref_id(getattr(candidate, 'reference', None) or candidate.description)
-
-        # ─── Case 1: Both have references ────────────────────────────────────
-        if tx_ref_id and candidate_ref_id:
-            if tx_ref_id == candidate_ref_id:
-                # Exact reference match → Definite duplicate
-                matches.append((candidate, 1.0))
-                continue
-            else:
-                # Different references → NOT a duplicate
-                # Exception: Recurring charges like Stamp Duty are NOT duplicates
-                is_stamp_duty = (
-                    "stamp duty" in tx.description.lower() or
-                    "stamp duty" in candidate.description.lower()
-                )
-                if is_stamp_duty:
-                    continue  # Skip - not a duplicate
-                else:
-                    continue  # Different refs = different transactions
-
-        # ─── Case 2: At least one lacks reference → Use fuzzy matching ──────
-
-        # Amount must match within 1 cent
-        if abs(candidate.amount - tx.amount) > 0.01:
+        if abs(candidate.amount - tx.amount) > _AMOUNT_EPSILON:
+            continue
+        if _norm(candidate.type) != _norm(tx.type):
+            continue
+        if _norm(candidate.category) != _norm(tx.category):
+            continue
+        if _norm(candidate.description) != _norm(tx.description):
+            continue
+        if _norm(candidate.bank) != _norm(tx.bank):
             continue
 
-        # Date difference
-        delta = abs((candidate.date - tx.date).days)
-        if delta > 3:
-            continue
-
-        # Vendor matching (strict requirement if both present)
-        tx_vendor = (tx.vendor or "").strip().lower()
-        candidate_vendor = (candidate.vendor or "").strip().lower()
-
-        if tx_vendor and candidate_vendor:
-            vendor_score = _fuzzy_score(tx_vendor, candidate_vendor)
-            if vendor_score < 0.7:  # Strict threshold for vendor match
-                continue
-
-        # Description fuzzy match
-        desc_score = _fuzzy_score(tx.description, candidate.description)
-
-        # Boost for same-day transactions
-        date_bonus = (3 - delta) / 3 * 0.2
-        total_score = desc_score + date_bonus
-
-        # Threshold: 0.4 for description similarity
-        if total_score >= 0.4:
-            matches.append((candidate, round(total_score, 3)))
+        # All six fields matched exactly → definite duplicate.
+        matches.append((candidate, 1.0))
 
     return matches
 

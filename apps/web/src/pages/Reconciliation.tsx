@@ -12,6 +12,7 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { formatCurrency, formatDate } from '../lib/utils';
+import { HelpTooltip } from '../components/HelpTooltip';
 
 interface DuplicatePair {
   transaction: Transaction;
@@ -86,6 +87,11 @@ export function Reconciliation() {
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <GitMerge className="w-8 h-8" />
             Duplicate Resolution
+            <HelpTooltip
+              title="Duplicate Detection"
+              content={"The system flags transactions that look like duplicates based on:\n· Same or very close amount\n· Same or adjacent date (±3 days)\n· Similar description text\n\nThis catches double-imports when you upload the same statement twice, or when a manual entry matches a bank import.\n\nFor each pair, choose which one to Keep — the other is deleted."}
+              align="left"
+            />
           </h1>
           <p className="text-muted-foreground mt-1">
             Duplicates are automatically detected when you create or upload transactions
@@ -102,8 +108,12 @@ export function Reconciliation() {
         <div className="grid grid-cols-3 gap-4 mb-6">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                 Pending Review
+                <HelpTooltip
+                  content={"Duplicate pairs you haven't decided on yet.\n\nFor each pair, click 'Keep This One' on the transaction you want to retain. The other will be removed from your ledger.\n\nIf neither is actually a duplicate, click 'Not a Duplicate' to dismiss."}
+                  align="left"
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -112,8 +122,12 @@ export function Reconciliation() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                 Total Flagged
+                <HelpTooltip
+                  content={"Total transactions ever flagged as potential duplicates (all time).\n\nIncludes ones already resolved. Use 'Pending Review' to see what still needs action."}
+                  align="center"
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -122,8 +136,12 @@ export function Reconciliation() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                 Reviewed
+                <HelpTooltip
+                  content={"Duplicate pairs you've already resolved — either by keeping one transaction or marking both as 'Not a Duplicate'.\n\nThese are removed from the Pending Review queue."}
+                  align="right"
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -156,9 +174,15 @@ export function Reconciliation() {
                     Potential Duplicate #{idx + 1}
                   </CardTitle>
                   {pair.transaction.duplicate_confidence && (
-                    <Badge variant="secondary">
-                      {(pair.transaction.duplicate_confidence * 100).toFixed(0)}% confidence
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant="secondary">
+                        {(pair.transaction.duplicate_confidence * 100).toFixed(0)}% confidence
+                      </Badge>
+                      <HelpTooltip
+                        content={"Confidence score: how likely these two transactions are the same entry.\n\n· 90–100%: almost certainly a duplicate (same amount + date + description)\n· 70–89%: probably duplicate, worth reviewing\n· 50–69%: possible overlap, check carefully\n\nIf a score feels wrong, click 'Not a Duplicate' to remove the flag."}
+                        align="left"
+                      />
+                    </div>
                   )}
                 </div>
                 <Button
