@@ -28,7 +28,7 @@ app = FastAPI(
 import os as _os
 
 _origins = ["http://localhost:4200", "http://localhost:3000"]
-# FRONTEND_URL is set in Render env vars to your Vercel URL
+# FRONTEND_URL is set in Render env vars to your stable Vercel production URL.
 _frontend_url = _os.getenv("FRONTEND_URL", "")
 if _frontend_url:
     _origins.append(_frontend_url.rstrip("/"))
@@ -36,6 +36,10 @@ if _frontend_url:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
+    # Vercel generates a new random preview URL on every deploy
+    # (e.g. audit-aaduzxlng-clogogos-projects.vercel.app) — match any
+    # deployment of this project so CORS doesn't break on the next push.
+    allow_origin_regex=r"^https://audit(-[a-z0-9]+)?-clogogos-projects\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
