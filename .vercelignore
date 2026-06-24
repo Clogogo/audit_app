@@ -1,7 +1,9 @@
 # Python files (API runs on Render, not Vercel)
-# Note: do NOT ignore apps/ wholesale — apps/web is the frontend Vercel builds.
-api/
-apps/api/
+# Note: these are anchored to the repo root (leading "/") on purpose — an
+# unanchored "api/" also matches apps/web/src/api/, which is the frontend's
+# own API client code and must NOT be excluded.
+/api/
+/apps/api/
 *.py
 
 # Ignore local development files
