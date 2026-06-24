@@ -18,6 +18,12 @@ class UserLogin(BaseModel):
     password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Schema for resetting a forgotten password directly by email."""
+    email: EmailStr
+    new_password: str
+
+
 class Token(BaseModel):
     """Schema for JWT token response."""
     access_token: str

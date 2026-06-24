@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import User
-from schemas import UserRegister, UserLogin, Token, UserOut
+from schemas import UserRegister, UserLogin, Token, UserOut, ForgotPasswordRequest
 from utils.auth import (
     hash_password,
     authenticate_user,
@@ -86,6 +86,39 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     # Create access token (sub must be string per JWT spec)
     access_token = create_access_token(data={"sub": str(user.id)})
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Reset a forgotten password directly by email — no current password or
+    verification token required. Intended for small/trusted deployments
+    where there's no email service to send a reset link through.
+
+    Args:
+        data: Account email and the new password to set
+        db: Database session
+
+    Raises:
+        HTTPException: 404 if no account exists for that email
+        HTTPException: 422 if the new password is too short
+    """
+    if len(data.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Password must be at least 6 characters",
+        )
+
+    user = db.query(User).filter(User.email == data.email).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account found with that email",
+        )
+
+    user.hashed_password = hash_password(data.new_password)
+    db.commit()
+    return {"message": "Password updated. You can now log in with your new password."}
 
 
 @router.get("/me", response_model=UserOut)

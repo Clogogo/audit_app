@@ -402,6 +402,9 @@ export const login = (email: string, password: string) =>
 export const register = (email: string, password: string, fullName?: string) =>
   api.post('/auth/register', { email, password, full_name: fullName }).then(unwrap);
 
+export const forgotPassword = (email: string, newPassword: string) =>
+  api.post<{ message: string }>('/auth/forgot-password', { email, new_password: newPassword }).then(unwrap);
+
 export const getCurrentUser = () =>
   api.get('/auth/me').then(unwrap);
 // ── Staff Directory ───────────────────────────────────────────────────────────
