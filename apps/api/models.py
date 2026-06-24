@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import Optional
 from sqlalchemy import (
-    Integer, String, Float, Date, DateTime, ForeignKey, Text, Enum, Index
+    Integer, String, Float, Date, DateTime, ForeignKey, Text, Enum, Index, Boolean
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -28,7 +28,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    is_active: Mapped[bool] = mapped_column(Integer, default=1)  # SQLite uses INTEGER for bool
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # SQLite uses INTEGER for bool
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -70,9 +70,9 @@ class Transaction(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Duplicate detection fields
-    is_potential_duplicate: Mapped[bool] = mapped_column(Integer, default=0)  # SQLite uses 0/1 for boolean
+    is_potential_duplicate: Mapped[bool] = mapped_column(Boolean, default=False)  # SQLite uses 0/1 for boolean
     duplicate_of_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True)
-    duplicate_reviewed: Mapped[bool] = mapped_column(Integer, default=0)
+    duplicate_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     duplicate_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     file: Mapped[Optional[UploadedFile]] = relationship("UploadedFile", back_populates="transaction")
@@ -181,7 +181,7 @@ class Staff(Base):
     monthly_gross: Mapped[float] = mapped_column(Float, default=0.0)
     start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Integer, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -200,7 +200,7 @@ class StaffLoan(Base):
     deduction_rate: Mapped[float] = mapped_column(Float, default=0.5)
     deduction_start: Mapped[date] = mapped_column(Date)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Integer, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -236,7 +236,7 @@ class SchoolLoan(Base):
     interest_rate: Mapped[float] = mapped_column(Float, default=0.0)  # annual %, reference/display only
     collected_date: Mapped[date] = mapped_column(Date)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Integer, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -276,7 +276,7 @@ class PayrollEntry(Base):
     loan_deduction: Mapped[float] = mapped_column(Float, default=0.0)
     other_deductions: Mapped[float] = mapped_column(Float, default=0.0)
     net_salary: Mapped[float] = mapped_column(Float)
-    is_paid: Mapped[bool] = mapped_column(Integer, default=0)
+    is_paid: Mapped[bool] = mapped_column(Boolean, default=False)
     paid_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

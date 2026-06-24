@@ -2,7 +2,7 @@ import logging
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, text, Boolean
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 logger = logging.getLogger(__name__)
@@ -144,3 +144,34 @@ def initialize_database() -> None:
             text("UPDATE transactions SET currency = 'NGN' WHERE currency = 'USD' OR currency IS NULL")
         )
         connection.commit()
+
+        # Postgres only: columns that were created as INTEGER (back when the
+        # models declared Integer for booleans) need converting to a real
+        # boolean type, otherwise psycopg2 sends `true`/`false` literals for
+        # Python bool assignments and Postgres rejects them against an
+        # integer column. SQLite has no real column types to fix — it already
+        # stores these as 0/1 either way, so this is a no-op there.
+        if engine.dialect.name == "postgresql":
+            bool_columns = [
+                ("users", "is_active"),
+                ("transactions", "is_potential_duplicate"),
+                ("transactions", "duplicate_reviewed"),
+                ("staff", "is_active"),
+                ("staff_loans", "is_active"),
+                ("school_loans", "is_active"),
+                ("payroll_entries", "is_paid"),
+            ]
+            for table_name, column_name in bool_columns:
+                if table_name not in existing_tables:
+                    continue
+                col_info = next(
+                    (c for c in inspector.get_columns(table_name) if c["name"] == column_name),
+                    None,
+                )
+                if col_info is None or isinstance(col_info["type"], Boolean):
+                    continue
+                connection.execute(text(
+                    f"ALTER TABLE {table_name} ALTER COLUMN {column_name} "
+                    f"TYPE boolean USING ({column_name} <> 0)"
+                ))
+            connection.commit()
