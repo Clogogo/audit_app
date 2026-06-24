@@ -68,12 +68,9 @@ def list_transactions(
 @router.get("/years", response_model=list[int])
 def get_transaction_years(db: Session = Depends(get_db)):
     """Return distinct years that have at least one transaction, sorted descending."""
-    rows = (
-        db.query(func.strftime('%Y', Transaction.date))
-        .distinct()
-        .order_by(func.strftime('%Y', Transaction.date).desc())
-        .all()
-    )
+    # extract() is portable across SQLite and Postgres; strftime() is SQLite-only.
+    year_col = func.extract("year", Transaction.date)
+    rows = db.query(year_col).distinct().order_by(year_col.desc()).all()
     return [int(r[0]) for r in rows if r[0]]
 
 
@@ -126,23 +123,27 @@ def get_summary(
         else:
             income_by_category[cat] += total
 
-    # Monthly aggregation via GROUP BY (transfers handled separately below)
+    # Monthly aggregation via GROUP BY (transfers handled separately below).
+    # extract() is portable across SQLite and Postgres; strftime() is SQLite-only.
+    year_col = func.extract("year", Transaction.date)
+    month_col = func.extract("month", Transaction.date)
     monthly_rows = db.execute(
         sa_select(
-            func.strftime("%Y-%m", Transaction.date).label("ym"),
+            year_col.label("yr"),
+            month_col.label("mo"),
             Transaction.type,
             func.sum(Transaction.amount).label("total"),
         )
         .where(Transaction.type != "transfer", *base_conds)
-        .group_by("ym", Transaction.type)
-        .order_by("ym")
+        .group_by("yr", "mo", Transaction.type)
+        .order_by("yr", "mo")
     ).all()
 
     monthly_map: dict[str, dict] = {}
-    for ym, tx_type, total in monthly_rows:
+    for yr, mo, tx_type, total in monthly_rows:
+        ym = f"{int(yr):04d}-{int(mo):02d}"
         if ym not in monthly_map:
-            y, m = ym.split("-")
-            monthly_map[ym] = {"month": date(int(y), int(m), 1).strftime("%b %Y"), "income": 0.0, "expenses": 0.0}
+            monthly_map[ym] = {"month": date(int(yr), int(mo), 1).strftime("%b %Y"), "income": 0.0, "expenses": 0.0}
         if tx_type == "income":
             monthly_map[ym]["income"] += total
         else:

@@ -301,11 +301,13 @@ def get_tax_summary(
 def get_available_years(db: Session = Depends(get_db)):
     """Return list of years that have transactions, for the year picker."""
     from sqlalchemy import func as sqlfunc
+    # extract() is portable across SQLite and Postgres; strftime() is SQLite-only.
+    year_col = sqlfunc.extract("year", Transaction.date)
     rows = (
-        db.query(sqlfunc.strftime("%Y", Transaction.date).label("yr"))
+        db.query(year_col.label("yr"))
         .filter(Transaction.type.in_(["income", "expense"]))
         .distinct()
-        .order_by(sqlfunc.strftime("%Y", Transaction.date).desc())
+        .order_by(year_col.desc())
         .all()
     )
     return [int(r.yr) for r in rows if r.yr]
