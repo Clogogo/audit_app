@@ -37,9 +37,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
     # Vercel generates a new random preview URL on every deploy
-    # (e.g. audit-aaduzxlng-clogogos-projects.vercel.app) — match any
-    # deployment of this project so CORS doesn't break on the next push.
-    allow_origin_regex=r"^https://audit(-[a-z0-9]+)?-clogogos-projects\.vercel\.app$",
+    # (e.g. audit-aaduzxlng-clogogos-projects.vercel.app) and a separate
+    # stable per-branch alias (e.g. audit-app-git-staging-clogogos-projects.vercel.app)
+    # — match either shape so CORS doesn't break on new deploys or branches.
+    allow_origin_regex=r"^https://audit(-app-git-[a-z0-9-]+|-[a-z0-9]+)?-clogogos-projects\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

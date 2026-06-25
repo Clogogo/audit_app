@@ -18,6 +18,13 @@
         "command": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
         "cwd": "apps/api"
       }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": ".venv/bin/python -m pytest tests -v",
+        "cwd": "apps/api"
+      }
     }
   }
 }

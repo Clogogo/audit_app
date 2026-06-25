@@ -41,6 +41,7 @@ finance.db
 finance.db-shm
 finance.db-wal
 uploads/
+apps/api/tests/test.db
 
 # ── OS & Editor ──────────────────────────────────────────────────────────────
 .DS_Store
