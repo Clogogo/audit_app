@@ -13,7 +13,7 @@ function AISummaryCardShell({ children }: { children: ReactNode }) {
     <Card className="border-secondary bg-secondary/40">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-primary" />
+          <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
           AI Summary
         </CardTitle>
       </CardHeader>
