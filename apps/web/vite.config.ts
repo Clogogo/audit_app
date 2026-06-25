@@ -34,4 +34,9 @@ export default defineConfig(({ mode }) => ({
       transformMixedEsModules: true,
     },
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test-setup.ts'],
+  },
 }));

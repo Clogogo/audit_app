@@ -25,6 +25,13 @@
         "command": "npx vite preview",
         "cwd": "apps/web"
       }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "npx vitest run",
+        "cwd": "apps/web"
+      }
     }
   }
 }
