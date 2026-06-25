@@ -51,6 +51,11 @@ Thumbs.db
 .idea/
 .vscode/
 
+# ── Local AI coding tool configs (personal, per-machine — not project source) ─
+.claude/
+.codex/
+.opencode/
+
 # ── Local agent/tooling scratch dirs (installed skills, session logs, not app code) ──
 .agents/
 .claude/skills/
