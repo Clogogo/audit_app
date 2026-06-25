@@ -273,7 +273,10 @@ def get_ai_summary(
         return TransactionAISummary(narrative=None, available=False)
 
     if len(_AI_SUMMARY_CACHE) >= _AI_SUMMARY_CACHE_MAX:
-        _AI_SUMMARY_CACHE.pop(next(iter(_AI_SUMMARY_CACHE)))
+        try:
+            _AI_SUMMARY_CACHE.pop(next(iter(_AI_SUMMARY_CACHE)))
+        except (StopIteration, KeyError):
+            pass
     _AI_SUMMARY_CACHE[cache_key] = narrative
 
     return TransactionAISummary(narrative=narrative, available=True)
