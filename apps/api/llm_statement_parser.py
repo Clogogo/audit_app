@@ -5,7 +5,7 @@ Uses OpenRouter's LLM to intelligently extract transactions from bank statements
 This approach eliminates the need for bank-specific parsing logic by leveraging
 LLM's ability to understand context, handle diverse formats, and extract structured data accurately.
 
-Provider: OpenRouter (https://openrouter.io/)
+Provider: OpenRouter (https://openrouter.ai/)
 Model: Liquid LFM 2.5 (default) or configurable via OPENROUTER_MODEL
 Cost: Free tier available with rate limits, or pay-as-you-go
 """

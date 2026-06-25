@@ -3,6 +3,7 @@ import type {
   Transaction,
   TransactionCreate,
   TransactionSummary,
+  TransactionAISummary,
   PaginatedTransactions,
   UploadedFile,
   BankStatement,
@@ -74,6 +75,13 @@ export const getSummary = (params?: {
   bank?: string;
   vendor?: string;
 }) => api.get<TransactionSummary>('/transactions/summary', { params }).then(unwrap);
+
+export const getAISummary = (params?: {
+  start_date?: string;
+  end_date?: string;
+  bank?: string;
+  vendor?: string;
+}) => api.get<TransactionAISummary>('/transactions/ai-summary', { params }).then(unwrap);
 
 export const createTransaction = (body: TransactionCreate) =>
   api.post<Transaction>('/transactions', body).then(unwrap);

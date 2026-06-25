@@ -10,6 +10,8 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { AISummaryCard } from '../components/AISummaryCard';
+import { useAISummary } from '../hooks';
 import { formatCurrency } from '../lib/utils';
 import { HelpTooltip } from '../components/HelpTooltip';
 
@@ -87,10 +89,20 @@ function CategoryList({
   );
 }
 
+/** Shared date-range query params, with empty strings normalized to undefined. */
+function dateFilterParams(startDate: string, endDate: string) {
+  return { start_date: startDate || undefined, end_date: endDate || undefined };
+}
+
 export function Reports() {
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
   const [startDate, setStartDate] = useState('2026-01-01');
   const [endDate, setEndDate] = useState('2026-12-31');
+  // Only updated on mount/Apply (not per-keystroke) — the AI summary should
+  // refetch on the same cadence as the main summary, not on every keystroke
+  // in the date inputs.
+  const [appliedRange, setAppliedRange] = useState({ start: startDate, end: endDate });
+  const aiSummary = useAISummary(appliedRange.start, appliedRange.end);
   const [loading, setLoading] = useState(true);
   const [auditYear, setAuditYear] = useState(String(new Date().getFullYear()));
   const [auditOpinion, setAuditOpinion] = useState<'unqualified' | 'qualified'>('unqualified');
@@ -100,9 +112,10 @@ export function Reports() {
 
   const load = () => {
     setLoading(true);
-    getSummary({ start_date: startDate || undefined, end_date: endDate || undefined })
+    getSummary(dateFilterParams(startDate, endDate))
       .then(setSummary)
       .finally(() => setLoading(false));
+    setAppliedRange({ start: startDate, end: endDate });
   };
 
   useEffect(() => { load(); }, []);
@@ -244,6 +257,12 @@ export function Reports() {
           </Button>
         </CardContent>
       </Card>
+
+      <AISummaryCard
+        narrative={aiSummary.narrative}
+        available={aiSummary.available}
+        loading={aiSummary.loading}
+      />
 
       {loading ? (
         <div className="text-center py-16 text-muted-foreground">Loading...</div>

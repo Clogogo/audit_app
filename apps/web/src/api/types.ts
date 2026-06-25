@@ -64,6 +64,11 @@ export interface TransactionSummary {
   monthly: Array<{ month: string; income: number; expenses: number }>;
 }
 
+export interface TransactionAISummary {
+  narrative: string | null;
+  available: boolean;
+}
+
 export interface UploadedFile {
   id: number;
   original_name: string;

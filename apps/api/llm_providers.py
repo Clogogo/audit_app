@@ -1,7 +1,7 @@
 """
 OpenRouter LLM Client Factory
 
-Provider: OpenRouter (https://openrouter.io/)
+Provider: OpenRouter (https://openrouter.ai/)
 Model: Liquid LFM 2.5 (default: liquid/lfm-2.5-1.2b-thinking:free, configurable)
 Cost: Free tier with rate limits, or pay-as-you-go
 
@@ -46,12 +46,12 @@ class OpenRouterLLMClient:
         if not api_key:
             raise ValueError(
                 "OPENROUTER_API_KEY environment variable not set. "
-                "Get a free API key at https://openrouter.io/"
+                "Get a free API key at https://openrouter.ai/"
             )
         
         self.client = OpenAI(
             api_key=api_key,
-            base_url="https://openrouter.io/api/v1",
+            base_url="https://openrouter.ai/api/v1",
         )
         self.model = LLMConfig.get_model()
         logger.info(f"Initialized OpenRouter client with model: {self.model}")
