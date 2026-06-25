@@ -223,20 +223,22 @@ def _ai_summary_cache_key(
 
 def _build_ai_summary_prompt(summary: TransactionSummary) -> str:
     top_categories = sorted(summary.by_category.items(), key=lambda kv: -abs(kv[1]))[:5]
-    categories_text = ", ".join(f"{name}: {amount:,.2f}" for name, amount in top_categories)
+    categories_text = ", ".join(f"{name}: ₦{amount:,.2f}" for name, amount in top_categories)
     monthly_text = "; ".join(
-        f"{m.month}: income {m.income:,.2f}, expenses {m.expenses:,.2f}"
+        f"{m.month}: income ₦{m.income:,.2f}, expenses ₦{m.expenses:,.2f}"
         for m in summary.monthly[-6:]
     )
     return (
         "You are a financial assistant summarizing transaction data for a small "
-        "organization. Write a concise 2-4 sentence plain-English summary "
-        "highlighting the overall financial position, notable spending "
-        "categories, and any trend over the recent months. Do not just list "
-        "raw numbers for every category — focus on what matters.\n\n"
-        f"Total income: {summary.total_income:,.2f}\n"
-        f"Total expenses: {summary.total_expenses:,.2f}\n"
-        f"Balance: {summary.balance:,.2f}\n"
+        "organization in Nigeria. All amounts are in Nigerian Naira — always use "
+        "the ₦ symbol, never £, $, or any other currency. Write a concise 2-4 "
+        "sentence plain-English summary highlighting the overall financial "
+        "position, notable spending categories, and any trend over the recent "
+        "months. Do not just list raw numbers for every category — focus on "
+        "what matters.\n\n"
+        f"Total income: ₦{summary.total_income:,.2f}\n"
+        f"Total expenses: ₦{summary.total_expenses:,.2f}\n"
+        f"Balance: ₦{summary.balance:,.2f}\n"
         f"Top categories: {categories_text}\n"
         f"Recent months: {monthly_text}"
     )

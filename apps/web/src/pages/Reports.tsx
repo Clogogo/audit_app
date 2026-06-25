@@ -4,13 +4,14 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend,
 } from 'recharts';
 import { Download, TrendingUp, TrendingDown, Scale, ArrowUpRight, FileText } from 'lucide-react';
-import { getSummary, getAISummary, exportReport, exportAuditReport } from '../api/client';
-import type { TransactionSummary, TransactionAISummary } from '../api/types';
+import { getSummary, exportReport, exportAuditReport } from '../api/client';
+import type { TransactionSummary } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { AISummaryCard } from '../components/AISummaryCard';
+import { useAISummary } from '../hooks';
 import { formatCurrency } from '../lib/utils';
 import { HelpTooltip } from '../components/HelpTooltip';
 
@@ -95,10 +96,13 @@ function dateFilterParams(startDate: string, endDate: string) {
 
 export function Reports() {
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
-  const [aiSummary, setAiSummary] = useState<TransactionAISummary>({ narrative: null, available: false });
-  const [aiSummaryLoading, setAiSummaryLoading] = useState(true);
   const [startDate, setStartDate] = useState('2026-01-01');
   const [endDate, setEndDate] = useState('2026-12-31');
+  // Only updated on mount/Apply (not per-keystroke) — the AI summary should
+  // refetch on the same cadence as the main summary, not on every keystroke
+  // in the date inputs.
+  const [appliedRange, setAppliedRange] = useState({ start: startDate, end: endDate });
+  const aiSummary = useAISummary(appliedRange.start, appliedRange.end);
   const [loading, setLoading] = useState(true);
   const [auditYear, setAuditYear] = useState(String(new Date().getFullYear()));
   const [auditOpinion, setAuditOpinion] = useState<'unqualified' | 'qualified'>('unqualified');
@@ -111,14 +115,7 @@ export function Reports() {
     getSummary(dateFilterParams(startDate, endDate))
       .then(setSummary)
       .finally(() => setLoading(false));
-
-    // Independent of the main summary fetch — a slow/unavailable AI call
-    // must not block the rest of the page's data from showing.
-    setAiSummaryLoading(true);
-    getAISummary(dateFilterParams(startDate, endDate))
-      .then(setAiSummary)
-      .catch(() => setAiSummary({ narrative: null, available: false }))
-      .finally(() => setAiSummaryLoading(false));
+    setAppliedRange({ start: startDate, end: endDate });
   };
 
   useEffect(() => { load(); }, []);
@@ -264,7 +261,7 @@ export function Reports() {
       <AISummaryCard
         narrative={aiSummary.narrative}
         available={aiSummary.available}
-        loading={aiSummaryLoading}
+        loading={aiSummary.loading}
       />
 
       {loading ? (

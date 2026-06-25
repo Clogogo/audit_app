@@ -12,10 +12,12 @@ import {
 import { getSummary, getTransactions, getTransactionYears, listStaffMembers, getTerms } from '../api/client';
 import type { TransactionSummary, Transaction, StaffMember, Term } from '../api/types';
 import { TypeBadge } from '../components/CategoryBadge';
+import { AISummaryCard } from '../components/AISummaryCard';
 import { cn, formatCurrency, formatDate } from '../lib/utils';
 import { HelpTooltip } from '../components/HelpTooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { TermSelect } from '../components/TermSelect';
+import { useAISummary } from '../hooks';
 
 // ── Tax deadline utilities ────────────────────────────────────────────────────
 
@@ -165,12 +167,14 @@ export function Dashboard() {
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const start = selectedTerm ? selectedTerm.start_date : `${selectedYear}-01-01`;
+  const end   = selectedTerm ? selectedTerm.end_date   : `${selectedYear}-12-31`;
+  const aiSummary = useAISummary(start, end);
+
   useEffect(() => { getTerms().then(setTerms); }, []);
 
   useEffect(() => {
     setLoading(true);
-    const start = selectedTerm ? selectedTerm.start_date : `${selectedYear}-01-01`;
-    const end   = selectedTerm ? selectedTerm.end_date   : `${selectedYear}-12-31`;
     Promise.all([
       getSummary({ start_date: start, end_date: end }),
       getTransactions({ limit: 6 }),
@@ -184,7 +188,7 @@ export function Dashboard() {
         if (years.length > 0) setAvailableYears(years);
       })
       .finally(() => setLoading(false));
-  }, [selectedYear, selectedTerm]);
+  }, [selectedYear, selectedTerm, start, end]);
 
   const totalIncome   = summary?.total_income   ?? 0;
   const totalExpenses = summary?.total_expenses  ?? 0;
@@ -244,6 +248,12 @@ export function Dashboard() {
           />
         </div>
       </div>
+
+      <AISummaryCard
+        narrative={aiSummary.narrative}
+        available={aiSummary.available}
+        loading={aiSummary.loading}
+      />
 
       {/* Net balance (featured) + income/expense (compact list) — one composition, not 4 identical cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
