@@ -95,7 +95,7 @@ function dateFilterParams(startDate: string, endDate: string) {
 
 export function Reports() {
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
-  const [aiSummary, setAiSummary] = useState<TransactionAISummary | null>(null);
+  const [aiSummary, setAiSummary] = useState<TransactionAISummary>({ narrative: null, available: false });
   const [aiSummaryLoading, setAiSummaryLoading] = useState(true);
   const [startDate, setStartDate] = useState('2026-01-01');
   const [endDate, setEndDate] = useState('2026-12-31');
@@ -117,7 +117,7 @@ export function Reports() {
     setAiSummaryLoading(true);
     getAISummary(dateFilterParams(startDate, endDate))
       .then(setAiSummary)
-      .catch(() => setAiSummary(null))
+      .catch(() => setAiSummary({ narrative: null, available: false }))
       .finally(() => setAiSummaryLoading(false));
   };
 
@@ -262,8 +262,8 @@ export function Reports() {
       </Card>
 
       <AISummaryCard
-        narrative={aiSummary?.narrative ?? null}
-        available={aiSummary?.available ?? false}
+        narrative={aiSummary.narrative}
+        available={aiSummary.available}
         loading={aiSummaryLoading}
       />
 
