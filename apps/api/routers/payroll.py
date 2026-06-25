@@ -4,17 +4,48 @@ Gross → loan deductions → other deductions → net salary.
 Processing creates salary expense transactions and saves PayrollEntry records.
 """
 import calendar
+import re
 from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import PayrollEntry, Staff, StaffLoan, Transaction
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
+
+_NAME_TITLES = {"mr", "mrs", "miss", "ms", "mstr", "dr", "mister", "engr", "chief", "elder", "pastor"}
+
+
+def _normalize_name_tokens(name: str) -> list[str]:
+    """Lowercase, strip punctuation and honorifics, split into tokens."""
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", name.lower())
+    return [t for t in cleaned.split() if t not in _NAME_TITLES and len(t) >= 2]
+
+
+def _name_matches_text(staff_name: str, text: str) -> bool:
+    """True if most significant name tokens are present in text, in any order,
+    tolerating reordered names, missing/extra titles, dropped middle names,
+    and minor spelling differences typical of bank narrations."""
+    staff_tokens = _normalize_name_tokens(staff_name)
+    text_tokens = _normalize_name_tokens(text)
+    if not staff_tokens or not text_tokens:
+        return False
+
+    matched = sum(
+        1
+        for st in staff_tokens
+        if any(
+            st == tt or fuzz.ratio(st, tt) >= 80 or fuzz.partial_ratio(st, tt) >= 90
+            for tt in text_tokens
+        )
+    )
+    min_required = 2 if len(staff_tokens) >= 2 else 1
+    return matched >= min_required and (matched / len(staff_tokens)) >= 0.6
 
 
 def _active_loans_for_staff(staff_id: int, employee_name: str, db: Session) -> list[StaffLoan]:
@@ -179,14 +210,26 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     Each staff member must have a salary expense transaction already recorded in
     the transactions table for this month before payroll can be marked as paid.
     """
-    from sqlalchemy import or_
-
     month_start = date(req.year, req.month, 1)
     month_end   = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
+
+    # Fetch this month's expense transactions once; fuzzy-match staff names
+    # against them in Python rather than per-staff SQL ilike (which required an
+    # exact substring match and broke on reordered/varied bank narrations).
+    month_expenses = (
+        db.query(Transaction)
+        .filter(
+            Transaction.type == "expense",
+            Transaction.date >= month_start,
+            Transaction.date <= month_end,
+        )
+        .all()
+    )
 
     # ── Phase 1: resolve transactions for ALL staff before saving anything ────
     missing: list[str] = []
     tx_map: dict[int, int] = {}  # staff_id → transaction.id
+    used_tx_ids: set[int] = set()
 
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
@@ -209,21 +252,20 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
             continue
 
         # Search for a matching salary expense transaction in this month
-        tx = (
-            db.query(Transaction)
-            .filter(
-                Transaction.type == "expense",
-                Transaction.date >= month_start,
-                Transaction.date <= month_end,
-                or_(
-                    Transaction.vendor.ilike(f"%{staff.full_name}%"),
-                    Transaction.description.ilike(f"%{staff.full_name}%"),
-                ),
-            )
-            .first()
+        tx = next(
+            (
+                t for t in month_expenses
+                if t.id not in used_tx_ids
+                and (
+                    _name_matches_text(staff.full_name, t.vendor or "")
+                    or _name_matches_text(staff.full_name, t.description or "")
+                )
+            ),
+            None,
         )
 
         if tx:
+            used_tx_ids.add(tx.id)
             tx_map[line.staff_id] = tx.id
         else:
             missing.append(staff.full_name)
