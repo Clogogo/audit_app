@@ -11,5 +11,5 @@
   "env": {
     "NX_DAEMON": "false"
   },
-  "ignoreCommand": "npx nx-ignore web"
+  "ignoreCommand": "if [ \"$VERCEL_GIT_COMMIT_REF\" = \"main\" ]; then exit 0; else npx nx-ignore web; fi"
 }
