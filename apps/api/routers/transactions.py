@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date, datetime
 from typing import Optional
 from collections import defaultdict
@@ -20,6 +21,7 @@ class _BatchCategoryUpdate(_BaseModel):
     category: str
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+logger = logging.getLogger(__name__)
 
 
 def _log(db: Session, entity_id: int, action: str, old: dict = None, new: dict = None):
@@ -264,7 +266,8 @@ def get_ai_summary(
             messages=[{"role": "user", "content": _build_ai_summary_prompt(summary)}],
             max_tokens=300,
         )
-    except Exception:
+    except Exception as e:
+        logger.warning(f"AI summary generation failed, returning available=False: {e}")
         return TransactionAISummary(narrative=None, available=False)
 
     if len(_AI_SUMMARY_CACHE) >= _AI_SUMMARY_CACHE_MAX:
