@@ -88,6 +88,11 @@ function CategoryList({
   );
 }
 
+/** Shared date-range query params, with empty strings normalized to undefined. */
+function dateFilterParams(startDate: string, endDate: string) {
+  return { start_date: startDate || undefined, end_date: endDate || undefined };
+}
+
 export function Reports() {
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
   const [aiSummary, setAiSummary] = useState<TransactionAISummary | null>(null);
@@ -103,14 +108,14 @@ export function Reports() {
 
   const load = () => {
     setLoading(true);
-    getSummary({ start_date: startDate || undefined, end_date: endDate || undefined })
+    getSummary(dateFilterParams(startDate, endDate))
       .then(setSummary)
       .finally(() => setLoading(false));
 
     // Independent of the main summary fetch — a slow/unavailable AI call
     // must not block the rest of the page's data from showing.
     setAiSummaryLoading(true);
-    getAISummary({ start_date: startDate || undefined, end_date: endDate || undefined })
+    getAISummary(dateFilterParams(startDate, endDate))
       .then(setAiSummary)
       .catch(() => setAiSummary(null))
       .finally(() => setAiSummaryLoading(false));
