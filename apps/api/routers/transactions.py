@@ -271,7 +271,11 @@ def get_ai_summary(
             max_tokens=300,
         )
     except Exception as e:
-        logger.warning(f"AI summary generation failed, returning available=False: {e}")
+        logger.warning(
+            "AI summary generation failed, returning available=False: %s",
+            e,
+            exc_info=True,
+        )
         return TransactionAISummary(narrative=None, available=False)
 
     if len(_AI_SUMMARY_CACHE) >= _AI_SUMMARY_CACHE_MAX:
