@@ -48,6 +48,23 @@ def _name_matches_text(staff_name: str, text: str) -> bool:
     return matched >= min_required and (matched / len(staff_tokens)) >= 0.6
 
 
+def _has_any_name_token_overlap(staff_name: str, text: str) -> bool:
+    """True if at least one significant name token (e.g. a surname) appears in
+    text. Looser than _name_matches_text — used only as a sanity check
+    alongside category+amount validation, for cases where the bank account is
+    registered under a different first/middle name than the staff record
+    (e.g. a spouse's name, or a maiden name)."""
+    staff_tokens = _normalize_name_tokens(staff_name)
+    text_tokens = _normalize_name_tokens(text)
+    if not staff_tokens or not text_tokens:
+        return False
+    return any(
+        st == tt or fuzz.ratio(st, tt) >= 80
+        for st in staff_tokens
+        for tt in text_tokens
+    )
+
+
 def _active_loans_for_staff(staff_id: int, employee_name: str, db: Session) -> list[StaffLoan]:
     """Return active loans matching this staff member."""
     from sqlalchemy import or_
@@ -229,12 +246,16 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     # ── Phase 1: resolve transactions for ALL staff before saving anything ────
     missing: list[str] = []
     tx_map: dict[int, int] = {}  # staff_id → transaction.id
+    net_by_staff: dict[int, float] = {}  # staff_id → net salary, computed once and reused in Phase 2
     used_tx_ids: set[int] = set()
 
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
         if not staff:
             raise HTTPException(404, f"Staff {line.staff_id} not found")
+
+        loan_ded = _loan_deduction_for_month(staff, req.year, req.month, db)
+        net_by_staff[line.staff_id] = round(line.gross_salary + line.bonus - loan_ded - line.other_deductions, 2)
 
         # If the entry already has a linked transaction (e.g. previously processed
         # then reset), keep that link without re-searching.
@@ -263,6 +284,30 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
             ),
             None,
         )
+
+        # Fallback: the bank account may be registered under a different
+        # first/middle name than the staff record (e.g. a spouse's name, or a
+        # maiden name) — common enough in practice that name-matching alone
+        # can't bridge it. Accept a transaction tagged "Salary and Wages"
+        # whose amount covers at least the computed net pay (it may be
+        # bundled with an IOU/advance repayment on top) and that still shares
+        # at least one name token, so we don't attach the wrong payment when
+        # multiple unclaimed salary transactions exist in the same month.
+        if not tx:
+            net = net_by_staff[line.staff_id]
+            tx = next(
+                (
+                    t for t in month_expenses
+                    if t.id not in used_tx_ids
+                    and t.category == "Salary and Wages"
+                    and t.amount >= net - 0.01
+                    and (
+                        _has_any_name_token_overlap(staff.full_name, t.vendor or "")
+                        or _has_any_name_token_overlap(staff.full_name, t.description or "")
+                    )
+                ),
+                None,
+            )
 
         if tx:
             used_tx_ids.add(tx.id)
@@ -293,7 +338,7 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
         loan_ded = _loan_deduction_for_month(staff, req.year, req.month, db)
-        net = round(line.gross_salary + line.bonus - loan_ded - line.other_deductions, 2)
+        net = net_by_staff[line.staff_id]
         pay_date = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
 
         entry: Optional[PayrollEntry] = (
