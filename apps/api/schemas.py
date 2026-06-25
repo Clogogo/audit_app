@@ -113,6 +113,11 @@ class TransactionSummary(BaseModel):
     monthly: list[MonthlySummary]
 
 
+class TransactionAISummary(BaseModel):
+    narrative: Optional[str] = None
+    available: bool
+
+
 # ── Uploaded Files ────────────────────────────────────────────────────────────
 
 class AIResult(BaseModel):

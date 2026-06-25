@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, select as sa_select
 
 from database import get_db
+from llm_providers import get_llm_client
 from models import Transaction, AuditLog, BankAccount
 from pydantic import BaseModel as _BaseModel
-from schemas import TransactionCreate, TransactionOut, TransactionPage, TransactionUpdate, TransactionSummary, MonthlySummary
+from schemas import TransactionCreate, TransactionOut, TransactionPage, TransactionUpdate, TransactionSummary, TransactionAISummary, MonthlySummary
 from routers.bank_statements import _transfer_is_income, _is_intra_account_transfer
 
 
@@ -194,6 +195,83 @@ def get_summary(
         income_by_category=dict(income_by_category),
         monthly=monthly,
     )
+
+
+# ── AI narrative summary ────────────────────────────────────────────────────
+# Cached by the *content* of the summary, not just a TTL: identical totals
+# always serve the same cached narrative (no redundant AI spend), but the
+# moment the underlying numbers change, the key changes and a fresh call is
+# made. Capped to bound memory (simple FIFO eviction), same in-memory-cache
+# style as routers/financial_statements.py.
+_AI_SUMMARY_CACHE: dict[tuple, str] = {}
+_AI_SUMMARY_CACHE_MAX = 64
+
+
+def _ai_summary_cache_key(
+    start_date: Optional[date], end_date: Optional[date], bank: Optional[str],
+    vendor: Optional[str], summary: TransactionSummary,
+) -> tuple:
+    return (
+        start_date, end_date, bank, vendor,
+        round(summary.total_income, 2),
+        round(summary.total_expenses, 2),
+        tuple(sorted((k, round(v, 2)) for k, v in summary.by_category.items())),
+    )
+
+
+def _build_ai_summary_prompt(summary: TransactionSummary) -> str:
+    top_categories = sorted(summary.by_category.items(), key=lambda kv: -abs(kv[1]))[:5]
+    categories_text = ", ".join(f"{name}: {amount:,.2f}" for name, amount in top_categories)
+    monthly_text = "; ".join(
+        f"{m.month}: income {m.income:,.2f}, expenses {m.expenses:,.2f}"
+        for m in summary.monthly[-6:]
+    )
+    return (
+        "You are a financial assistant summarizing transaction data for a small "
+        "organization. Write a concise 2-4 sentence plain-English summary "
+        "highlighting the overall financial position, notable spending "
+        "categories, and any trend over the recent months. Do not just list "
+        "raw numbers for every category — focus on what matters.\n\n"
+        f"Total income: {summary.total_income:,.2f}\n"
+        f"Total expenses: {summary.total_expenses:,.2f}\n"
+        f"Balance: {summary.balance:,.2f}\n"
+        f"Top categories: {categories_text}\n"
+        f"Recent months: {monthly_text}"
+    )
+
+
+@router.get("/ai-summary", response_model=TransactionAISummary)
+def get_ai_summary(
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    bank: Optional[str] = Query(None),
+    vendor: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """AI-generated narrative over the same data as GET /transactions/summary.
+    Never raises on AI failure — returns available=False instead, so the
+    frontend can simply omit the summary card rather than show an error."""
+    summary = get_summary(start_date=start_date, end_date=end_date, bank=bank, vendor=vendor, db=db)
+
+    cache_key = _ai_summary_cache_key(start_date, end_date, bank, vendor, summary)
+    cached = _AI_SUMMARY_CACHE.get(cache_key)
+    if cached is not None:
+        return TransactionAISummary(narrative=cached, available=True)
+
+    try:
+        client = get_llm_client()
+        narrative = client.create_message(
+            messages=[{"role": "user", "content": _build_ai_summary_prompt(summary)}],
+            max_tokens=300,
+        )
+    except Exception:
+        return TransactionAISummary(narrative=None, available=False)
+
+    if len(_AI_SUMMARY_CACHE) >= _AI_SUMMARY_CACHE_MAX:
+        _AI_SUMMARY_CACHE.pop(next(iter(_AI_SUMMARY_CACHE)))
+    _AI_SUMMARY_CACHE[cache_key] = narrative
+
+    return TransactionAISummary(narrative=narrative, available=True)
 
 
 @router.post("", response_model=TransactionOut, status_code=201)

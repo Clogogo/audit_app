@@ -4,12 +4,13 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend,
 } from 'recharts';
 import { Download, TrendingUp, TrendingDown, Scale, ArrowUpRight, FileText } from 'lucide-react';
-import { getSummary, exportReport, exportAuditReport } from '../api/client';
-import type { TransactionSummary } from '../api/types';
+import { getSummary, getAISummary, exportReport, exportAuditReport } from '../api/client';
+import type { TransactionSummary, TransactionAISummary } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { AISummaryCard } from '../components/AISummaryCard';
 import { formatCurrency } from '../lib/utils';
 import { HelpTooltip } from '../components/HelpTooltip';
 
@@ -89,6 +90,8 @@ function CategoryList({
 
 export function Reports() {
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
+  const [aiSummary, setAiSummary] = useState<TransactionAISummary | null>(null);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(true);
   const [startDate, setStartDate] = useState('2026-01-01');
   const [endDate, setEndDate] = useState('2026-12-31');
   const [loading, setLoading] = useState(true);
@@ -103,6 +106,14 @@ export function Reports() {
     getSummary({ start_date: startDate || undefined, end_date: endDate || undefined })
       .then(setSummary)
       .finally(() => setLoading(false));
+
+    // Independent of the main summary fetch — a slow/unavailable AI call
+    // must not block the rest of the page's data from showing.
+    setAiSummaryLoading(true);
+    getAISummary({ start_date: startDate || undefined, end_date: endDate || undefined })
+      .then(setAiSummary)
+      .catch(() => setAiSummary(null))
+      .finally(() => setAiSummaryLoading(false));
   };
 
   useEffect(() => { load(); }, []);
@@ -244,6 +255,12 @@ export function Reports() {
           </Button>
         </CardContent>
       </Card>
+
+      <AISummaryCard
+        narrative={aiSummary?.narrative ?? null}
+        available={aiSummary?.available ?? false}
+        loading={aiSummaryLoading}
+      />
 
       {loading ? (
         <div className="text-center py-16 text-muted-foreground">Loading...</div>
