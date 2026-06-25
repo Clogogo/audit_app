@@ -217,6 +217,8 @@ def _ai_summary_cache_key(
         start_date, end_date, bank, vendor,
         round(summary.total_income, 2),
         round(summary.total_expenses, 2),
+        round(summary.balance, 2),
+        tuple((m.month, round(m.income, 2), round(m.expenses, 2)) for m in summary.monthly[-6:]),
         tuple(sorted((k, round(v, 2)) for k, v in summary.by_category.items())),
     )
 
