@@ -47,7 +47,7 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
   const categories = type === 'income' ? INCOME_CATEGORIES : type === 'transfer' ? TRANSFER_CATEGORIES : EXPENSE_CATEGORIES;
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" autoComplete="off">
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Type</Label>
@@ -72,6 +72,10 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
             type="number"
             step="0.01"
             placeholder="0.00"
+            autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
             {...register('amount', { required: true, valueAsNumber: true, min: 0.01 })}
           />
           {errors.amount && <p className="text-xs text-destructive">Amount is required</p>}
