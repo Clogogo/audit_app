@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, type UseFormRegister, type UseFormSetValue } from 'react-hook-form';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -14,6 +14,57 @@ interface TransactionFormProps {
   onSubmit: (data: TransactionCreate) => Promise<void>;
   onCancel?: () => void;
   isLoading?: boolean;
+}
+
+const TRANSFER_CATEGORIES = ['Internal Transfer', 'Bank Charges & Fees', 'Other'];
+
+function getCategoriesForType(type: TransactionType): string[] {
+  if (type === 'income') return INCOME_CATEGORIES;
+  if (type === 'transfer') return TRANSFER_CATEGORIES;
+  return EXPENSE_CATEGORIES;
+}
+
+function FieldError({ show, children }: { show?: boolean; children: string }) {
+  return show ? <p className="text-xs text-destructive">{children}</p> : null;
+}
+
+// Mount-only sync of uncontrolled Select fields into react-hook-form's store.
+// Extracted so its branching doesn't count toward TransactionForm's own complexity.
+function syncDefaultValues(setValue: UseFormSetValue<TransactionCreate>, defaultValues?: Partial<TransactionCreate>) {
+  setValue('type', defaultValues?.type ?? 'expense');
+  setValue('currency', defaultValues?.currency ?? 'NGN');
+  if (defaultValues?.category) setValue('category', defaultValues.category);
+  if (defaultValues?.bank) setValue('bank', defaultValues.bank);
+  else setValue('bank', undefined);
+}
+
+interface BankFieldProps {
+  bankAccounts: BankAccount[];
+  defaultValue?: string;
+  onChange: (v: string | undefined) => void;
+  register: UseFormRegister<TransactionCreate>;
+}
+
+function BankField({ bankAccounts, defaultValue, onChange, register }: BankFieldProps) {
+  if (bankAccounts.length === 0) {
+    return <Input placeholder="e.g. Access Bank" {...register('bank')} />;
+  }
+  const handleChange = (v: string) => onChange(v === '__none__' ? undefined : v);
+  return (
+    <Select defaultValue={defaultValue ?? '__none__'} onValueChange={handleChange}>
+      <SelectTrigger>
+        <SelectValue placeholder="Select bank" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">None</SelectItem>
+        {bankAccounts.map((b) => (
+          <SelectItem key={b.id} value={b.bank_name}>
+            {b.bank_name}{b.account_number ? ` — ${b.account_number}` : ''}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }: TransactionFormProps) {
@@ -34,17 +85,12 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
 
   // Sync uncontrolled Select fields into react-hook-form store on mount
   useEffect(() => {
-    setValue('type', defaultValues?.type ?? 'expense');
-    setValue('currency', defaultValues?.currency ?? 'NGN');
-    if (defaultValues?.category) setValue('category', defaultValues.category);
-    if (defaultValues?.bank) setValue('bank', defaultValues.bank);
-    else setValue('bank', undefined);
+    syncDefaultValues(setValue, defaultValues);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const TRANSFER_CATEGORIES = ['Internal Transfer', 'Bank Charges & Fees', 'Other'];
   const type = watch('type') as TransactionType;
-  const categories = type === 'income' ? INCOME_CATEGORIES : type === 'transfer' ? TRANSFER_CATEGORIES : EXPENSE_CATEGORIES;
+  const categories = getCategoriesForType(type);
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" autoComplete="off">
@@ -78,7 +124,7 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
             data-bwignore
             {...register('amount', { required: true, valueAsNumber: true, min: 0.01 })}
           />
-          {errors.amount && <p className="text-xs text-destructive">Amount is required</p>}
+          <FieldError show={!!errors.amount}>Amount is required</FieldError>
         </div>
       </div>
 
@@ -86,7 +132,7 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
         <div className="space-y-2">
           <Label>Date</Label>
           <Input type="date" {...register('date', { required: true })} />
-          {errors.date && <p className="text-xs text-destructive">Date is required</p>}
+          <FieldError show={!!errors.date}>Date is required</FieldError>
         </div>
 
         <div className="space-y-2">
@@ -118,31 +164,17 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
           categories={categories}
           onChange={(v) => setValue('category', v, { shouldValidate: true })}
         />
-        {errors.category && <p className="text-xs text-destructive">Category is required</p>}
+        <FieldError show={!!errors.category}>Category is required</FieldError>
       </div>
 
       <div className="space-y-2">
         <Label>Bank <span className="text-muted-foreground text-xs">(optional)</span></Label>
-        {bankAccounts.length > 0 ? (
-          <Select
-            defaultValue={defaultValues?.bank ?? '__none__'}
-            onValueChange={(v) => setValue('bank', v === '__none__' ? undefined : v)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select bank" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">None</SelectItem>
-              {bankAccounts.map((b) => (
-                <SelectItem key={b.id} value={b.bank_name}>
-                  {b.bank_name}{b.account_number ? ` — ${b.account_number}` : ''}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <Input placeholder="e.g. Access Bank" {...register('bank')} />
-        )}
+        <BankField
+          bankAccounts={bankAccounts}
+          defaultValue={defaultValues?.bank}
+          onChange={(v) => setValue('bank', v)}
+          register={register}
+        />
       </div>
 
       <div className="space-y-2">
@@ -153,7 +185,7 @@ export function TransactionForm({ defaultValues, onSubmit, onCancel, isLoading }
       <div className="space-y-2">
         <Label>Description</Label>
         <Input placeholder="Brief description" {...register('description', { required: true })} />
-        {errors.description && <p className="text-xs text-destructive">Description is required</p>}
+        <FieldError show={!!errors.description}>Description is required</FieldError>
       </div>
 
       <div className="flex justify-end gap-2 pt-2">
