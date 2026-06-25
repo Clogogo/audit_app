@@ -3,6 +3,8 @@ match used when the bank account is registered under a different
 first/middle name than the staff record (e.g. a spouse's name)."""
 from datetime import date
 
+import pytest
+
 from models import Staff, Transaction
 
 
@@ -57,39 +59,25 @@ def test_fallback_accepts_amount_above_net_pay_for_bundled_iou(client, db_sessio
     assert entry["transaction_id"] == tx.id
 
 
-def test_fallback_rejects_amount_below_net_pay(client, db_session):
-    staff = _create_staff(db_session, "Mrs Jonathan Ogogo", monthly_gross=50000.0)
-    _create_salary_transaction(db_session, "PATRICIA NKECHI OGOGO", amount=20000.0, day="2026-01-30")
+@pytest.mark.parametrize(
+    "staff_name,gross,vendor,amount,category",
+    [
+        # Amount below net pay — looks like a partial/wrong payment, not a salary.
+        ("Mrs Jonathan Ogogo", 50000.0, "PATRICIA NKECHI OGOGO", 20000.0, "Salary and Wages"),
+        # Right person, right amount, but wrong category — not a salary transaction at all.
+        ("Emmanuella Christian", 15020.0, "HELEN CHINENYE CHRISTIAN", 15020.0, "Other"),
+        # Right category and amount, but zero name overlap — too risky to attach blindly.
+        ("Emmanuella Christian", 15020.0, "SOMEONE ELSE ENTIRELY", 15020.0, "Salary and Wages"),
+    ],
+    ids=["amount_below_net_pay", "wrong_category", "zero_name_overlap"],
+)
+def test_fallback_rejects_when_validation_fails(client, db_session, staff_name, gross, vendor, amount, category):
+    staff = _create_staff(db_session, staff_name, monthly_gross=gross)
+    _create_salary_transaction(db_session, vendor, amount=amount, day="2026-01-30", category=category)
 
     resp = client.post("/payroll/process", json={
         "year": 2026, "month": 1,
-        "lines": [{"staff_id": staff.id, "gross_salary": 50000.0}],
+        "lines": [{"staff_id": staff.id, "gross_salary": gross}],
     })
     assert resp.status_code == 422
-    assert "Mrs Jonathan Ogogo" in resp.json()["detail"]["missing"]
-
-
-def test_fallback_rejects_wrong_category_even_with_matching_amount(client, db_session):
-    staff = _create_staff(db_session, "Emmanuella Christian", monthly_gross=15020.0)
-    _create_salary_transaction(
-        db_session, "HELEN CHINENYE CHRISTIAN", amount=15020.0, day="2026-01-30", category="Other"
-    )
-
-    resp = client.post("/payroll/process", json={
-        "year": 2026, "month": 1,
-        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0}],
-    })
-    assert resp.status_code == 422
-    assert "Emmanuella Christian" in resp.json()["detail"]["missing"]
-
-
-def test_fallback_rejects_zero_name_overlap(client, db_session):
-    staff = _create_staff(db_session, "Emmanuella Christian", monthly_gross=15020.0)
-    _create_salary_transaction(db_session, "SOMEONE ELSE ENTIRELY", amount=15020.0, day="2026-01-30")
-
-    resp = client.post("/payroll/process", json={
-        "year": 2026, "month": 1,
-        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0}],
-    })
-    assert resp.status_code == 422
-    assert "Emmanuella Christian" in resp.json()["detail"]["missing"]
+    assert staff_name in resp.json()["detail"]["missing"]
