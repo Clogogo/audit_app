@@ -5,9 +5,12 @@ import type { TransactionAISummary } from '../api/types';
 /** AI narrative for a date range, normalized so callers never need optional
  * chaining/nullish-coalescing for the loading-or-unfetched state. */
 export function useAISummary(startDate?: string, endDate?: string) {
+  const start = startDate || undefined;
+  const end = endDate || undefined;
+
   const { data, loading } = useAsync<TransactionAISummary>(
-    () => getAISummary({ start_date: startDate, end_date: endDate }),
-    [startDate, endDate]
+    () => getAISummary({ start_date: start, end_date: end }),
+    [start, end]
   );
 
   if (!data) {
