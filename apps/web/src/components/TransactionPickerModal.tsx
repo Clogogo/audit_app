@@ -11,7 +11,7 @@ interface TransactionPickerModalProps {
   startDate?: string;
   endDate?: string;
   excludeTransactionIds: number[];
-  onSelect: (transactionId: number, vendor: string) => void;
+  onSelect: (transaction: Transaction) => void;
   onClose: () => void;
 }
 
@@ -56,7 +56,7 @@ export function TransactionPickerModal({
               <button
                 key={t.id}
                 type="button"
-                onClick={() => onSelect(t.id, t.vendor || t.description)}
+                onClick={() => onSelect(t)}
                 className="w-full flex items-center justify-between gap-3 py-3 text-left hover:bg-accent rounded-md px-2 -mx-2"
               >
                 <div className="min-w-0">

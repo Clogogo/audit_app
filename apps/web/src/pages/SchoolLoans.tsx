@@ -8,7 +8,7 @@ import {
   addSchoolLoanPayment, updateSchoolLoanPayment, deleteSchoolLoanPayment,
   matchSchoolLoanTransactions,
 } from '../api/client';
-import type { SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn, MatchedTransaction } from '../api/types';
+import type { SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn, MatchedTransaction, Transaction } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { TransactionPickerModal } from '../components/TransactionPickerModal';
@@ -89,6 +89,8 @@ export function SchoolLoans() {
 
   // Manual transaction linking for an existing (already-saved) payment
   const [linkingPayment, setLinkingPayment] = useState<{ loanId: number; payment: SchoolLoanPaymentOut } | null>(null);
+  // Picking a transaction to record as a brand-new payment
+  const [linkingNewPaymentForLoan, setLinkingNewPaymentForLoan] = useState<number | null>(null);
 
   // Expanded rows
   const [expandedLoanId, setExpandedLoanId] = useState<number | null>(null);
@@ -230,6 +232,23 @@ export function SchoolLoans() {
       load();
     } catch {
       setError('Failed to link transaction');
+    }
+  };
+
+  const handleLinkNewPayment = async (loanId: number, tx: Transaction) => {
+    setLinkingNewPaymentForLoan(null);
+    try {
+      await addSchoolLoanPayment(loanId, {
+        amount_paid: tx.amount,
+        interest_amount: 0,
+        misc_amount: 0,
+        paid_date: tx.date,
+        transaction_id: tx.id,
+        notes: null,
+      });
+      load();
+    } catch {
+      setError('Failed to record payment from transaction');
     }
   };
 
@@ -404,10 +423,16 @@ export function SchoolLoans() {
                           <div className="border-t border-border bg-muted/20 p-4 space-y-3">
                             <div className="flex items-center justify-between">
                               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Payment History</p>
-                              <Button size="sm" variant="outline" onClick={() => openAddPayment(loan.id)}>
-                                <Plus className="h-3.5 w-3.5 mr-1" />
-                                Add Payment
-                              </Button>
+                              <div className="flex gap-2">
+                                <Button size="sm" variant="outline" onClick={() => setLinkingNewPaymentForLoan(loan.id)}>
+                                  <LinkIcon className="h-3.5 w-3.5 mr-1" />
+                                  Link Transaction
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => openAddPayment(loan.id)}>
+                                  <Plus className="h-3.5 w-3.5 mr-1" />
+                                  Add Payment
+                                </Button>
+                              </div>
                             </div>
 
                             {loan.payments.length === 0 ? (
@@ -765,7 +790,20 @@ export function SchoolLoans() {
             .filter((p) => p.transaction_id !== null && p.id !== linkingPayment.payment.id)
             .map((p) => p.transaction_id as number))}
           onClose={() => setLinkingPayment(null)}
-          onSelect={(transactionId) => handleLinkExistingPayment(transactionId)}
+          onSelect={(t) => handleLinkExistingPayment(t.id)}
+        />
+      )}
+
+      {/* Pick a transaction to record as a brand-new payment */}
+      {linkingNewPaymentForLoan !== null && (
+        <TransactionPickerModal
+          title="Link a transaction as a new payment"
+          category="Loans"
+          excludeTransactionIds={loans.flatMap((l) => l.payments
+            .filter((p) => p.transaction_id !== null)
+            .map((p) => p.transaction_id as number))}
+          onClose={() => setLinkingNewPaymentForLoan(null)}
+          onSelect={(t) => handleLinkNewPayment(linkingNewPaymentForLoan, t)}
         />
       )}
 

@@ -360,9 +360,9 @@ export function Payroll() {
             endDate={monthEnd}
             excludeTransactionIds={excludeIds}
             onClose={() => setLinkingFor(null)}
-            onSelect={(transactionId, vendor) => {
+            onSelect={(t) => {
               if (staffLine) {
-                setManualLink((m) => ({ ...m, [staffLine.staff_id]: { transactionId, vendor } }));
+                setManualLink((m) => ({ ...m, [staffLine.staff_id]: { transactionId: t.id, vendor: t.vendor || t.description } }));
               }
               setLinkingFor(null);
             }}
