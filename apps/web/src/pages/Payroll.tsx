@@ -286,11 +286,11 @@ export function Payroll() {
             <div className="pl-6 space-y-2">
               <p className="text-xs font-semibold text-destructive">Missing salary transactions for:</p>
               <ul className="text-xs space-y-1">
-                {missingTx.map((name) => {
+                {missingTx.map((name, idx) => {
                   const staffLine = lines.find((l) => l.full_name === name);
                   const linked = staffLine ? manualLink[staffLine.staff_id] : undefined;
                   return (
-                    <li key={name} className="flex items-center gap-2">
+                    <li key={`${name}-${staffLine?.staff_id ?? idx}`} className="flex items-center gap-2">
                       <span>{name}</span>
                       {linked ? (
                         <span className="inline-flex items-center gap-1.5">
