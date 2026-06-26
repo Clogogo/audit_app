@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from utils.auth import get_current_user
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import extract
@@ -19,7 +20,8 @@ from database import get_db
 from models import Transaction, Asset
 from routers.assets import calc_period_dep
 
-router = APIRouter(prefix="/tax", tags=["tax"])
+router = APIRouter(prefix="/tax", tags=["tax"], dependencies=[Depends(get_current_user)])
+
 
 # ── Template path ──────────────────────────────────────────────────────────────
 _TEMPLATE = Path(__file__).parent.parent.parent.parent / "2025_2522801422271_CIT.xlsx"

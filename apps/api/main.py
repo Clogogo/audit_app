@@ -1,12 +1,15 @@
 from dotenv import load_dotenv
 load_dotenv()  # loads apps/api/.env → sets OPENROUTER_API_KEY in os.environ
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from sqlalchemy import text
 from database import engine, Base, initialize_database
 import models  # noqa: ensure all models are registered before create_all
+from utils.rate_limit import limiter
 
 from routers import transactions, upload, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates, auth
 from routers import tax, financial_statements, assets, staff_loans, staff_directory, payroll, terms, school_loans
@@ -24,6 +27,20 @@ app = FastAPI(
     description="Personal finance management with AI receipt parsing and bank statement reconciliation",
     version="1.0.0",
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
 
 import os as _os
 

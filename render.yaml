@@ -23,11 +23,15 @@ services:
       - key: OPENAI_API_KEY
         sync: false          # Required for AI features
       - key: SECRET_KEY
-        sync: false          # Required for JWT authentication
+        sync: false          # Required for JWT authentication — app refuses to start without it
       - key: ALGORITHM
         value: HS256         # JWT algorithm
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: "30"
+        value: "1440"
+      - key: REGISTRATION_INVITE_CODE
+        sync: false          # Required for POST /auth/register to work at all
+      - key: PASSWORD_RECOVERY_CODE
+        sync: false          # Required for POST /auth/forgot-password to work at all
       - key: CORS_ORIGINS
         sync: false          # Set to your frontend URL
       

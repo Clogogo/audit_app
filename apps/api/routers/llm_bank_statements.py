@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from utils.auth import get_current_user
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -34,7 +35,8 @@ import os as _os
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/bank-statements-llm", tags=["bank-statements-llm"])
+router = APIRouter(prefix="/bank-statements-llm", tags=["bank-statements-llm"], dependencies=[Depends(get_current_user)])
+
 
 BASE_DIR = Path(__file__).parent.parent.parent.parent
 UPLOAD_DIR = Path(_os.getenv("UPLOAD_DIR", str(BASE_DIR / "uploads")))

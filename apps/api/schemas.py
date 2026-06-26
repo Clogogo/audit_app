@@ -6,10 +6,13 @@ from pydantic import BaseModel, EmailStr
 # ── Authentication ────────────────────────────────────────────────────────────
 
 class UserRegister(BaseModel):
-    """Schema for user registration."""
+    """Schema for user registration. invite_code must match REGISTRATION_INVITE_CODE.
+    Optional (not required) so a request that omits it gets the same 403 the
+    router raises for a wrong code, rather than a 422 validation error."""
     email: EmailStr
     password: str
     full_name: Optional[str] = None
+    invite_code: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -19,8 +22,19 @@ class UserLogin(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    """Schema for resetting a forgotten password directly by email."""
+    """Schema for resetting a forgotten password by email, gated by a
+    server-side recovery code (PASSWORD_RECOVERY_CODE) only the admin has —
+    not a public "anyone who knows the email" reset. recovery_code is
+    optional (not required) so an omitted code gets the same 403 the router
+    raises for a wrong one, rather than a 422 validation error."""
     email: EmailStr
+    new_password: str
+    recovery_code: Optional[str] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    """Schema for an authenticated user changing their own password."""
+    current_password: str
     new_password: str
 
 

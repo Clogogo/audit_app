@@ -16,6 +16,7 @@ export function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -29,7 +30,7 @@ export function Register() {
     setLoading(true);
 
     try {
-      await register(email, password, fullName);
+      await register(email, password, inviteCode, fullName);
       notify.success('🎉 Account created successfully! Welcome aboard!');
       navigate('/');
     } catch (err: any) {
@@ -121,6 +122,20 @@ export function Register() {
               <p className="text-xs text-muted-foreground">
                 Minimum 6 characters
               </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="inviteCode">
+                Invite Code <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="inviteCode"
+                type="text"
+                placeholder="Provided by your admin"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                required
+                disabled={loading}
+              />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? (

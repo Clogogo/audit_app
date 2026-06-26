@@ -16,9 +16,21 @@ from database import get_db
 from models import User
 
 # Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY environment variable is not set. Refusing to start with an "
+        "insecure default — set SECRET_KEY in the environment (see .env.example)."
+    )
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+# Default 24h if unset; .env.example documents this var so deployments can tune it.
+try:
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+except ValueError as e:
+    raise RuntimeError(
+        f"ACCESS_TOKEN_EXPIRE_MINUTES must be an integer, got "
+        f"{os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES')!r}"
+    ) from e
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()

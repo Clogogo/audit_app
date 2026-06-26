@@ -4,6 +4,7 @@ CRUD operations for managing bank accounts
 """
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
+from utils.auth import get_current_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -12,7 +13,7 @@ from models import BankAccount, BankStatement, Transaction
 from schemas import BankAccountCreate, BankAccountOut
 from utils import get_or_404
 
-router = APIRouter(prefix="/bank-accounts", tags=["Bank Accounts"])
+router = APIRouter(prefix="/bank-accounts", tags=["Bank Accounts"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("", response_model=list[BankAccountOut])

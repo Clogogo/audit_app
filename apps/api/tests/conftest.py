@@ -18,12 +18,16 @@ TEST_DB_PATH = Path(__file__).resolve().parent / "test.db"
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key-not-real")
+os.environ.setdefault("REGISTRATION_INVITE_CODE", "test-invite-code")
+os.environ.setdefault("PASSWORD_RECOVERY_CODE", "test-recovery-code")
 
 import pytest
 from fastapi.testclient import TestClient
 
 from database import Base, SessionLocal, engine, initialize_database
 from main import app
+from models import User
+from utils.auth import get_current_user, hash_password
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -53,6 +57,30 @@ def db_session():
         session.close()
 
 
+def _fake_current_user() -> User:
+    """Stand-in for get_current_user — every router except auth.py now
+    requires a logged-in user, so the `client` fixture authenticates as this
+    fake user by default rather than every existing test needing real login."""
+    return User(
+        id=1,
+        email="test@example.com",
+        hashed_password=hash_password("test-password-123"),
+        full_name="Test User",
+        is_active=True,
+    )
+
+
 @pytest.fixture
 def client():
+    app.dependency_overrides[get_current_user] = _fake_current_user
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.fixture
+def anon_client():
+    """A client with no auth override — for tests that specifically verify
+    unauthenticated requests are rejected."""
     return TestClient(app)

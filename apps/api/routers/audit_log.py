@@ -1,6 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from utils.auth import get_current_user
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -8,7 +9,7 @@ from models import AuditLog
 from schemas import AuditLogOut
 from utils import JSONHelper
 
-router = APIRouter(prefix="/audit-log", tags=["audit-log"])
+router = APIRouter(prefix="/audit-log", tags=["audit-log"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("", response_model=list[AuditLogOut])

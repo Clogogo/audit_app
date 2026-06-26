@@ -7,13 +7,14 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from utils.auth import get_current_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import SchoolLoan, SchoolLoanPayment, Transaction
 
-router = APIRouter(prefix="/school-loans", tags=["school-loans"])
+router = APIRouter(prefix="/school-loans", tags=["school-loans"], dependencies=[Depends(get_current_user)])
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
