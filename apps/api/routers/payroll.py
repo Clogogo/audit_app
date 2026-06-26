@@ -118,6 +118,7 @@ class PayrollLineIn(BaseModel):
     bonus: float = 0.0
     other_deductions: float = 0.0
     notes: Optional[str] = None
+    transaction_id: Optional[int] = None  # manual override of automatic matching
 
 
 class PayrollLineOut(BaseModel):
@@ -260,7 +261,9 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     missing: list[str] = []
     tx_map: dict[int, int] = {}  # staff_id → transaction.id
     net_by_staff: dict[int, float] = {}  # staff_id → net salary, computed once and reused in Phase 2
-    used_tx_ids: set[int] = set()
+    # Seed with manual overrides up front so an automatic search later in this
+    # same request can't claim a transaction the user already hand-picked.
+    used_tx_ids: set[int] = {l.transaction_id for l in req.lines if l.transaction_id}
 
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
@@ -269,6 +272,26 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
 
         loan_ded = _loan_deduction_for_month(staff, req.year, req.month, db)
         net_by_staff[line.staff_id] = round(line.gross_salary + line.bonus - loan_ded - line.other_deductions, 2)
+
+        # Manual override: the user explicitly picked this transaction (e.g.
+        # after automatic matching failed to find it) — use it as-is, no
+        # name/category/amount re-validation needed.
+        if line.transaction_id:
+            tx = db.get(Transaction, line.transaction_id)
+            if not tx or tx.type != "expense":
+                raise HTTPException(400, f"Transaction {line.transaction_id} is not a valid expense transaction")
+            claimed_by_other = (
+                db.query(PayrollEntry)
+                .filter(
+                    PayrollEntry.transaction_id == line.transaction_id,
+                    PayrollEntry.staff_id != line.staff_id,
+                )
+                .first()
+            )
+            if claimed_by_other:
+                raise HTTPException(400, f"Transaction {line.transaction_id} is already linked to another staff member's payroll entry")
+            tx_map[line.staff_id] = tx.id
+            continue
 
         # If the entry already has a linked transaction (e.g. previously processed
         # then reset), keep that link without re-searching.

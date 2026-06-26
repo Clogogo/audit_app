@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from models import Staff, Transaction
+from models import PayrollEntry, Staff, Transaction
 
 
 def _create_staff(db_session, full_name: str, monthly_gross: float) -> Staff:
@@ -82,3 +82,62 @@ def test_fallback_rejects_when_validation_fails(client, db_session, staff_name, 
     })
     assert resp.status_code == 422
     assert staff_name in resp.json()["detail"]["missing"]
+
+
+def test_manual_transaction_id_overrides_automatic_matching(client, db_session):
+    # Vendor name has zero overlap with staff name and amount is below net
+    # pay — automatic matching (name + category/amount fallback) would
+    # reject this, but an explicit manual link should be used as-is.
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    tx = _create_salary_transaction(db_session, "SOMEONE UNRELATED", amount=500.0, day="2026-01-30")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": tx.id}],
+    })
+    assert resp.status_code == 200, resp.text
+    entry = resp.json()[0]
+    assert entry["transaction_id"] == tx.id
+
+
+def test_manual_transaction_id_rejects_when_claimed_by_another_staff(client, db_session):
+    staff_a = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    staff_b = _create_staff(db_session, "Mrs Daniel Eze", monthly_gross=63000.0)
+    tx = _create_salary_transaction(db_session, "ABIGAIL CHIDERA WILLIAMS", amount=15020.0, day="2026-01-30")
+
+    existing_entry = PayrollEntry(
+        staff_id=staff_a.id, period_year=2026, period_month=1,
+        gross_salary=15020.0, net_salary=15020.0, transaction_id=tx.id, is_paid=True,
+    )
+    db_session.add(existing_entry)
+    db_session.commit()
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff_b.id, "gross_salary": 63000.0, "transaction_id": tx.id}],
+    })
+    assert resp.status_code == 400
+    assert "already linked" in resp.json()["detail"]
+
+
+def test_manual_transaction_id_rejects_nonexistent_or_non_expense(client, db_session):
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": 999999}],
+    })
+    assert resp.status_code == 400
+
+    income_tx = Transaction(
+        type="income", amount=15020.0, currency="NGN", category="Salary and Wages",
+        description="Salary received", date=date.fromisoformat("2026-01-30"), vendor="N/A",
+    )
+    db_session.add(income_tx)
+    db_session.commit()
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": income_tx.id}],
+    })
+    assert resp.status_code == 400

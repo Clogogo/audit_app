@@ -809,6 +809,7 @@ export interface PayrollLineIn {
   bonus: number;
   other_deductions: number;
   notes?: string | null;
+  transaction_id?: number;
 }
 
 export interface PayrollEntryOut {

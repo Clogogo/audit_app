@@ -13,6 +13,7 @@ import { computePayroll, processPayroll, resetPayroll } from '../api/client';
 import type { PayrollLine, PayrollLineIn } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { TransactionPickerModal } from '../components/TransactionPickerModal';
 import { formatCurrency } from '../lib/utils';
 
 const MONTHS = [
@@ -62,6 +63,10 @@ export function Payroll() {
   const [overrides, setOverrides] = useState<Record<number, { gross: number; bonus: number; other: number }>>({});
   // Per-row skip flag — skipped rows are excluded from totals and from processing
   const [skipped, setSkipped] = useState<Record<number, boolean>>({});
+  // Manual transaction link for a missing staff member, staged until the next submit
+  const [manualLink, setManualLink] = useState<Record<number, { transactionId: number; vendor: string }>>({});
+  // Staff full_name currently showing the transaction picker, if any
+  const [linkingFor, setLinkingFor] = useState<string | null>(null);
 
   const load = (preserveEdits = false) => {
     setLoading(true);
@@ -112,10 +117,11 @@ export function Payroll() {
   };
 
   const skipMissingAndProcess = async () => {
-    // Build updated skipped map using current missingTx names
+    // Build updated skipped map using current missingTx names — a staff
+    // member who was manually linked should be processed, not skipped.
     const newSkipped = { ...skipped };
     lines
-      .filter((l) => missingTx.includes(l.full_name))
+      .filter((l) => missingTx.includes(l.full_name) && !manualLink[l.staff_id])
       .forEach((l) => { newSkipped[l.staff_id] = true; });
     setSkipped(newSkipped);
     localStorage.setItem(`payroll_skip_${year}_${month}`, JSON.stringify(newSkipped));
@@ -130,6 +136,7 @@ export function Payroll() {
         gross_salary: getGross(l),
         bonus: getBonus(l),
         other_deductions: getOther(l),
+        transaction_id: manualLink[l.staff_id]?.transactionId,
       }));
 
     if (payload.length === 0) return;
@@ -138,6 +145,7 @@ export function Payroll() {
     try {
       await processPayroll(year, month, payload);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
+      setManualLink({});
       load(true); // preserve overrides and skipped state
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: { detail?: { message?: string; missing?: string[] } } } };
@@ -184,9 +192,11 @@ export function Payroll() {
         gross_salary: getGross(l),
         bonus: getBonus(l),
         other_deductions: getOther(l),
+        transaction_id: manualLink[l.staff_id]?.transactionId,
       }));
       await processPayroll(year, month, payload);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
+      setManualLink({});
       load(true); // preserve overrides and skipped state
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: { detail?: { message?: string; missing?: string[]; hint?: string } } } };
@@ -275,27 +285,89 @@ export function Payroll() {
           {missingTx.length > 0 && (
             <div className="pl-6 space-y-2">
               <p className="text-xs font-semibold text-destructive">Missing salary transactions for:</p>
-              <ul className="list-disc list-inside text-xs space-y-0.5">
-                {missingTx.map((name) => (
-                  <li key={name}>{name}</li>
-                ))}
+              <ul className="text-xs space-y-1">
+                {missingTx.map((name) => {
+                  const staffLine = lines.find((l) => l.full_name === name);
+                  const linked = staffLine ? manualLink[staffLine.staff_id] : undefined;
+                  return (
+                    <li key={name} className="flex items-center gap-2">
+                      <span>{name}</span>
+                      {linked ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-green-700">✓ linked to {linked.vendor}</span>
+                          <button
+                            type="button"
+                            onClick={() => staffLine && setManualLink((m) => {
+                              const updated = { ...m };
+                              delete updated[staffLine.staff_id];
+                              return updated;
+                            })}
+                            className="text-muted-foreground underline hover:no-underline"
+                          >
+                            Undo
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setLinkingFor(name)}
+                          className="text-primary underline hover:no-underline"
+                        >
+                          Link transaction…
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
               <p className="text-xs text-destructive/90">
-                Import the bank statement for {MONTHS[month - 1]} {year} first, or skip these staff members to process the rest now.
+                Import the bank statement for {MONTHS[month - 1]} {year} first, link an existing transaction above, or skip these staff members to process the rest now.
               </p>
-              <button
-                type="button"
-                onClick={skipMissingAndProcess}
-                disabled={processing}
-                className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
-              >
-                {processing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                Skip {missingTx.length} staff & process the rest
-              </button>
+              {(() => {
+                const unresolvedCount = missingTx.filter((name) => {
+                  const staffLine = lines.find((l) => l.full_name === name);
+                  return !staffLine || !manualLink[staffLine.staff_id];
+                }).length;
+                return (
+                  <button
+                    type="button"
+                    onClick={skipMissingAndProcess}
+                    disabled={processing}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+                  >
+                    {processing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    {unresolvedCount > 0
+                      ? `Skip ${unresolvedCount} staff & process the rest`
+                      : 'Process with linked transactions'}
+                  </button>
+                );
+              })()}
             </div>
           )}
         </div>
       )}
+
+      {linkingFor && (() => {
+        const staffLine = lines.find((l) => l.full_name === linkingFor);
+        const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+        const monthEnd = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+        const excludeIds = Object.values(manualLink).map((m) => m.transactionId);
+        return (
+          <TransactionPickerModal
+            staffName={linkingFor}
+            startDate={monthStart}
+            endDate={monthEnd}
+            excludeTransactionIds={excludeIds}
+            onClose={() => setLinkingFor(null)}
+            onSelect={(transactionId, vendor) => {
+              if (staffLine) {
+                setManualLink((m) => ({ ...m, [staffLine.staff_id]: { transactionId, vendor } }));
+              }
+              setLinkingFor(null);
+            }}
+          />
+        );
+      })()}
 
       {success && (
         <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
