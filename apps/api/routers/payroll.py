@@ -263,7 +263,10 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     net_by_staff: dict[int, float] = {}  # staff_id → net salary, computed once and reused in Phase 2
     # Seed with manual overrides up front so an automatic search later in this
     # same request can't claim a transaction the user already hand-picked.
-    used_tx_ids: set[int] = {l.transaction_id for l in req.lines if l.transaction_id}
+    manual_tx_ids = [l.transaction_id for l in req.lines if l.transaction_id]
+    if len(manual_tx_ids) != len(set(manual_tx_ids)):
+        raise HTTPException(400, "A transaction cannot be manually linked to more than one staff member in the same request")
+    used_tx_ids: set[int] = set(manual_tx_ids)
 
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
