@@ -21,10 +21,26 @@ router = APIRouter(prefix="/payroll", tags=["payroll"])
 _NAME_TITLES = {"mr", "mrs", "miss", "ms", "mstr", "dr", "mister", "engr", "chief", "elder", "pastor"}
 
 
+_MIN_FUZZY_TOKEN_LEN = 4  # tokens shorter than this only match exactly (see _tokens_match)
+
+
 def _normalize_name_tokens(name: str) -> list[str]:
     """Lowercase, strip punctuation and honorifics, split into tokens."""
     cleaned = re.sub(r"[^a-z0-9\s]", " ", name.lower())
     return [t for t in cleaned.split() if t not in _NAME_TITLES and len(t) >= 2]
+
+
+def _tokens_match(st: str, tt: str) -> bool:
+    """True if two name tokens refer to the same word — exact match always
+    counts; fuzzy similarity only kicks in for tokens of at least
+    _MIN_FUZZY_TOKEN_LEN characters. Short tokens (e.g. "anu", "ola") are too
+    likely to coincidentally appear as substrings of unrelated words (e.g.
+    "anu" inside "january") for partial_ratio to be safe at that length."""
+    if st == tt:
+        return True
+    if len(st) < _MIN_FUZZY_TOKEN_LEN or len(tt) < _MIN_FUZZY_TOKEN_LEN:
+        return False
+    return fuzz.ratio(st, tt) >= 80 or fuzz.partial_ratio(st, tt) >= 90
 
 
 def _name_matches_text(staff_name: str, text: str) -> bool:
@@ -39,10 +55,7 @@ def _name_matches_text(staff_name: str, text: str) -> bool:
     matched = sum(
         1
         for st in staff_tokens
-        if any(
-            st == tt or fuzz.ratio(st, tt) >= 80 or fuzz.partial_ratio(st, tt) >= 90
-            for tt in text_tokens
-        )
+        if any(_tokens_match(st, tt) for tt in text_tokens)
     )
     min_required = 2 if len(staff_tokens) >= 2 else 1
     return matched >= min_required and (matched / len(staff_tokens)) >= 0.6
@@ -59,7 +72,7 @@ def _has_any_name_token_overlap(staff_name: str, text: str) -> bool:
     if not staff_tokens or not text_tokens:
         return False
     return any(
-        st == tt or fuzz.ratio(st, tt) >= 80
+        _tokens_match(st, tt)
         for st in staff_tokens
         for tt in text_tokens
     )

@@ -1,6 +1,7 @@
 """Tests for POST /payroll/process, focused on the category+amount fallback
 match used when the bank account is registered under a different
-first/middle name than the staff record (e.g. a spouse's name)."""
+first/middle name than the staff record (e.g. a spouse's name). Names below
+are fictional — not real staff or bank data."""
 from datetime import date
 
 import pytest
@@ -31,8 +32,8 @@ def _create_salary_transaction(db_session, vendor: str, amount: float, day: str,
 
 
 def test_fallback_matches_different_first_name_when_category_and_amount_agree(client, db_session):
-    staff = _create_staff(db_session, "Emmanuella Christian", monthly_gross=15020.0)
-    tx = _create_salary_transaction(db_session, "HELEN CHINENYE CHRISTIAN", amount=15020.0, day="2026-01-30")
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    tx = _create_salary_transaction(db_session, "ABIGAIL CHIDERA WILLIAMS", amount=15020.0, day="2026-01-30")
 
     resp = client.post("/payroll/process", json={
         "year": 2026, "month": 1,
@@ -45,8 +46,8 @@ def test_fallback_matches_different_first_name_when_category_and_amount_agree(cl
 
 
 def test_fallback_accepts_amount_above_net_pay_for_bundled_iou(client, db_session):
-    staff = _create_staff(db_session, "Mrs Jonathan Ogogo", monthly_gross=63000.0)
-    tx = _create_salary_transaction(db_session, "PATRICIA NKECHI OGOGO", amount=63000.0, day="2026-01-30")
+    staff = _create_staff(db_session, "Mrs Daniel Eze", monthly_gross=63000.0)
+    tx = _create_salary_transaction(db_session, "CHIOMA UGOCHI EZE", amount=63000.0, day="2026-01-30")
 
     resp = client.post("/payroll/process", json={
         "year": 2026, "month": 1,
@@ -63,11 +64,11 @@ def test_fallback_accepts_amount_above_net_pay_for_bundled_iou(client, db_sessio
     "staff_name,gross,vendor,amount,category",
     [
         # Amount below net pay — looks like a partial/wrong payment, not a salary.
-        ("Mrs Jonathan Ogogo", 50000.0, "PATRICIA NKECHI OGOGO", 20000.0, "Salary and Wages"),
+        ("Mrs Daniel Eze", 50000.0, "CHIOMA UGOCHI EZE", 20000.0, "Salary and Wages"),
         # Right person, right amount, but wrong category — not a salary transaction at all.
-        ("Emmanuella Christian", 15020.0, "HELEN CHINENYE CHRISTIAN", 15020.0, "Other"),
+        ("Ngozi Williams", 15020.0, "ABIGAIL CHIDERA WILLIAMS", 15020.0, "Other"),
         # Right category and amount, but zero name overlap — too risky to attach blindly.
-        ("Emmanuella Christian", 15020.0, "SOMEONE ELSE ENTIRELY", 15020.0, "Salary and Wages"),
+        ("Ngozi Williams", 15020.0, "SOMEONE ELSE ENTIRELY", 15020.0, "Salary and Wages"),
     ],
     ids=["amount_below_net_pay", "wrong_category", "zero_name_overlap"],
 )
