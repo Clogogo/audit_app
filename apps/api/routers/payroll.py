@@ -21,10 +21,26 @@ router = APIRouter(prefix="/payroll", tags=["payroll"])
 _NAME_TITLES = {"mr", "mrs", "miss", "ms", "mstr", "dr", "mister", "engr", "chief", "elder", "pastor"}
 
 
+_MIN_FUZZY_TOKEN_LEN = 4  # tokens shorter than this only match exactly (see _tokens_match)
+
+
 def _normalize_name_tokens(name: str) -> list[str]:
     """Lowercase, strip punctuation and honorifics, split into tokens."""
     cleaned = re.sub(r"[^a-z0-9\s]", " ", name.lower())
     return [t for t in cleaned.split() if t not in _NAME_TITLES and len(t) >= 2]
+
+
+def _tokens_match(st: str, tt: str) -> bool:
+    """True if two name tokens refer to the same word — exact match always
+    counts; fuzzy similarity only kicks in for tokens of at least
+    _MIN_FUZZY_TOKEN_LEN characters. Short tokens (e.g. "anu", "ola") are too
+    likely to coincidentally appear as substrings of unrelated words (e.g.
+    "anu" inside "january") for partial_ratio to be safe at that length."""
+    if st == tt:
+        return True
+    if len(st) < _MIN_FUZZY_TOKEN_LEN or len(tt) < _MIN_FUZZY_TOKEN_LEN:
+        return False
+    return fuzz.ratio(st, tt) >= 80 or fuzz.partial_ratio(st, tt) >= 90
 
 
 def _name_matches_text(staff_name: str, text: str) -> bool:
@@ -39,10 +55,7 @@ def _name_matches_text(staff_name: str, text: str) -> bool:
     matched = sum(
         1
         for st in staff_tokens
-        if any(
-            st == tt or fuzz.ratio(st, tt) >= 80 or fuzz.partial_ratio(st, tt) >= 90
-            for tt in text_tokens
-        )
+        if any(_tokens_match(st, tt) for tt in text_tokens)
     )
     min_required = 2 if len(staff_tokens) >= 2 else 1
     return matched >= min_required and (matched / len(staff_tokens)) >= 0.6
@@ -59,7 +72,7 @@ def _has_any_name_token_overlap(staff_name: str, text: str) -> bool:
     if not staff_tokens or not text_tokens:
         return False
     return any(
-        st == tt or fuzz.ratio(st, tt) >= 80
+        _tokens_match(st, tt)
         for st in staff_tokens
         for tt in text_tokens
     )
@@ -105,6 +118,7 @@ class PayrollLineIn(BaseModel):
     bonus: float = 0.0
     other_deductions: float = 0.0
     notes: Optional[str] = None
+    transaction_id: Optional[int] = None  # manual override of automatic matching
 
 
 class PayrollLineOut(BaseModel):
@@ -247,7 +261,12 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     missing: list[str] = []
     tx_map: dict[int, int] = {}  # staff_id → transaction.id
     net_by_staff: dict[int, float] = {}  # staff_id → net salary, computed once and reused in Phase 2
-    used_tx_ids: set[int] = set()
+    # Seed with manual overrides up front so an automatic search later in this
+    # same request can't claim a transaction the user already hand-picked.
+    manual_tx_ids = [l.transaction_id for l in req.lines if l.transaction_id]
+    if len(manual_tx_ids) != len(set(manual_tx_ids)):
+        raise HTTPException(400, "A transaction cannot be manually linked to more than one staff member in the same request")
+    used_tx_ids: set[int] = set(manual_tx_ids)
 
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
@@ -256,6 +275,28 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
 
         loan_ded = _loan_deduction_for_month(staff, req.year, req.month, db)
         net_by_staff[line.staff_id] = round(line.gross_salary + line.bonus - loan_ded - line.other_deductions, 2)
+
+        # Manual override: the user explicitly picked this transaction (e.g.
+        # after automatic matching failed to find it) — use it as-is, no
+        # name/category/amount re-validation needed.
+        if line.transaction_id:
+            tx = db.get(Transaction, line.transaction_id)
+            if not tx or tx.type != "expense":
+                raise HTTPException(400, f"Transaction {line.transaction_id} is not a valid expense transaction")
+            if tx.date < month_start or tx.date > month_end:
+                raise HTTPException(400, f"Transaction {line.transaction_id} is outside the payroll period")
+            claimed_by_other = (
+                db.query(PayrollEntry)
+                .filter(
+                    PayrollEntry.transaction_id == line.transaction_id,
+                    PayrollEntry.staff_id != line.staff_id,
+                )
+                .first()
+            )
+            if claimed_by_other:
+                raise HTTPException(400, f"Transaction {line.transaction_id} is already linked to another staff member's payroll entry")
+            tx_map[line.staff_id] = tx.id
+            continue
 
         # If the entry already has a linked transaction (e.g. previously processed
         # then reset), keep that link without re-searching.
@@ -400,38 +441,18 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     return result
 
 
-def _is_auto_created_tx(tx: Transaction) -> bool:
-    """True if the transaction was auto-generated by the old process_payroll logic."""
-    return (
-        tx.category == "Salary and Wages"
-        and tx.description.startswith("Salary — ")
-        and tx.bank_account_id is None
-    )
-
-
 @router.post("/reset")
 def reset_payroll(year: int, month: int, db: Session = Depends(get_db)):
-    """Mark all payroll entries for a month as unpaid.
-    Any auto-created salary transactions (not from a bank statement import) are
-    deleted so the user must re-verify against imported transactions before
-    re-processing.
-    """
+    """Mark all payroll entries for a month as unpaid and unlink their
+    transactions, so the user can re-process against a different transaction
+    (e.g. after importing a corrected bank statement)."""
     entries = (
         db.query(PayrollEntry)
         .filter(PayrollEntry.period_year == year, PayrollEntry.period_month == month)
         .all()
     )
-    deleted_tx = 0
     for e in entries:
-        if e.transaction_id:
-            tx = db.get(Transaction, e.transaction_id)
-            if tx and _is_auto_created_tx(tx):
-                e.transaction_id = None
-                db.delete(tx)
-                deleted_tx += 1
-            else:
-                # Bank-imported transaction — keep it but unlink from the entry
-                e.transaction_id = None
+        e.transaction_id = None
         e.is_paid = False
         e.paid_date = None
         e.updated_at = datetime.utcnow()
@@ -440,37 +461,7 @@ def reset_payroll(year: int, month: int, db: Session = Depends(get_db)):
     from routers.financial_statements import _cache_bust
     _cache_bust()
 
-    return {"reset": len(entries), "deleted_transactions": deleted_tx, "year": year, "month": month}
-
-
-@router.delete("/purge-auto-transactions")
-def purge_auto_transactions(db: Session = Depends(get_db)):
-    """One-time cleanup: delete all salary transactions that were auto-created by
-    the old process_payroll logic (not imported from a bank statement), and clear
-    the transaction_id link on the associated payroll entries.
-    """
-    entries_with_tx = (
-        db.query(PayrollEntry)
-        .filter(PayrollEntry.transaction_id.isnot(None))
-        .all()
-    )
-    deleted = 0
-    unlinked = 0
-    for e in entries_with_tx:
-        tx = db.get(Transaction, e.transaction_id)
-        if tx and _is_auto_created_tx(tx):
-            e.transaction_id = None
-            db.delete(tx)
-            deleted += 1
-        else:
-            e.transaction_id = None
-            unlinked += 1
-    db.commit()
-
-    from routers.financial_statements import _cache_bust
-    _cache_bust()
-
-    return {"deleted_transactions": deleted, "unlinked_entries": unlinked}
+    return {"reset": len(entries), "year": year, "month": month}
 
 
 @router.get("/entries", response_model=list[PayrollEntryOut])

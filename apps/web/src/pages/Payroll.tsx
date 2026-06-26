@@ -8,12 +8,12 @@ import {
   Info,
   Loader2,
   Pencil,
-  Trash2,
 } from 'lucide-react';
-import { computePayroll, processPayroll, resetPayroll, purgeAutoPayrollTransactions } from '../api/client';
+import { computePayroll, processPayroll, resetPayroll } from '../api/client';
 import type { PayrollLine, PayrollLineIn } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { TransactionPickerModal } from '../components/TransactionPickerModal';
 import { formatCurrency } from '../lib/utils';
 
 const MONTHS = [
@@ -55,8 +55,6 @@ export function Payroll() {
   const [processing, setProcessing] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
-  const [purging, setPurging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [missingTx, setMissingTx] = useState<string[]>([]);
   const [success, setSuccess] = useState<string | null>(null);
@@ -65,6 +63,10 @@ export function Payroll() {
   const [overrides, setOverrides] = useState<Record<number, { gross: number; bonus: number; other: number }>>({});
   // Per-row skip flag — skipped rows are excluded from totals and from processing
   const [skipped, setSkipped] = useState<Record<number, boolean>>({});
+  // Manual transaction link for a missing staff member, staged until the next submit
+  const [manualLink, setManualLink] = useState<Record<number, { transactionId: number; vendor: string }>>({});
+  // Staff full_name currently showing the transaction picker, if any
+  const [linkingFor, setLinkingFor] = useState<string | null>(null);
 
   const load = (preserveEdits = false) => {
     setLoading(true);
@@ -115,10 +117,11 @@ export function Payroll() {
   };
 
   const skipMissingAndProcess = async () => {
-    // Build updated skipped map using current missingTx names
+    // Build updated skipped map using current missingTx names — a staff
+    // member who was manually linked should be processed, not skipped.
     const newSkipped = { ...skipped };
     lines
-      .filter((l) => missingTx.includes(l.full_name))
+      .filter((l) => missingTx.includes(l.full_name) && !manualLink[l.staff_id])
       .forEach((l) => { newSkipped[l.staff_id] = true; });
     setSkipped(newSkipped);
     localStorage.setItem(`payroll_skip_${year}_${month}`, JSON.stringify(newSkipped));
@@ -133,6 +136,7 @@ export function Payroll() {
         gross_salary: getGross(l),
         bonus: getBonus(l),
         other_deductions: getOther(l),
+        transaction_id: manualLink[l.staff_id]?.transactionId,
       }));
 
     if (payload.length === 0) return;
@@ -141,6 +145,7 @@ export function Payroll() {
     try {
       await processPayroll(year, month, payload);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
+      setManualLink({});
       load(true); // preserve overrides and skipped state
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: { detail?: { message?: string; missing?: string[] } } } };
@@ -187,9 +192,11 @@ export function Payroll() {
         gross_salary: getGross(l),
         bonus: getBonus(l),
         other_deductions: getOther(l),
+        transaction_id: manualLink[l.staff_id]?.transactionId,
       }));
       await processPayroll(year, month, payload);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
+      setManualLink({});
       load(true); // preserve overrides and skipped state
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: { detail?: { message?: string; missing?: string[]; hint?: string } } } };
@@ -218,20 +225,6 @@ export function Payroll() {
       setError('Failed to reset payroll');
     } finally {
       setResetting(false);
-    }
-  };
-
-  const handlePurge = async () => {
-    setPurging(true);
-    setShowPurgeConfirm(false);
-    try {
-      const result = await purgeAutoPayrollTransactions();
-      setSuccess(`Cleanup complete — ${result.deleted_transactions} auto-created salary transaction(s) removed.`);
-      load();
-    } catch {
-      setError('Failed to remove auto-created transactions');
-    } finally {
-      setPurging(false);
     }
   };
 
@@ -280,19 +273,6 @@ export function Payroll() {
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
-
-          {/* One-time cleanup */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowPurgeConfirm(true)}
-            disabled={purging}
-            title="Remove all salary transactions that were auto-created by the old payroll system"
-            className="text-destructive border-destructive/30 hover:bg-destructive/10 text-xs"
-          >
-            <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-            {purging ? 'Cleaning up…' : 'Remove Old Salary Transactions'}
-          </Button>
         </div>
       </div>
 
@@ -305,27 +285,90 @@ export function Payroll() {
           {missingTx.length > 0 && (
             <div className="pl-6 space-y-2">
               <p className="text-xs font-semibold text-destructive">Missing salary transactions for:</p>
-              <ul className="list-disc list-inside text-xs space-y-0.5">
-                {missingTx.map((name) => (
-                  <li key={name}>{name}</li>
-                ))}
+              <ul className="text-xs space-y-1">
+                {missingTx.map((name, idx) => {
+                  const staffLine = lines.find((l) => l.full_name === name);
+                  const linked = staffLine ? manualLink[staffLine.staff_id] : undefined;
+                  return (
+                    <li key={`${name}-${staffLine?.staff_id ?? idx}`} className="flex items-center gap-2">
+                      <span>{name}</span>
+                      {linked ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-green-700">✓ linked to {linked.vendor}</span>
+                          <button
+                            type="button"
+                            onClick={() => staffLine && setManualLink((m) => {
+                              const updated = { ...m };
+                              delete updated[staffLine.staff_id];
+                              return updated;
+                            })}
+                            className="text-muted-foreground underline hover:no-underline"
+                          >
+                            Undo
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setLinkingFor(name)}
+                          className="text-primary underline hover:no-underline"
+                        >
+                          Link transaction…
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
               <p className="text-xs text-destructive/90">
-                Import the bank statement for {MONTHS[month - 1]} {year} first, or skip these staff members to process the rest now.
+                Import the bank statement for {MONTHS[month - 1]} {year} first, link an existing transaction above, or skip these staff members to process the rest now.
               </p>
-              <button
-                type="button"
-                onClick={skipMissingAndProcess}
-                disabled={processing}
-                className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
-              >
-                {processing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                Skip {missingTx.length} staff & process the rest
-              </button>
+              {(() => {
+                const unresolvedCount = missingTx.filter((name) => {
+                  const staffLine = lines.find((l) => l.full_name === name);
+                  return !staffLine || !manualLink[staffLine.staff_id];
+                }).length;
+                return (
+                  <button
+                    type="button"
+                    onClick={skipMissingAndProcess}
+                    disabled={processing}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+                  >
+                    {processing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    {unresolvedCount > 0
+                      ? `Skip ${unresolvedCount} staff & process the rest`
+                      : 'Process with linked transactions'}
+                  </button>
+                );
+              })()}
             </div>
           )}
         </div>
       )}
+
+      {linkingFor && (() => {
+        const staffLine = lines.find((l) => l.full_name === linkingFor);
+        const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+        const monthEnd = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+        const excludeIds = Object.values(manualLink).map((m) => m.transactionId);
+        return (
+          <TransactionPickerModal
+            title={`Link a transaction for ${linkingFor}`}
+            category="Salary and Wages"
+            startDate={monthStart}
+            endDate={monthEnd}
+            excludeTransactionIds={excludeIds}
+            onClose={() => setLinkingFor(null)}
+            onSelect={(t) => {
+              if (staffLine) {
+                setManualLink((m) => ({ ...m, [staffLine.staff_id]: { transactionId: t.id, vendor: t.vendor || t.description } }));
+              }
+              setLinkingFor(null);
+            }}
+          />
+        );
+      })()}
 
       {success && (
         <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
@@ -551,30 +594,6 @@ export function Payroll() {
           )}
         </CardContent>
       </Card>
-
-      {/* Purge confirmation */}
-      {showPurgeConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm bg-card rounded-xl shadow-xl border border-border p-6 space-y-4">
-            <h2 className="text-base font-semibold text-destructive">Remove Auto-Created Salary Transactions?</h2>
-            <p className="text-sm text-muted-foreground">
-              This will permanently delete all salary transactions that were automatically created by the old
-              payroll system (not imported from a bank statement). Payroll entries will be unlinked so you
-              can re-process after importing the correct bank statement.
-            </p>
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-              Bank-imported transactions are not affected.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowPurgeConfirm(false)}>Cancel</Button>
-              <Button variant="destructive" onClick={handlePurge}>
-                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                Yes, Remove Them
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Reset confirmation */}
       {showResetConfirm && (

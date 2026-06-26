@@ -1,11 +1,12 @@
 """Tests for POST /payroll/process, focused on the category+amount fallback
 match used when the bank account is registered under a different
-first/middle name than the staff record (e.g. a spouse's name)."""
+first/middle name than the staff record (e.g. a spouse's name). Names below
+are fictional — not real staff or bank data."""
 from datetime import date
 
 import pytest
 
-from models import Staff, Transaction
+from models import PayrollEntry, Staff, Transaction
 
 
 def _create_staff(db_session, full_name: str, monthly_gross: float) -> Staff:
@@ -31,8 +32,8 @@ def _create_salary_transaction(db_session, vendor: str, amount: float, day: str,
 
 
 def test_fallback_matches_different_first_name_when_category_and_amount_agree(client, db_session):
-    staff = _create_staff(db_session, "Emmanuella Christian", monthly_gross=15020.0)
-    tx = _create_salary_transaction(db_session, "HELEN CHINENYE CHRISTIAN", amount=15020.0, day="2026-01-30")
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    tx = _create_salary_transaction(db_session, "ABIGAIL CHIDERA WILLIAMS", amount=15020.0, day="2026-01-30")
 
     resp = client.post("/payroll/process", json={
         "year": 2026, "month": 1,
@@ -45,8 +46,8 @@ def test_fallback_matches_different_first_name_when_category_and_amount_agree(cl
 
 
 def test_fallback_accepts_amount_above_net_pay_for_bundled_iou(client, db_session):
-    staff = _create_staff(db_session, "Mrs Jonathan Ogogo", monthly_gross=63000.0)
-    tx = _create_salary_transaction(db_session, "PATRICIA NKECHI OGOGO", amount=63000.0, day="2026-01-30")
+    staff = _create_staff(db_session, "Mrs Daniel Eze", monthly_gross=63000.0)
+    tx = _create_salary_transaction(db_session, "CHIOMA UGOCHI EZE", amount=63000.0, day="2026-01-30")
 
     resp = client.post("/payroll/process", json={
         "year": 2026, "month": 1,
@@ -63,11 +64,11 @@ def test_fallback_accepts_amount_above_net_pay_for_bundled_iou(client, db_sessio
     "staff_name,gross,vendor,amount,category",
     [
         # Amount below net pay — looks like a partial/wrong payment, not a salary.
-        ("Mrs Jonathan Ogogo", 50000.0, "PATRICIA NKECHI OGOGO", 20000.0, "Salary and Wages"),
+        ("Mrs Daniel Eze", 50000.0, "CHIOMA UGOCHI EZE", 20000.0, "Salary and Wages"),
         # Right person, right amount, but wrong category — not a salary transaction at all.
-        ("Emmanuella Christian", 15020.0, "HELEN CHINENYE CHRISTIAN", 15020.0, "Other"),
+        ("Ngozi Williams", 15020.0, "ABIGAIL CHIDERA WILLIAMS", 15020.0, "Other"),
         # Right category and amount, but zero name overlap — too risky to attach blindly.
-        ("Emmanuella Christian", 15020.0, "SOMEONE ELSE ENTIRELY", 15020.0, "Salary and Wages"),
+        ("Ngozi Williams", 15020.0, "SOMEONE ELSE ENTIRELY", 15020.0, "Salary and Wages"),
     ],
     ids=["amount_below_net_pay", "wrong_category", "zero_name_overlap"],
 )
@@ -81,3 +82,90 @@ def test_fallback_rejects_when_validation_fails(client, db_session, staff_name, 
     })
     assert resp.status_code == 422
     assert staff_name in resp.json()["detail"]["missing"]
+
+
+def test_manual_transaction_id_overrides_automatic_matching(client, db_session):
+    # Vendor name has zero overlap with staff name and amount is below net
+    # pay — automatic matching (name + category/amount fallback) would
+    # reject this, but an explicit manual link should be used as-is.
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    tx = _create_salary_transaction(db_session, "SOMEONE UNRELATED", amount=500.0, day="2026-01-30")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": tx.id}],
+    })
+    assert resp.status_code == 200, resp.text
+    entry = resp.json()[0]
+    assert entry["transaction_id"] == tx.id
+
+
+def test_manual_transaction_id_rejects_when_claimed_by_another_staff(client, db_session):
+    staff_a = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    staff_b = _create_staff(db_session, "Mrs Daniel Eze", monthly_gross=63000.0)
+    tx = _create_salary_transaction(db_session, "ABIGAIL CHIDERA WILLIAMS", amount=15020.0, day="2026-01-30")
+
+    existing_entry = PayrollEntry(
+        staff_id=staff_a.id, period_year=2026, period_month=1,
+        gross_salary=15020.0, net_salary=15020.0, transaction_id=tx.id, is_paid=True,
+    )
+    db_session.add(existing_entry)
+    db_session.commit()
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff_b.id, "gross_salary": 63000.0, "transaction_id": tx.id}],
+    })
+    assert resp.status_code == 400
+    assert "already linked" in resp.json()["detail"]
+
+
+def test_manual_transaction_id_rejects_nonexistent_or_non_expense(client, db_session):
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": 999999}],
+    })
+    assert resp.status_code == 400
+
+    income_tx = Transaction(
+        type="income", amount=15020.0, currency="NGN", category="Salary and Wages",
+        description="Salary received", date=date.fromisoformat("2026-01-30"), vendor="N/A",
+    )
+    db_session.add(income_tx)
+    db_session.commit()
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": income_tx.id}],
+    })
+    assert resp.status_code == 400
+
+
+def test_manual_transaction_id_rejects_duplicate_within_same_request(client, db_session):
+    staff_a = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    staff_b = _create_staff(db_session, "Mrs Daniel Eze", monthly_gross=63000.0)
+    tx = _create_salary_transaction(db_session, "SOMEONE UNRELATED", amount=63000.0, day="2026-01-30")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [
+            {"staff_id": staff_a.id, "gross_salary": 15020.0, "transaction_id": tx.id},
+            {"staff_id": staff_b.id, "gross_salary": 63000.0, "transaction_id": tx.id},
+        ],
+    })
+    assert resp.status_code == 400
+    assert "more than one staff member" in resp.json()["detail"]
+
+
+def test_manual_transaction_id_rejects_date_outside_payroll_period(client, db_session):
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    tx = _create_salary_transaction(db_session, "ABIGAIL CHIDERA WILLIAMS", amount=15020.0, day="2026-02-01")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": tx.id}],
+    })
+    assert resp.status_code == 400
+    assert "outside the payroll period" in resp.json()["detail"]
