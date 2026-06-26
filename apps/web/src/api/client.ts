@@ -494,7 +494,4 @@ export const getPayrollEntries = (year: number, month: number) =>
   api.get<PayrollEntryOut[]>('/payroll/entries', { params: { year, month } }).then(unwrap);
 
 export const resetPayroll = (year: number, month: number) =>
-  api.post<{ reset: number; deleted_transactions: number }>('/payroll/reset', null, { params: { year, month } }).then(unwrap);
-
-export const purgeAutoPayrollTransactions = () =>
-  api.delete<{ deleted_transactions: number; unlinked_entries: number }>('/payroll/purge-auto-transactions').then(unwrap);
+  api.post<{ reset: number }>('/payroll/reset', null, { params: { year, month } }).then(unwrap);

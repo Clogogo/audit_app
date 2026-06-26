@@ -8,9 +8,8 @@ import {
   Info,
   Loader2,
   Pencil,
-  Trash2,
 } from 'lucide-react';
-import { computePayroll, processPayroll, resetPayroll, purgeAutoPayrollTransactions } from '../api/client';
+import { computePayroll, processPayroll, resetPayroll } from '../api/client';
 import type { PayrollLine, PayrollLineIn } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -55,8 +54,6 @@ export function Payroll() {
   const [processing, setProcessing] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
-  const [purging, setPurging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [missingTx, setMissingTx] = useState<string[]>([]);
   const [success, setSuccess] = useState<string | null>(null);
@@ -221,20 +218,6 @@ export function Payroll() {
     }
   };
 
-  const handlePurge = async () => {
-    setPurging(true);
-    setShowPurgeConfirm(false);
-    try {
-      const result = await purgeAutoPayrollTransactions();
-      setSuccess(`Cleanup complete — ${result.deleted_transactions} auto-created salary transaction(s) removed.`);
-      load();
-    } catch {
-      setError('Failed to remove auto-created transactions');
-    } finally {
-      setPurging(false);
-    }
-  };
-
   const prevMonth = () => {
     if (month === 1) { setYear((y) => y - 1); setMonth(12); }
     else setMonth((m) => m - 1);
@@ -280,19 +263,6 @@ export function Payroll() {
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
-
-          {/* One-time cleanup */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowPurgeConfirm(true)}
-            disabled={purging}
-            title="Remove all salary transactions that were auto-created by the old payroll system"
-            className="text-destructive border-destructive/30 hover:bg-destructive/10 text-xs"
-          >
-            <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-            {purging ? 'Cleaning up…' : 'Remove Old Salary Transactions'}
-          </Button>
         </div>
       </div>
 
@@ -551,30 +521,6 @@ export function Payroll() {
           )}
         </CardContent>
       </Card>
-
-      {/* Purge confirmation */}
-      {showPurgeConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm bg-card rounded-xl shadow-xl border border-border p-6 space-y-4">
-            <h2 className="text-base font-semibold text-destructive">Remove Auto-Created Salary Transactions?</h2>
-            <p className="text-sm text-muted-foreground">
-              This will permanently delete all salary transactions that were automatically created by the old
-              payroll system (not imported from a bank statement). Payroll entries will be unlinked so you
-              can re-process after importing the correct bank statement.
-            </p>
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-              Bank-imported transactions are not affected.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowPurgeConfirm(false)}>Cancel</Button>
-              <Button variant="destructive" onClick={handlePurge}>
-                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                Yes, Remove Them
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Reset confirmation */}
       {showResetConfirm && (
