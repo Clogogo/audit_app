@@ -285,6 +285,7 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
                 raise HTTPException(400, f"Transaction {line.transaction_id} is not a valid expense transaction")
             if tx.date < month_start or tx.date > month_end:
                 raise HTTPException(400, f"Transaction {line.transaction_id} is outside the payroll period")
+            claimed_by_other = (
                 db.query(PayrollEntry)
                 .filter(
                     PayrollEntry.transaction_id == line.transaction_id,

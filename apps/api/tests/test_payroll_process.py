@@ -141,3 +141,31 @@ def test_manual_transaction_id_rejects_nonexistent_or_non_expense(client, db_ses
         "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": income_tx.id}],
     })
     assert resp.status_code == 400
+
+
+def test_manual_transaction_id_rejects_duplicate_within_same_request(client, db_session):
+    staff_a = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    staff_b = _create_staff(db_session, "Mrs Daniel Eze", monthly_gross=63000.0)
+    tx = _create_salary_transaction(db_session, "SOMEONE UNRELATED", amount=63000.0, day="2026-01-30")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [
+            {"staff_id": staff_a.id, "gross_salary": 15020.0, "transaction_id": tx.id},
+            {"staff_id": staff_b.id, "gross_salary": 63000.0, "transaction_id": tx.id},
+        ],
+    })
+    assert resp.status_code == 400
+    assert "more than one staff member" in resp.json()["detail"]
+
+
+def test_manual_transaction_id_rejects_date_outside_payroll_period(client, db_session):
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    tx = _create_salary_transaction(db_session, "ABIGAIL CHIDERA WILLIAMS", amount=15020.0, day="2026-02-01")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": tx.id}],
+    })
+    assert resp.status_code == 400
+    assert "outside the payroll period" in resp.json()["detail"]
