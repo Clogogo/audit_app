@@ -354,7 +354,8 @@ export function Payroll() {
         const excludeIds = Object.values(manualLink).map((m) => m.transactionId);
         return (
           <TransactionPickerModal
-            staffName={linkingFor}
+            title={`Link a transaction for ${linkingFor}`}
+            category="Salary and Wages"
             startDate={monthStart}
             endDate={monthEnd}
             excludeTransactionIds={excludeIds}

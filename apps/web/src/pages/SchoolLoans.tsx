@@ -11,6 +11,7 @@ import {
 import type { SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn, MatchedTransaction } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { TransactionPickerModal } from '../components/TransactionPickerModal';
 import { formatCurrency } from '../lib/utils';
 
 const EMPTY_LOAN: SchoolLoanIn = {
@@ -85,6 +86,9 @@ export function SchoolLoans() {
   // Transaction matching
   const [matchedTxs, setMatchedTxs] = useState<MatchedTransaction[]>([]);
   const [loadingTxs, setLoadingTxs] = useState(false);
+
+  // Manual transaction linking for an existing (already-saved) payment
+  const [linkingPayment, setLinkingPayment] = useState<{ loanId: number; payment: SchoolLoanPaymentOut } | null>(null);
 
   // Expanded rows
   const [expandedLoanId, setExpandedLoanId] = useState<number | null>(null);
@@ -207,6 +211,25 @@ export function SchoolLoans() {
       setError('Failed to save payment');
     } finally {
       setSavingPayment(false);
+    }
+  };
+
+  const handleLinkExistingPayment = async (transactionId: number) => {
+    if (!linkingPayment) return;
+    const { loanId, payment } = linkingPayment;
+    setLinkingPayment(null);
+    try {
+      await updateSchoolLoanPayment(loanId, payment.id, {
+        amount_paid: payment.amount_paid,
+        interest_amount: payment.interest_amount,
+        misc_amount: payment.misc_amount,
+        paid_date: payment.paid_date,
+        notes: payment.notes,
+        transaction_id: transactionId,
+      });
+      load();
+    } catch {
+      setError('Failed to link transaction');
     }
   };
 
@@ -411,17 +434,26 @@ export function SchoolLoans() {
                                       <td className="py-2 pr-3 text-right text-expense">{formatCurrency(p.interest_amount)}</td>
                                       <td className="py-2 pr-3 text-right text-expense">{formatCurrency(p.misc_amount)}</td>
                                       <td className="py-2 pr-3">
-                                        {p.verified ? (
-                                          <span
-                                            className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-green-700 font-medium"
-                                            title={p.matched_tx ? `Linked to tx #${p.matched_tx.id} — ${p.matched_tx.description}` : 'Verified'}
+                                        <div className="flex items-center gap-1.5">
+                                          {p.verified ? (
+                                            <span
+                                              className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-green-700 font-medium"
+                                              title={p.matched_tx ? `Linked to tx #${p.matched_tx.id} — ${p.matched_tx.description}` : 'Verified'}
+                                            >
+                                              <BadgeCheck className="h-3 w-3" />
+                                              Verified
+                                            </span>
+                                          ) : (
+                                            <span className="text-muted-foreground/60">—</span>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => setLinkingPayment({ loanId: loan.id, payment: p })}
+                                            className="text-primary underline hover:no-underline"
                                           >
-                                            <BadgeCheck className="h-3 w-3" />
-                                            Verified
-                                          </span>
-                                        ) : (
-                                          <span className="text-muted-foreground/60">—</span>
-                                        )}
+                                            {p.verified ? 'Change' : 'Link transaction…'}
+                                          </button>
+                                        </div>
                                       </td>
                                       <td className="py-2">
                                         <div className="flex gap-1 justify-end">
@@ -722,6 +754,19 @@ export function SchoolLoans() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Manual transaction link for an existing payment */}
+      {linkingPayment && (
+        <TransactionPickerModal
+          title="Link a transaction to this payment"
+          category="Loans"
+          excludeTransactionIds={loans.flatMap((l) => l.payments
+            .filter((p) => p.transaction_id !== null && p.id !== linkingPayment.payment.id)
+            .map((p) => p.transaction_id as number))}
+          onClose={() => setLinkingPayment(null)}
+          onSelect={(transactionId) => handleLinkExistingPayment(transactionId)}
+        />
       )}
 
       {/* Delete loan confirmation */}

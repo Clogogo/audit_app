@@ -6,33 +6,34 @@ import { Button } from './ui/button';
 import { formatCurrency, formatDate } from '../lib/utils';
 
 interface TransactionPickerModalProps {
-  staffName: string;
-  startDate: string;
-  endDate: string;
+  title: string;
+  category: string;
+  startDate?: string;
+  endDate?: string;
   excludeTransactionIds: number[];
   onSelect: (transactionId: number, vendor: string) => void;
   onClose: () => void;
 }
 
 export function TransactionPickerModal({
-  staffName, startDate, endDate, excludeTransactionIds, onSelect, onClose,
+  title, category, startDate, endDate, excludeTransactionIds, onSelect, onClose,
 }: TransactionPickerModalProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getTransactions({ category: 'Salary and Wages', start_date: startDate, end_date: endDate, limit: 100 })
+    getTransactions({ category, start_date: startDate, end_date: endDate, limit: 100 })
       .then((page) => setTransactions(page.items.filter((t) => !excludeTransactionIds.includes(t.id))))
       .catch(() => setError('Failed to load transactions'))
       .finally(() => setLoading(false));
-  }, [startDate, endDate, excludeTransactionIds]);
+  }, [category, startDate, endDate, excludeTransactionIds]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-lg bg-card rounded-xl shadow-xl border border-border p-6 space-y-4 max-h-[80vh] flex flex-col">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">Link a transaction for {staffName}</h2>
+          <h2 className="text-base font-semibold">{title}</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
           </button>
@@ -47,7 +48,7 @@ export function TransactionPickerModal({
           <p className="text-sm text-destructive">{error}</p>
         ) : transactions.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
-            No unclaimed "Salary and Wages" transactions found for this period.
+            No unclaimed "{category}" transactions found{startDate ? ' for this period' : ''}.
           </p>
         ) : (
           <div className="overflow-y-auto divide-y divide-border -mx-6 px-6">
