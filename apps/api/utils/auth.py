@@ -24,7 +24,13 @@ if not SECRET_KEY:
     )
 ALGORITHM = "HS256"
 # Default 24h if unset; .env.example documents this var so deployments can tune it.
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+try:
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+except ValueError as e:
+    raise RuntimeError(
+        f"ACCESS_TOKEN_EXPIRE_MINUTES must be an integer, got "
+        f"{os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES')!r}"
+    ) from e
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()

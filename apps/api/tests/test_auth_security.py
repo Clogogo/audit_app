@@ -37,6 +37,14 @@ def test_register_rejects_missing_or_wrong_invite_code(anon_client):
     })
     assert resp.status_code == 403
 
+    # invite_code is optional in the schema specifically so omitting it
+    # entirely still hits the router's 403 check instead of a 422 validation
+    # error (the two should be indistinguishable to an attacker).
+    resp = anon_client.post("/auth/register", json={
+        "email": "newuser@example.com", "password": "secret123",
+    })
+    assert resp.status_code == 403
+
 
 def test_register_succeeds_with_correct_invite_code(anon_client, db_session):
     resp = anon_client.post("/auth/register", json={
@@ -52,6 +60,13 @@ def test_forgot_password_rejects_missing_or_wrong_recovery_code(anon_client, db_
 
     resp = anon_client.post("/auth/forgot-password", json={
         "email": "exists@example.com", "new_password": "newpass123", "recovery_code": "wrong-code",
+    })
+    assert resp.status_code == 403
+
+    # recovery_code is optional in the schema specifically so omitting it
+    # entirely still hits the router's 403 check instead of a 422.
+    resp = anon_client.post("/auth/forgot-password", json={
+        "email": "exists@example.com", "new_password": "newpass123",
     })
     assert resp.status_code == 403
 
