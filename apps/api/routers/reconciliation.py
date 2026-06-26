@@ -6,6 +6,7 @@ import json
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from utils.auth import get_current_user
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
@@ -14,7 +15,7 @@ from database import get_db
 from models import BankStatement, BankTransaction, Transaction, AuditLog
 from schemas import ReconciliationStatus, ManualMatchRequest
 
-router = APIRouter(prefix="/reconcile", tags=["reconciliation"])
+router = APIRouter(prefix="/reconcile", tags=["reconciliation"], dependencies=[Depends(get_current_user)])
 
 
 def _fuzzy_score(a: str, b: str) -> float:

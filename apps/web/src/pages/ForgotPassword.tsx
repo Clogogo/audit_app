@@ -16,6 +16,7 @@ export function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [recoveryCode, setRecoveryCode] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -32,7 +33,7 @@ export function ForgotPassword() {
 
     setLoading(true);
     try {
-      await forgotPassword(email, newPassword);
+      await forgotPassword(email, newPassword, recoveryCode);
       notify.success('✅ Password updated. You can now log in.');
       navigate('/login');
     } catch (err: unknown) {
@@ -58,11 +59,25 @@ export function ForgotPassword() {
           </div>
           <CardTitle className="text-center">Reset Password</CardTitle>
           <CardDescription className="text-center">
-            Enter your account email and a new password
+            Enter your account email, recovery code, and a new password
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="recoveryCode">
+                Recovery Code <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="recoveryCode"
+                type="text"
+                placeholder="Set by your admin in the server environment"
+                value={recoveryCode}
+                onChange={(e) => setRecoveryCode(e.target.value)}
+                required
+                disabled={loading}
+              />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="email">
                 Email <span className="text-destructive">*</span>
