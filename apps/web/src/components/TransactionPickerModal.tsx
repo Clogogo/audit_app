@@ -23,10 +23,30 @@ export function TransactionPickerModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getTransactions({ category, start_date: startDate, end_date: endDate, limit: 100 })
-      .then((page) => setTransactions(page.items.filter((t) => !excludeTransactionIds.includes(t.id))))
-      .catch(() => setError('Failed to load transactions'))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    getTransactions({
+      type: 'expense',
+      category,
+      start_date: startDate,
+      end_date: endDate,
+      limit: 100,
+    })
+      .then((page) => {
+        if (cancelled) return;
+        const exclude = new Set(excludeTransactionIds);
+        setTransactions(page.items.filter((t) => !exclude.has(t.id)));
+      })
+      .catch(() => {
+        if (!cancelled) setError('Failed to load transactions');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, [category, startDate, endDate, excludeTransactionIds]);
 
   return (
