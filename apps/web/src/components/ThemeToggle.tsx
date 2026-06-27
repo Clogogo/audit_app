@@ -9,6 +9,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       type="button"
       onClick={toggleTheme}
       aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      aria-pressed={theme === 'dark'}
       title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       className={className ?? 'p-1.5 rounded-md border border-input hover:bg-accent text-muted-foreground hover:text-foreground'}
     >
