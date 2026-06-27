@@ -137,7 +137,9 @@ def test_forgot_password_link_has_a_domain_even_when_frontend_url_is_blank_not_u
 
     with patch.dict("os.environ", {"FRONTEND_URL": ""}):
         with patch("routers.auth.send_password_reset_email") as mock_send:
-            anon_client.post("/auth/forgot-password", json={"email": "exists8@example.com"})
+            resp = anon_client.post("/auth/forgot-password", json={"email": "exists8@example.com"})
+            assert resp.status_code == 200, resp.text
+            assert mock_send.call_count == 1
             reset_link = mock_send.call_args[0][1]
             assert reset_link.startswith("http://localhost:4200/reset-password?token=")
 
