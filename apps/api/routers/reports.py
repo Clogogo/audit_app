@@ -9,6 +9,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from utils.auth import get_current_user
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -17,7 +18,8 @@ from database import get_db
 from models import Transaction, BankAccount
 from schemas import BankAccountReport, BankAccountReportSummary
 
-router = APIRouter(prefix="/reports", tags=["reports"])
+router = APIRouter(prefix="/reports", tags=["reports"], dependencies=[Depends(get_current_user)])
+
 
 # ── Unicode font registration (runs once on module load) ──────────────────────
 _PDF_BODY = "Helvetica"

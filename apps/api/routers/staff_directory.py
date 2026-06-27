@@ -3,13 +3,14 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from utils.auth import get_current_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Staff
 
-router = APIRouter(prefix="/staff-directory", tags=["staff-directory"])
+router = APIRouter(prefix="/staff-directory", tags=["staff-directory"], dependencies=[Depends(get_current_user)])
 
 
 class StaffIn(BaseModel):

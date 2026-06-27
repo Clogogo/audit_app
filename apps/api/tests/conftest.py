@@ -18,12 +18,43 @@ TEST_DB_PATH = Path(__file__).resolve().parent / "test.db"
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key-not-real")
+os.environ.setdefault("REGISTRATION_INVITE_CODE", "test-invite-code")
+os.environ.setdefault("MAILEROO_API_KEY", "test-key-not-real")
+os.environ.setdefault("MAILEROO_FROM_EMAIL", "noreply@test.maileroo.org")
 
 import pytest
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 
 from database import Base, SessionLocal, engine, initialize_database
 from main import app
+from models import User
+from utils.auth import get_current_user, hash_password
+from utils.rate_limit import limiter
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """slowapi's in-memory store persists across tests in the same process —
+    without this, tests hitting rate-limited endpoints (login,
+    forgot-password, etc.) multiple times across the suite trip the real
+    5/minute limit and fail with no relation to what they're testing."""
+    limiter.reset()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _mock_email_sending():
+    """No test should make a real Maileroo API call — patch all three
+    send_* functions at their point of use (routers.auth) by default.
+    Tests that want to assert on send behavior re-patch locally, which
+    just shadows this one for that `with` block."""
+    with (
+        patch("routers.auth.send_password_reset_email"),
+        patch("routers.auth.send_welcome_email"),
+        patch("routers.auth.send_password_changed_email"),
+    ):
+        yield
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -53,6 +84,30 @@ def db_session():
         session.close()
 
 
+def _fake_current_user() -> User:
+    """Stand-in for get_current_user — every router except auth.py now
+    requires a logged-in user, so the `client` fixture authenticates as this
+    fake user by default rather than every existing test needing real login."""
+    return User(
+        id=1,
+        email="test@example.com",
+        hashed_password=hash_password("test-password-123"),
+        full_name="Test User",
+        is_active=True,
+    )
+
+
 @pytest.fixture
 def client():
+    app.dependency_overrides[get_current_user] = _fake_current_user
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.fixture
+def anon_client():
+    """A client with no auth override — for tests that specifically verify
+    unauthenticated requests are rejected."""
     return TestClient(app)

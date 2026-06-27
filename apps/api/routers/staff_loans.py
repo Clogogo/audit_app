@@ -6,13 +6,14 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from utils.auth import get_current_user
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Staff, StaffLoan, StaffLoanPayment, Transaction
 
-router = APIRouter(prefix="/staff-loans", tags=["staff-loans"])
+router = APIRouter(prefix="/staff-loans", tags=["staff-loans"], dependencies=[Depends(get_current_user)])
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

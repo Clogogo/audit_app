@@ -96,6 +96,13 @@ def initialize_database() -> None:
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     with engine.connect() as connection:
+        # NOTE: table/column identifiers interpolated into raw SQL below come
+        # only from the hardcoded literals above (schema_updates, bool_columns)
+        # or from existing_tables/inspector.get_columns() — never from request
+        # input. SQL identifiers can't be parameterized via bind params, so
+        # this f-string pattern is the normal way to build DDL; just never
+        # feed it a value that traces back to a user-supplied string.
+
         # Migrate staff_loans: drop legacy monthly_deduction (NOT NULL) → use deduction_rate
         if "staff_loans" in existing_tables:
             sl_cols = {col["name"] for col in inspector.get_columns("staff_loans")}
