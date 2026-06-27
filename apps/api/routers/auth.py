@@ -9,6 +9,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -136,6 +137,13 @@ def forgot_password(request: Request, data: ForgotPasswordRequest, db: Session =
     to enumerate which emails have accounts — the token is only generated
     and emailed if a matching user actually exists.
     """
+    # If email sending is unconfigured, there's no point creating a token
+    # that can never be delivered — short-circuit before touching the DB,
+    # still returning the same generic response either way.
+    if not os.getenv("RESEND_API_KEY"):
+        logger.error("RESEND_API_KEY is not set — /auth/forgot-password cannot send reset emails")
+        return {"message": "If that email is registered, a password reset link has been sent."}
+
     user = db.query(User).filter(User.email == data.email).first()
     if user:
         raw_token = secrets.token_urlsafe(32)
@@ -176,23 +184,33 @@ def reset_password(request: Request, data: ResetPasswordRequest, db: Session = D
         )
 
     token_hash = _hash_token(data.token)
-    reset_token = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
-    if (
-        not reset_token
-        or reset_token.used
-        or reset_token.expires_at < datetime.utcnow()
-    ):
+    # Atomically flip used False -> True in a single UPDATE, gated on the
+    # same WHERE that defines validity, so two concurrent requests with the
+    # same token can't both pass: the database serializes the row write,
+    # and whichever loses the race matches zero rows here.
+    result = db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.token_hash == token_hash,
+            PasswordResetToken.used == False,  # noqa: E712
+            PasswordResetToken.expires_at >= datetime.utcnow(),
+        )
+        .values(used=True)
+    )
+    if result.rowcount == 0:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
         )
 
+    reset_token = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
     user = db.get(User, reset_token.user_id)
     if not user:
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
 
     user.hashed_password = hash_password(data.new_password)
-    reset_token.used = True
     db.commit()
 
     try:

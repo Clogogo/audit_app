@@ -76,6 +76,18 @@ def test_register_succeeds_even_if_welcome_email_fails(anon_client, db_session):
         assert resp.status_code == 201, resp.text
 
 
+def test_forgot_password_short_circuits_without_creating_a_token_when_email_unconfigured(anon_client, db_session):
+    user = User(email="unconfigured@example.com", hashed_password=hash_password("oldpass123"), is_active=True)
+    db_session.add(user)
+    db_session.commit()
+
+    with patch.dict("os.environ", {"RESEND_API_KEY": ""}):
+        resp = anon_client.post("/auth/forgot-password", json={"email": "unconfigured@example.com"})
+
+    assert resp.status_code == 200
+    assert db_session.query(PasswordResetToken).filter(PasswordResetToken.user_id == user.id).count() == 0
+
+
 def test_forgot_password_gives_same_response_whether_or_not_email_exists(anon_client, db_session):
     # Must not be usable to enumerate which emails have accounts.
     user = User(email="exists3@example.com", hashed_password=hash_password("oldpass123"), is_active=True)
