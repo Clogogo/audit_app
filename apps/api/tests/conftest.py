@@ -19,7 +19,6 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key-not-real")
 os.environ.setdefault("REGISTRATION_INVITE_CODE", "test-invite-code")
-os.environ.setdefault("PASSWORD_RECOVERY_CODE", "test-recovery-code")
 
 import pytest
 from fastapi.testclient import TestClient
