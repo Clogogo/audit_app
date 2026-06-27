@@ -45,7 +45,7 @@ def _reset_rate_limiter():
 
 @pytest.fixture(autouse=True)
 def _mock_email_sending():
-    """No test should make a real Resend API call — patch all three
+    """No test should make a real Maileroo API call — patch all three
     send_* functions at their point of use (routers.auth) by default.
     Tests that want to assert on send behavior re-patch locally, which
     just shadows this one for that `with` block."""

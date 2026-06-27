@@ -208,6 +208,14 @@ def reset_password(request: Request, data: ResetPasswordRequest, db: Session = D
         )
 
     reset_token = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
+    # Guard against the row vanishing between the UPDATE above and this
+    # SELECT (e.g. the user was deleted and ON DELETE CASCADE removed the
+    # token too) — without this, reset_token.user_id below would raise an
+    # AttributeError on None and surface as an uncontrolled 500.
+    if not reset_token:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
+
     user = db.get(User, reset_token.user_id)
     if not user:
         db.rollback()

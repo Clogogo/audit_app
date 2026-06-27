@@ -2,6 +2,7 @@
 separate and trivial to mock in tests; _send and _card do the shared
 plumbing/markup. Colors match the app's actual brand palette
 (apps/web/src/styles.css --primary/--foreground/etc, converted to hex)."""
+import html
 import os
 
 import requests
@@ -125,37 +126,43 @@ def _send(to_email: str, subject: str, html: str) -> None:
 
 
 def send_password_reset_email(to_email: str, reset_link: str) -> None:
-    html = _card(
+    # reset_link is server-built (FRONTEND_URL + a URL-safe random token),
+    # but escape it anyway — it ends up in both an href attribute and as
+    # visible text, and FRONTEND_URL is operator-configured, not hardcoded.
+    safe_link = html.escape(reset_link, quote=True)
+    body_html = _card(
         eyebrow="Password Reset",
         heading="Reset your password",
         body="We received a request to reset the password for your FinanceAudit account. Click below to choose a new one.",
         footnote=(
-            f"This link expires in 30 minutes. Button not working? Copy and paste this link into your browser: {reset_link}"
+            f"This link expires in 30 minutes. Button not working? Copy and paste this link into your browser: {safe_link}"
         ),
         cta_label="Reset Password",
-        cta_link=reset_link,
+        cta_link=safe_link,
         notice="Didn't request this? You can safely ignore this email — your password won't be changed.",
     )
-    _send(to_email, "Reset your FinanceAudit password", html)
+    _send(to_email, "Reset your FinanceAudit password", body_html)
 
 
 def send_welcome_email(to_email: str, full_name: str | None = None) -> None:
-    name = full_name or to_email.split("@")[0]
-    html = _card(
+    # full_name is user-controlled at registration time — escape before
+    # it goes into the HTML heading, or a crafted name could inject markup.
+    name = html.escape(full_name or to_email.split("@")[0])
+    body_html = _card(
         eyebrow="Welcome",
         heading=f"Welcome aboard, {name}",
         body="Your FinanceAudit account is ready. You can log in any time with the email and password you chose.",
         footnote="Didn't create this account? Please contact your administrator.",
     )
-    _send(to_email, "Welcome to FinanceAudit", html)
+    _send(to_email, "Welcome to FinanceAudit", body_html)
 
 
 def send_password_changed_email(to_email: str) -> None:
-    html = _card(
+    body_html = _card(
         eyebrow="Security Notice",
         heading="Your password was changed",
         body="This confirms that the password for your FinanceAudit account was just changed.",
         footnote="If you made this change, no action is needed.",
         notice="Didn't make this change? Contact your administrator immediately — someone else may have access to your account.",
     )
-    _send(to_email, "Your FinanceAudit password was changed", html)
+    _send(to_email, "Your FinanceAudit password was changed", body_html)
