@@ -29,7 +29,7 @@ export function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-3">
           <div className="flex items-center justify-center gap-2 text-primary mb-2">
