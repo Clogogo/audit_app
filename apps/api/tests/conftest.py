@@ -19,15 +19,30 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key-not-real")
 os.environ.setdefault("REGISTRATION_INVITE_CODE", "test-invite-code")
-os.environ.setdefault("PASSWORD_RECOVERY_CODE", "test-recovery-code")
+os.environ.setdefault("RESEND_API_KEY", "test-key-not-real")
 
 import pytest
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 
 from database import Base, SessionLocal, engine, initialize_database
 from main import app
 from models import User
 from utils.auth import get_current_user, hash_password
+
+
+@pytest.fixture(autouse=True)
+def _mock_email_sending():
+    """No test should make a real Resend API call — patch all three
+    send_* functions at their point of use (routers.auth) by default.
+    Tests that want to assert on send behavior re-patch locally, which
+    just shadows this one for that `with` block."""
+    with (
+        patch("routers.auth.send_password_reset_email"),
+        patch("routers.auth.send_welcome_email"),
+        patch("routers.auth.send_password_changed_email"),
+    ):
+        yield
 
 
 @pytest.fixture(scope="session", autouse=True)

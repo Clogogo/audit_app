@@ -33,6 +33,21 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class PasswordResetToken(Base):
+    """Single-use, time-limited token emailed to a user for password
+    recovery. Only token_hash (sha256 of the random token) is stored —
+    never the raw token — so a DB read alone can't be used to reset an
+    account."""
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class UploadedFile(Base):
     __tablename__ = "uploaded_files"
 

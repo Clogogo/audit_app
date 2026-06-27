@@ -30,8 +30,10 @@ services:
         value: "1440"
       - key: REGISTRATION_INVITE_CODE
         sync: false          # Required for POST /auth/register to work at all
-      - key: PASSWORD_RECOVERY_CODE
-        sync: false          # Required for POST /auth/forgot-password to work at all
+      - key: RESEND_API_KEY
+        sync: false          # Required for POST /auth/forgot-password to actually send an email
+      - key: RESEND_FROM_EMAIL
+        value: onboarding@resend.dev
       - key: CORS_ORIGINS
         sync: false          # Set to your frontend URL
       

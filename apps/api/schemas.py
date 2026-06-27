@@ -22,14 +22,15 @@ class UserLogin(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    """Schema for resetting a forgotten password by email, gated by a
-    server-side recovery code (PASSWORD_RECOVERY_CODE) only the admin has —
-    not a public "anyone who knows the email" reset. recovery_code is
-    optional (not required) so an omitted code gets the same 403 the router
-    raises for a wrong one, rather than a 422 validation error."""
+    """Schema for requesting a password-reset email."""
     email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    """Schema for completing a password reset using the token emailed by
+    POST /auth/forgot-password."""
+    token: str
     new_password: str
-    recovery_code: Optional[str] = None
 
 
 class ChangePasswordRequest(BaseModel):

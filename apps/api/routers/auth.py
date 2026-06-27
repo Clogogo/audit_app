@@ -2,14 +2,22 @@
 Authentication API
 User registration, login, and profile management
 """
+import hashlib
+import logging
 import os
+import secrets
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User
-from schemas import UserRegister, UserLogin, Token, UserOut, ForgotPasswordRequest, ChangePasswordRequest
+from models import PasswordResetToken, User
+from schemas import (
+    UserRegister, UserLogin, Token, UserOut,
+    ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest,
+)
 from utils.auth import (
     hash_password,
     verify_password,
@@ -17,9 +25,17 @@ from utils.auth import (
     create_access_token,
     get_current_user,
 )
+from utils.email import send_password_reset_email, send_welcome_email, send_password_changed_email
 from utils.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
+
+RESET_TOKEN_EXPIRE_MINUTES = 30
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 @router.post("/register", response_model=UserOut, status_code=201)
@@ -66,6 +82,14 @@ def register(request: Request, data: UserRegister, db: Session = Depends(get_db)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    try:
+        send_welcome_email(new_user.email, new_user.full_name)
+    except Exception:
+        # Registration already succeeded — a failed welcome email shouldn't
+        # fail the request or block the account from being usable.
+        logger.exception("Failed to send welcome email")
+
     return new_user
 
 
@@ -108,43 +132,92 @@ def login(request: Request, credentials: UserLogin, db: Session = Depends(get_db
 @limiter.limit("5/minute")
 def forgot_password(request: Request, data: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """
-    Reset a forgotten password by email — gated by recovery_code, which must
-    match the PASSWORD_RECOVERY_CODE env var. There's no email service to
-    send a reset link through, so this code (set by the admin in the
-    deployment's environment, not in source control) stands in for one;
-    without it, anyone who knew an account's email could take it over.
+    Request a password-reset email. Always returns the same generic message
+    whether or not the email is registered, so this endpoint can't be used
+    to enumerate which emails have accounts — the token is only generated
+    and emailed if a matching user actually exists.
+    """
+    # If email sending is unconfigured, there's no point creating a token
+    # that can never be delivered — short-circuit before touching the DB,
+    # still returning the same generic response either way.
+    if not os.getenv("RESEND_API_KEY"):
+        logger.error("RESEND_API_KEY is not set — /auth/forgot-password cannot send reset emails")
+        return {"message": "If that email is registered, a password reset link has been sent."}
 
-    Args:
-        data: Account email, the new password to set, and the recovery code
-        db: Database session
+    user = db.query(User).filter(User.email == data.email).first()
+    if user:
+        raw_token = secrets.token_urlsafe(32)
+        reset_token = PasswordResetToken(
+            user_id=user.id,
+            token_hash=_hash_token(raw_token),
+            expires_at=datetime.utcnow() + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES),
+        )
+        db.add(reset_token)
+        db.commit()
+
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:4200").rstrip("/")
+        reset_link = f"{frontend_url}/reset-password?token={raw_token}"
+        try:
+            send_password_reset_email(user.email, reset_link)
+        except Exception:
+            # Don't leak send failures to the caller — that would let
+            # someone distinguish "email exists" from "email send failed".
+            logger.exception("Failed to send password reset email")
+
+    return {"message": "If that email is registered, a password reset link has been sent."}
+
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+def reset_password(request: Request, data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Complete a password reset using the token emailed by /auth/forgot-password.
 
     Raises:
-        HTTPException: 403 if PASSWORD_RECOVERY_CODE is unset or recovery_code doesn't match
-        HTTPException: 404 if no account exists for that email
+        HTTPException: 400 if the token is invalid, expired, or already used
         HTTPException: 422 if the new password is too short
     """
-    recovery_code = os.getenv("PASSWORD_RECOVERY_CODE")
-    if not recovery_code or data.recovery_code != recovery_code:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing recovery code",
-        )
-
     if len(data.new_password) < 6:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Password must be at least 6 characters",
         )
 
-    user = db.query(User).filter(User.email == data.email).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No account found with that email",
+    token_hash = _hash_token(data.token)
+    # Atomically flip used False -> True in a single UPDATE, gated on the
+    # same WHERE that defines validity, so two concurrent requests with the
+    # same token can't both pass: the database serializes the row write,
+    # and whichever loses the race matches zero rows here.
+    result = db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.token_hash == token_hash,
+            PasswordResetToken.used == False,  # noqa: E712
+            PasswordResetToken.expires_at >= datetime.utcnow(),
         )
+        .values(used=True)
+    )
+    if result.rowcount == 0:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    reset_token = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
+    user = db.get(User, reset_token.user_id)
+    if not user:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
 
     user.hashed_password = hash_password(data.new_password)
     db.commit()
+
+    try:
+        send_password_changed_email(user.email)
+    except Exception:
+        logger.exception("Failed to send password-changed confirmation email")
+
     return {"message": "Password updated. You can now log in with your new password."}
 
 
@@ -178,6 +251,12 @@ def change_password(
 
     current_user.hashed_password = hash_password(data.new_password)
     db.commit()
+
+    try:
+        send_password_changed_email(current_user.email)
+    except Exception:
+        logger.exception("Failed to send password-changed confirmation email")
+
     return {"message": "Password updated."}
 
 
