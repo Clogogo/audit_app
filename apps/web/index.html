@@ -12,9 +12,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Petrona:wght@500;600;700&display=swap" rel="stylesheet" />
     <script>
       (function () {
-        var stored = localStorage.getItem('theme');
-        var dark = stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        if (dark) document.documentElement.classList.add('dark');
+        try {
+          var stored = localStorage.getItem('theme');
+          var dark = stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) {
+          // localStorage/matchMedia can throw in some privacy modes — fall
+          // back to light rather than breaking page parsing.
+        }
       })();
     </script>
   </head>

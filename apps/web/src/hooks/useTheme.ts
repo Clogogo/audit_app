@@ -7,9 +7,14 @@ const listeners = new Set<() => void>();
 let initialized = false;
 
 function getInitialTheme(): Theme {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') return stored;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored === 'light' || stored === 'dark') return stored;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } catch {
+    // localStorage/matchMedia can throw in some privacy modes.
+    return 'light';
+  }
 }
 
 // index.html's inline script already sets the class before React mounts
@@ -33,7 +38,11 @@ function subscribe(callback: () => void) {
 
 function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle('dark', theme === 'dark');
-  localStorage.setItem(STORAGE_KEY, theme);
+  try {
+    localStorage.setItem(STORAGE_KEY, theme);
+  } catch {
+    // Persistence is a nice-to-have — don't let it block the toggle itself.
+  }
   listeners.forEach((listener) => listener());
 }
 
