@@ -24,7 +24,7 @@ from utils.auth import (
     create_access_token,
     get_current_user,
 )
-from utils.email import send_password_reset_email
+from utils.email import send_password_reset_email, send_welcome_email, send_password_changed_email
 from utils.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -81,6 +81,14 @@ def register(request: Request, data: UserRegister, db: Session = Depends(get_db)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    try:
+        send_welcome_email(new_user.email, new_user.full_name)
+    except Exception:
+        # Registration already succeeded — a failed welcome email shouldn't
+        # fail the request or block the account from being usable.
+        logger.exception("Failed to send welcome email")
+
     return new_user
 
 
@@ -186,6 +194,12 @@ def reset_password(request: Request, data: ResetPasswordRequest, db: Session = D
     user.hashed_password = hash_password(data.new_password)
     reset_token.used = True
     db.commit()
+
+    try:
+        send_password_changed_email(user.email)
+    except Exception:
+        logger.exception("Failed to send password-changed confirmation email")
+
     return {"message": "Password updated. You can now log in with your new password."}
 
 
@@ -219,6 +233,12 @@ def change_password(
 
     current_user.hashed_password = hash_password(data.new_password)
     db.commit()
+
+    try:
+        send_password_changed_email(current_user.email)
+    except Exception:
+        logger.exception("Failed to send password-changed confirmation email")
+
     return {"message": "Password updated."}
 
 
