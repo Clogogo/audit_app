@@ -81,7 +81,7 @@ def test_forgot_password_short_circuits_without_creating_a_token_when_email_unco
     db_session.add(user)
     db_session.commit()
 
-    with patch.dict("os.environ", {"RESEND_API_KEY": ""}):
+    with patch.dict("os.environ", {"MAILEROO_API_KEY": ""}):
         resp = anon_client.post("/auth/forgot-password", json={"email": "unconfigured@example.com"})
 
     assert resp.status_code == 200

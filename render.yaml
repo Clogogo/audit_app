@@ -30,10 +30,10 @@ services:
         value: "1440"
       - key: REGISTRATION_INVITE_CODE
         sync: false          # Required for POST /auth/register to work at all
-      - key: RESEND_API_KEY
+      - key: MAILEROO_API_KEY
         sync: false          # Required for POST /auth/forgot-password to actually send an email
-      - key: RESEND_FROM_EMAIL
-        value: onboarding@resend.dev
+      - key: MAILEROO_FROM_EMAIL
+        sync: false          # e.g. noreply@<your-assigned-subdomain>.maileroo.org
       - key: CORS_ORIGINS
         sync: false          # Set to your frontend URL
       

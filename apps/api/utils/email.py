@@ -1,8 +1,11 @@
-"""Transactional email via Resend. Each send_* function is kept separate and
-trivial to mock in tests; _send and _card do the shared plumbing/markup."""
+"""Transactional email via Maileroo's HTTP API. Each send_* function is kept
+separate and trivial to mock in tests; _send and _card do the shared
+plumbing/markup."""
 import os
 
-import resend
+import requests
+
+MAILEROO_API_URL = "https://smtp.maileroo.com/api/v2/emails"
 
 _CARD_TEMPLATE = """\
 <!DOCTYPE html>
@@ -56,19 +59,24 @@ def _card(heading: str, body: str, footnote: str, cta_label: str = "", cta_link:
 
 
 def _send(to_email: str, subject: str, html: str) -> None:
-    api_key = os.getenv("RESEND_API_KEY")
-    if not api_key:
-        raise RuntimeError("RESEND_API_KEY is not set — cannot send email")
+    api_key = os.getenv("MAILEROO_API_KEY")
+    from_email = os.getenv("MAILEROO_FROM_EMAIL")
+    if not api_key or not from_email:
+        raise RuntimeError("MAILEROO_API_KEY/MAILEROO_FROM_EMAIL are not set — cannot send email")
 
-    resend.api_key = api_key
-    from_email = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
-
-    resend.Emails.send({
-        "from": f"FinanceAudit <{from_email}>",
-        "to": [to_email],
-        "subject": subject,
-        "html": html,
-    })
+    resp = requests.post(
+        MAILEROO_API_URL,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "from": {"address": from_email, "display_name": "FinanceAudit"},
+            "to": {"address": to_email},
+            "subject": subject,
+            "html": html,
+        },
+        timeout=10,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Maileroo send failed ({resp.status_code}): {resp.text}")
 
 
 def send_password_reset_email(to_email: str, reset_link: str) -> None:

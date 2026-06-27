@@ -140,8 +140,8 @@ def forgot_password(request: Request, data: ForgotPasswordRequest, db: Session =
     # If email sending is unconfigured, there's no point creating a token
     # that can never be delivered — short-circuit before touching the DB,
     # still returning the same generic response either way.
-    if not os.getenv("RESEND_API_KEY"):
-        logger.error("RESEND_API_KEY is not set — /auth/forgot-password cannot send reset emails")
+    if not os.getenv("MAILEROO_API_KEY"):
+        logger.error("MAILEROO_API_KEY is not set — /auth/forgot-password cannot send reset emails")
         return {"message": "If that email is registered, a password reset link has been sent."}
 
     user = db.query(User).filter(User.email == data.email).first()

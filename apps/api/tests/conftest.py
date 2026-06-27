@@ -19,7 +19,8 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key-not-real")
 os.environ.setdefault("REGISTRATION_INVITE_CODE", "test-invite-code")
-os.environ.setdefault("RESEND_API_KEY", "test-key-not-real")
+os.environ.setdefault("MAILEROO_API_KEY", "test-key-not-real")
+os.environ.setdefault("MAILEROO_FROM_EMAIL", "noreply@test.maileroo.org")
 
 import pytest
 from fastapi.testclient import TestClient
