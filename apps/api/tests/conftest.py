@@ -19,7 +19,8 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key-not-real")
 os.environ.setdefault("REGISTRATION_INVITE_CODE", "test-invite-code")
-os.environ.setdefault("RESEND_API_KEY", "test-key-not-real")
+os.environ.setdefault("MAILEROO_API_KEY", "test-key-not-real")
+os.environ.setdefault("MAILEROO_FROM_EMAIL", "noreply@test.maileroo.org")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,6 +30,17 @@ from database import Base, SessionLocal, engine, initialize_database
 from main import app
 from models import User
 from utils.auth import get_current_user, hash_password
+from utils.rate_limit import limiter
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """slowapi's in-memory store persists across tests in the same process —
+    without this, tests hitting rate-limited endpoints (login,
+    forgot-password, etc.) multiple times across the suite trip the real
+    5/minute limit and fail with no relation to what they're testing."""
+    limiter.reset()
+    yield
 
 
 @pytest.fixture(autouse=True)
