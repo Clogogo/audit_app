@@ -155,7 +155,10 @@ def forgot_password(request: Request, data: ForgotPasswordRequest, db: Session =
         db.add(reset_token)
         db.commit()
 
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:4200").rstrip("/")
+        # `or` (not getenv's default arg) so an empty-string env var — set but
+        # blank, not unset — still falls back instead of producing a
+        # link with no domain at all.
+        frontend_url = (os.getenv("FRONTEND_URL") or "http://localhost:4200").rstrip("/")
         reset_link = f"{frontend_url}/reset-password?token={raw_token}"
         try:
             send_password_reset_email(user.email, reset_link)

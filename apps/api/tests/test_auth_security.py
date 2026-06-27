@@ -127,6 +127,22 @@ def test_forgot_password_creates_token_and_emails_it_only_for_known_email(anon_c
     assert len(tokens) == 1
     assert tokens[0].used is False
 
+
+def test_forgot_password_link_has_a_domain_even_when_frontend_url_is_blank_not_unset(anon_client, db_session):
+    # FRONTEND_URL set but empty (vs. truly unset) must still fall back —
+    # os.getenv's default arg only kicks in when the var is unset.
+    user = User(email="exists8@example.com", hashed_password=hash_password("oldpass123"), is_active=True)
+    db_session.add(user)
+    db_session.commit()
+
+    with patch.dict("os.environ", {"FRONTEND_URL": ""}):
+        with patch("routers.auth.send_password_reset_email") as mock_send:
+            resp = anon_client.post("/auth/forgot-password", json={"email": "exists8@example.com"})
+            assert resp.status_code == 200, resp.text
+            assert mock_send.call_count == 1
+            reset_link = mock_send.call_args[0][1]
+            assert reset_link.startswith("http://localhost:4200/reset-password?token=")
+
     with patch("routers.auth.send_password_reset_email") as mock_send:
         anon_client.post("/auth/forgot-password", json={"email": "doesnotexist@example.com"})
         assert mock_send.call_count == 0
