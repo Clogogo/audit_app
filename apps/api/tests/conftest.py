@@ -30,6 +30,17 @@ from database import Base, SessionLocal, engine, initialize_database
 from main import app
 from models import User
 from utils.auth import get_current_user, hash_password
+from utils.rate_limit import limiter
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """slowapi's in-memory store persists across tests in the same process —
+    without this, tests hitting rate-limited endpoints (login,
+    forgot-password, etc.) multiple times across the suite trip the real
+    5/minute limit and fail with no relation to what they're testing."""
+    limiter.reset()
+    yield
 
 
 @pytest.fixture(autouse=True)

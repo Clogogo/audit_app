@@ -6,6 +6,8 @@ import hashlib
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+import pytest
+
 from models import PasswordResetToken, User
 from utils.auth import hash_password
 
@@ -76,12 +78,21 @@ def test_register_succeeds_even_if_welcome_email_fails(anon_client, db_session):
         assert resp.status_code == 201, resp.text
 
 
-def test_forgot_password_short_circuits_without_creating_a_token_when_email_unconfigured(anon_client, db_session):
+@pytest.mark.parametrize(
+    "missing_env",
+    [
+        {"MAILEROO_API_KEY": ""},
+        {"MAILEROO_FROM_EMAIL": ""},
+        {"MAILEROO_API_KEY": "", "MAILEROO_FROM_EMAIL": ""},
+    ],
+    ids=["missing_api_key", "missing_from_email", "missing_both"],
+)
+def test_forgot_password_short_circuits_without_creating_a_token_when_email_unconfigured(anon_client, db_session, missing_env):
     user = User(email="unconfigured@example.com", hashed_password=hash_password("oldpass123"), is_active=True)
     db_session.add(user)
     db_session.commit()
 
-    with patch.dict("os.environ", {"MAILEROO_API_KEY": ""}):
+    with patch.dict("os.environ", missing_env):
         resp = anon_client.post("/auth/forgot-password", json={"email": "unconfigured@example.com"})
 
     assert resp.status_code == 200
