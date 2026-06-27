@@ -28,6 +28,7 @@ import {
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
+import { ThemeToggle } from './ThemeToggle';
 
 const topNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -292,6 +293,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <p className="text-sm font-medium truncate">{user?.full_name || 'User'}</p>
               <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
             </div>
+            <ThemeToggle />
           </div>
           <Button
             variant="outline"
@@ -352,10 +354,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-1">
             <Wallet className="h-5 w-5 text-primary" />
             <span className="font-bold">FinanceAudit</span>
           </div>
+          <ThemeToggle />
         </header>
 
         <main className="flex-1 overflow-auto">
