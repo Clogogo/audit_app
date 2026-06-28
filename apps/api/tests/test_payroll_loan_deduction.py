@@ -132,6 +132,32 @@ def test_unpaid_existing_entry_shows_live_deduction_not_a_stale_snapshot(client,
     assert line["is_paid"] is False
 
 
+def test_unpaid_entry_caps_deduction_against_its_own_reduced_gross_override(client, db_session):
+    # _loan_deduction_for_month caps against the Staff record's current
+    # monthly_gross (100000), but this draft line has its own reduced
+    # gross override (20000) — the recomputed deduction must be capped
+    # against THAT, not the staff record's higher gross, or net_salary
+    # would go negative.
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=100000.0)
+    loan = _create_loan(db_session, staff, loan_amount=200000.0)
+
+    draft_entry = PayrollEntry(
+        staff_id=staff.id, period_year=2026, period_month=1,
+        gross_salary=20000.0, bonus=0.0, loan_deduction=0.0,
+        other_deductions=0.0, net_salary=20000.0, is_paid=False,
+    )
+    db_session.add(draft_entry)
+    db_session.commit()
+
+    _add_payment(db_session, loan, amount_paid=60000.0, paid_date="2026-01-10")
+
+    resp = client.get("/payroll/compute", params={"year": 2026, "month": 1})
+    assert resp.status_code == 200, resp.text
+    line = next(l for l in resp.json() if l["staff_id"] == staff.id)
+    assert line["loan_deduction"] == 20000.0
+    assert line["net_salary"] == 0.0
+
+
 def test_paid_existing_entry_keeps_its_frozen_snapshot(client, db_session):
     # Once truly processed (is_paid=True), the entry is a historical record
     # — a loan payment recorded afterward must NOT retroactively change it.

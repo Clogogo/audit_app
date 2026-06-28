@@ -239,6 +239,12 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
             # since. Recompute it live; keep the user's own gross/bonus/other
             # overrides rather than discarding their draft edits.
             loan_ded = _loan_deduction_for_month(s, year, month, db)
+            # _loan_deduction_for_month caps against the Staff record's
+            # current monthly_gross, but this draft line may have its own
+            # reduced gross/bonus override — re-cap against what's actually
+            # available on THIS line so net_salary can't go negative.
+            available_for_loan = max(0.0, existing.gross_salary + existing.bonus - existing.other_deductions)
+            loan_ded = min(loan_ded, available_for_loan)
             net = round(existing.gross_salary + existing.bonus - loan_ded - existing.other_deductions, 2)
             result.append(PayrollLineOut(
                 staff_id=s.id,
