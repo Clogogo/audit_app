@@ -15,7 +15,7 @@ from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import PayrollEntry, Staff, StaffLoan, Transaction
+from models import PayrollEntry, Staff, StaffLoan, StaffLoanPayment, Transaction
 
 router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(get_current_user)])
 
@@ -80,13 +80,15 @@ def _has_any_name_token_overlap(staff_name: str, text: str) -> bool:
     )
 
 
-def _active_loans_for_staff(staff_id: int, employee_name: str, db: Session) -> list[StaffLoan]:
-    """Return active loans matching this staff member."""
+def _loans_for_staff(staff_id: int, employee_name: str, db: Session) -> list[StaffLoan]:
+    """Return all loans matching this staff member, active or not — a
+    payment recorded for a loan that has since been paid off (is_active
+    flipped to False on the final payment) must still count toward the
+    month it was actually made in."""
     from sqlalchemy import or_
     return (
         db.query(StaffLoan)
         .filter(
-            StaffLoan.is_active == True,
             or_(
                 StaffLoan.staff_id == staff_id,
                 StaffLoan.employee_name.ilike(f"%{employee_name}%"),
@@ -97,19 +99,28 @@ def _active_loans_for_staff(staff_id: int, employee_name: str, db: Session) -> l
 
 
 def _loan_deduction_for_month(staff: Staff, year: int, month: int, db: Session) -> float:
-    """Total loan deduction for a staff member in a given month."""
-    last_day = calendar.monthrange(year, month)[1]
-    period_end = date(year, month, last_day)
+    """Total loan deduction for a staff member in a given month — the sum of
+    StaffLoanPayment.amount_paid actually recorded (via the Staff Loans page)
+    against that staff's loan(s) with paid_date in the period. Reflects what
+    was really repaid, not a gross*deduction_rate estimate that could drift
+    from reality once a loan is partway paid off."""
+    month_start = date(year, month, 1)
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
 
-    loans = _active_loans_for_staff(staff.id, staff.full_name, db)
-    total = 0.0
-    for loan in loans:
-        if loan.deduction_start > period_end:
-            continue
-        rate = loan.deduction_rate if loan.deduction_rate is not None else 0.5
-        total += staff.monthly_gross * rate
+    loan_ids = [loan.id for loan in _loans_for_staff(staff.id, staff.full_name, db)]
+    if not loan_ids:
+        return 0.0
 
-    return round(min(total, staff.monthly_gross), 2)
+    payments = (
+        db.query(StaffLoanPayment)
+        .filter(
+            StaffLoanPayment.loan_id.in_(loan_ids),
+            StaffLoanPayment.paid_date >= month_start,
+            StaffLoanPayment.paid_date <= month_end,
+        )
+        .all()
+    )
+    return round(sum(p.amount_paid for p in payments), 2)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
