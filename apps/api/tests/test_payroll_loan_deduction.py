@@ -78,6 +78,20 @@ def test_deduction_sums_multiple_payments_in_the_same_month(client, db_session):
     assert line["loan_deduction"] == 15000.0
 
 
+def test_deduction_caps_at_gross_if_a_recorded_payment_exceeds_it(client, db_session):
+    # A sanity guard, not a reintroduction of the old gross*rate estimate —
+    # an over-recorded payment must not be able to drive net_salary negative
+    # or make the salary-transaction fallback match accept any amount.
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=50000.0)
+    loan = _create_loan(db_session, staff, loan_amount=200000.0)
+    _add_payment(db_session, loan, amount_paid=80000.0, paid_date="2026-01-15")
+
+    resp = client.get("/payroll/compute", params={"year": 2026, "month": 1})
+    assert resp.status_code == 200, resp.text
+    line = next(l for l in resp.json() if l["staff_id"] == staff.id)
+    assert line["loan_deduction"] == 50000.0
+
+
 def test_deduction_still_counts_a_payment_on_a_now_inactive_loan(client, db_session):
     # The final payment on a loan flips is_active to False (see
     # add_payment in staff_loans.py) — that must not erase the deduction

@@ -111,16 +111,18 @@ def _loan_deduction_for_month(staff: Staff, year: int, month: int, db: Session) 
     if not loan_ids:
         return 0.0
 
-    payments = (
-        db.query(StaffLoanPayment)
-        .filter(
-            StaffLoanPayment.loan_id.in_(loan_ids),
-            StaffLoanPayment.paid_date >= month_start,
-            StaffLoanPayment.paid_date <= month_end,
-        )
-        .all()
-    )
-    return round(sum(p.amount_paid for p in payments), 2)
+    from sqlalchemy import func
+    total = db.query(func.sum(StaffLoanPayment.amount_paid)).filter(
+        StaffLoanPayment.loan_id.in_(loan_ids),
+        StaffLoanPayment.paid_date >= month_start,
+        StaffLoanPayment.paid_date <= month_end,
+    ).scalar() or 0.0
+
+    # Sanity cap, not a reintroduction of the old gross*rate estimate: a
+    # mis-recorded payment exceeding the staff's gross would otherwise drive
+    # net_salary negative and make the salary-transaction fallback match
+    # (amount >= net) accept any transaction at all.
+    return round(min(total, staff.monthly_gross), 2)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
