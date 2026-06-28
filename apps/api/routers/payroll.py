@@ -216,7 +216,9 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
             .first()
         )
 
-        if existing:
+        if existing and existing.is_paid:
+            # A truly processed entry is a frozen historical record — show
+            # exactly what was paid, not a live recalculation.
             result.append(PayrollLineOut(
                 staff_id=s.id,
                 full_name=s.full_name,
@@ -228,6 +230,33 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 net_salary=existing.net_salary,
                 is_paid=bool(existing.is_paid),
                 paid_date=existing.paid_date,
+                entry_id=existing.id,
+            ))
+        elif existing:
+            # Not yet paid (e.g. skipped, or reset via "Edit Payroll") — the
+            # stored loan_deduction is a stale snapshot from whenever this
+            # row was last touched, which can predate loan payments recorded
+            # since. Recompute it live; keep the user's own gross/bonus/other
+            # overrides rather than discarding their draft edits.
+            loan_ded = _loan_deduction_for_month(s, year, month, db)
+            # _loan_deduction_for_month caps against the Staff record's
+            # current monthly_gross, but this draft line may have its own
+            # reduced gross/bonus override — re-cap against what's actually
+            # available on THIS line so net_salary can't go negative.
+            available_for_loan = max(0.0, existing.gross_salary + existing.bonus - existing.other_deductions)
+            loan_ded = min(loan_ded, available_for_loan)
+            net = round(existing.gross_salary + existing.bonus - loan_ded - existing.other_deductions, 2)
+            result.append(PayrollLineOut(
+                staff_id=s.id,
+                full_name=s.full_name,
+                role=s.role,
+                gross_salary=existing.gross_salary,
+                bonus=existing.bonus,
+                loan_deduction=loan_ded,
+                other_deductions=existing.other_deductions,
+                net_salary=net,
+                is_paid=False,
+                paid_date=None,
                 entry_id=existing.id,
             ))
         else:
