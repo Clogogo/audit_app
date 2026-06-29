@@ -1,7 +1,6 @@
 """Tests for the security hardening pass: every router now requires a
-logged-in user, registration is gated by an env-var invite code,
-forgot/reset-password use an emailed single-use token, and change-password
-requires the current password."""
+logged-in user, forgot/reset-password use an emailed single-use token, and
+change-password requires the current password."""
 import hashlib
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -38,32 +37,29 @@ def test_auth_me_still_requires_auth_but_other_auth_routes_dont(anon_client):
     assert resp.status_code in (401, 403)
 
 
-def test_register_rejects_missing_or_wrong_invite_code(anon_client):
+def test_register_succeeds_without_an_invite_code(anon_client, db_session):
     resp = anon_client.post("/auth/register", json={
-        "email": "newuser@example.com", "password": "secret123", "invite_code": "wrong-code",
-    })
-    assert resp.status_code == 403
-
-    # invite_code is optional in the schema specifically so omitting it
-    # entirely still hits the router's 403 check instead of a 422 validation
-    # error (the two should be indistinguishable to an attacker).
-    resp = anon_client.post("/auth/register", json={
-        "email": "newuser@example.com", "password": "secret123",
-    })
-    assert resp.status_code == 403
-
-
-def test_register_succeeds_with_correct_invite_code(anon_client, db_session):
-    resp = anon_client.post("/auth/register", json={
-        "email": "newuser2@example.com", "password": "secret123", "invite_code": "test-invite-code",
+        "email": "newuser2@example.com", "password": "secret123",
     })
     assert resp.status_code == 201, resp.text
+
+
+def test_register_rejects_a_duplicate_email(anon_client, db_session):
+    resp = anon_client.post("/auth/register", json={
+        "email": "dupeuser@example.com", "password": "secret123",
+    })
+    assert resp.status_code == 201, resp.text
+
+    resp = anon_client.post("/auth/register", json={
+        "email": "dupeuser@example.com", "password": "secret123",
+    })
+    assert resp.status_code == 400
 
 
 def test_register_sends_welcome_email(anon_client, db_session):
     with patch("routers.auth.send_welcome_email") as mock_send:
         resp = anon_client.post("/auth/register", json={
-            "email": "newuser3@example.com", "password": "secret123", "invite_code": "test-invite-code",
+            "email": "newuser3@example.com", "password": "secret123",
         })
         assert resp.status_code == 201
         assert mock_send.call_count == 1
@@ -73,7 +69,7 @@ def test_register_sends_welcome_email(anon_client, db_session):
 def test_register_succeeds_even_if_welcome_email_fails(anon_client, db_session):
     with patch("routers.auth.send_welcome_email", side_effect=RuntimeError("send failed")):
         resp = anon_client.post("/auth/register", json={
-            "email": "newuser4@example.com", "password": "secret123", "invite_code": "test-invite-code",
+            "email": "newuser4@example.com", "password": "secret123",
         })
         assert resp.status_code == 201, resp.text
 
