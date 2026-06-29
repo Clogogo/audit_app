@@ -42,28 +42,19 @@ def _hash_token(token: str) -> str:
 @limiter.limit("5/minute")
 def register(request: Request, data: UserRegister, db: Session = Depends(get_db)):
     """
-    Register a new user account. Requires invite_code to match the
-    REGISTRATION_INVITE_CODE env var — registration is not open to the
-    public internet.
+    Register a new user account.
 
     Args:
-        data: User registration data (email, password, invite_code, optional full_name)
+        request: Required by the rate limiter (5/minute) to key on client IP
+        data: User registration data (email, password, optional full_name)
         db: Database session
 
     Returns:
         Created user information
 
     Raises:
-        HTTPException: 403 if invite code is missing/incorrect or registration is disabled
         HTTPException: 400 if email already registered
     """
-    invite_code = os.getenv("REGISTRATION_INVITE_CODE")
-    if not invite_code or data.invite_code != invite_code:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing invite code",
-        )
-
     # Check if user already exists
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:

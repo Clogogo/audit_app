@@ -1,5 +1,6 @@
 import axios, { type AxiosResponse } from 'axios';
 import type {
+  User,
   Transaction,
   TransactionCreate,
   TransactionSummary,
@@ -30,6 +31,22 @@ import type {
   AssetsSummary,
   Term,
   TermCreate,
+  StaffMember,
+  StaffMemberIn,
+  StaffLoan,
+  StaffLoanIn,
+  LoanPayment,
+  LoanPaymentIn,
+  MatchedTransaction,
+  PayrollLine,
+  PayrollLineIn,
+  PayrollEntryOut,
+  SchoolLoan,
+  SchoolLoanIn,
+  SchoolLoanPaymentOut,
+  SchoolLoanPaymentIn,
+  AdvancePayment,
+  AdvancePaymentIn,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -407,8 +424,8 @@ export const deleteAsset = (id: number) =>
 export const login = (email: string, password: string) =>
   api.post<{ access_token: string; token_type: string }>('/auth/login', { email, password }).then(unwrap);
 
-export const register = (email: string, password: string, inviteCode: string, fullName?: string) =>
-  api.post('/auth/register', { email, password, invite_code: inviteCode, full_name: fullName }).then(unwrap);
+export const register = (email: string, password: string, fullName?: string) =>
+  api.post<User>('/auth/register', { email, password, full_name: fullName }).then(unwrap);
 
 export const requestPasswordReset = (email: string) =>
   api.post<{ message: string }>('/auth/forgot-password', { email }).then(unwrap);
@@ -422,7 +439,6 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 export const getCurrentUser = () =>
   api.get('/auth/me').then(unwrap);
 // ── Staff Directory ───────────────────────────────────────────────────────────
-import type { StaffMember, StaffMemberIn, StaffLoan, StaffLoanIn, LoanPayment, LoanPaymentIn, MatchedTransaction, PayrollLine, PayrollLineIn, PayrollEntryOut, SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn } from './types';
 
 export const listStaffMembers = (activeOnly = false) =>
   api.get<StaffMember[]>('/staff-directory/', { params: { active_only: activeOnly } }).then(unwrap);
@@ -461,6 +477,20 @@ export const deleteLoanPayment = (loanId: number, paymentId: number) =>
 
 export const matchLoanTransactions = (loanId: number, year: number, month: number) =>
   api.get<MatchedTransaction[]>(`/staff-loans/${loanId}/match-transactions`, { params: { year, month } }).then(unwrap);
+
+// ── Advance Payment (IOU) ────────────────────────────────────────────────────────
+
+export const listAdvancePayments = () =>
+  api.get<AdvancePayment[]>('/advance-payments/').then(unwrap);
+
+export const createAdvancePayment = (body: AdvancePaymentIn) =>
+  api.post<AdvancePayment>('/advance-payments/', body).then(unwrap);
+
+export const updateAdvancePayment = (id: number, body: AdvancePaymentIn) =>
+  api.put<AdvancePayment>(`/advance-payments/${id}`, body).then(unwrap);
+
+export const deleteAdvancePayment = (id: number) =>
+  api.delete<void>(`/advance-payments/${id}`).then(unwrap);
 
 // ── School Loans (loans the school has borrowed) ───────────────────────────────
 
