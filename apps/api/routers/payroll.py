@@ -131,11 +131,13 @@ def _capped_loan_deduction(
     """_loan_deduction_for_month caps against the Staff record's current
     monthly_gross, but a specific payroll line (a draft override, or a
     submitted process_payroll line) may use its own reduced gross/bonus —
-    re-cap against what's actually available on THIS line so net_salary can
-    never go negative regardless of which earnings figure is in play."""
+    re-cap against what's actually available on THIS line (gross + bonus -
+    other_deductions) so the loan deduction itself can't exceed those
+    earnings. Doesn't guarantee net_salary >= 0 on its own — other_deductions
+    alone could still exceed gross + bonus, independent of any loan."""
     loan_ded = _loan_deduction_for_month(staff, year, month, db)
     available = max(0.0, gross + bonus - other_deductions)
-    return min(loan_ded, available)
+    return round(min(loan_ded, available), 2)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
