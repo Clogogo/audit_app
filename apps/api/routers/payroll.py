@@ -125,6 +125,21 @@ def _loan_deduction_for_month(staff: Staff, year: int, month: int, db: Session) 
     return round(min(total, staff.monthly_gross), 2)
 
 
+def _capped_loan_deduction(
+    staff: Staff, year: int, month: int, gross: float, bonus: float, other_deductions: float, db: Session,
+) -> float:
+    """_loan_deduction_for_month caps against the Staff record's current
+    monthly_gross, but a specific payroll line (a draft override, or a
+    submitted process_payroll line) may use its own reduced gross/bonus —
+    re-cap against what's actually available on THIS line (gross + bonus -
+    other_deductions) so the loan deduction itself can't exceed those
+    earnings. Doesn't guarantee net_salary >= 0 on its own — other_deductions
+    alone could still exceed gross + bonus, independent of any loan."""
+    loan_ded = _loan_deduction_for_month(staff, year, month, db)
+    available = max(0.0, gross + bonus - other_deductions)
+    return round(min(loan_ded, available), 2)
+
+
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
 class PayrollLineIn(BaseModel):
@@ -216,7 +231,9 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
             .first()
         )
 
-        if existing:
+        if existing and existing.is_paid:
+            # A truly processed entry is a frozen historical record — show
+            # exactly what was paid, not a live recalculation.
             result.append(PayrollLineOut(
                 staff_id=s.id,
                 full_name=s.full_name,
@@ -228,6 +245,29 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 net_salary=existing.net_salary,
                 is_paid=bool(existing.is_paid),
                 paid_date=existing.paid_date,
+                entry_id=existing.id,
+            ))
+        elif existing:
+            # Not yet paid (e.g. skipped, or reset via "Edit Payroll") — the
+            # stored loan_deduction is a stale snapshot from whenever this
+            # row was last touched, which can predate loan payments recorded
+            # since. Recompute it live; keep the user's own gross/bonus/other
+            # overrides rather than discarding their draft edits.
+            loan_ded = _capped_loan_deduction(
+                s, year, month, existing.gross_salary, existing.bonus, existing.other_deductions, db,
+            )
+            net = round(existing.gross_salary + existing.bonus - loan_ded - existing.other_deductions, 2)
+            result.append(PayrollLineOut(
+                staff_id=s.id,
+                full_name=s.full_name,
+                role=s.role,
+                gross_salary=existing.gross_salary,
+                bonus=existing.bonus,
+                loan_deduction=loan_ded,
+                other_deductions=existing.other_deductions,
+                net_salary=net,
+                is_paid=False,
+                paid_date=None,
                 entry_id=existing.id,
             ))
         else:
@@ -288,7 +328,9 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
         if not staff:
             raise HTTPException(404, f"Staff {line.staff_id} not found")
 
-        loan_ded = _loan_deduction_for_month(staff, req.year, req.month, db)
+        loan_ded = _capped_loan_deduction(
+            staff, req.year, req.month, line.gross_salary, line.bonus, line.other_deductions, db,
+        )
         net_by_staff[line.staff_id] = round(line.gross_salary + line.bonus - loan_ded - line.other_deductions, 2)
 
         # Manual override: the user explicitly picked this transaction (e.g.
@@ -393,7 +435,9 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
 
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
-        loan_ded = _loan_deduction_for_month(staff, req.year, req.month, db)
+        loan_ded = _capped_loan_deduction(
+            staff, req.year, req.month, line.gross_salary, line.bonus, line.other_deductions, db,
+        )
         net = net_by_staff[line.staff_id]
         pay_date = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
 
