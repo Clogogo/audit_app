@@ -734,6 +734,33 @@ export interface StaffLoanIn {
   is_active?: boolean;
 }
 
+// ── Advance Payment (IOU) ────────────────────────────────────────────────────────
+
+export interface AdvancePayment {
+  id: number;
+  staff_id: number;
+  staff_name: string;
+  amount: number;
+  date_issued: string;
+  transaction_id: number | null;
+  is_recovered: boolean;
+  recovered_period_year: number | null;
+  recovered_period_month: number | null;
+  notes: string | null;
+  verified: boolean;
+  matched_tx: MatchedTransaction | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdvancePaymentIn {
+  staff_id: number;
+  amount: number;
+  date_issued: string;
+  transaction_id?: number | null;
+  notes?: string | null;
+}
+
 // ── School Loans (loans the school has borrowed) ───────────────────────────────
 
 export interface SchoolLoanPaymentOut {
@@ -796,6 +823,7 @@ export interface PayrollLine {
   gross_salary: number;
   bonus: number;
   loan_deduction: number;
+  advance_deduction: number;
   other_deductions: number;
   net_salary: number;
   is_paid: boolean;
@@ -821,6 +849,7 @@ export interface PayrollEntryOut {
   gross_salary: number;
   bonus: number;
   loan_deduction: number;
+  advance_deduction: number;
   other_deductions: number;
   net_salary: number;
   is_paid: boolean;

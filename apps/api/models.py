@@ -241,6 +241,29 @@ class StaffLoanPayment(Base):
     transaction: Mapped[Optional["Transaction"]] = relationship("Transaction")
 
 
+class AdvancePayment(Base):
+    """A one-off salary advance/IOU given to a staff member — recovered in
+    full from the next payroll run processed after it's recorded, not
+    repaid in installments like StaffLoan. One row per advance; no separate
+    payments sub-table since recovery is a single event."""
+    __tablename__ = "advance_payments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    staff_id: Mapped[int] = mapped_column(Integer, ForeignKey("staff.id", ondelete="CASCADE"), nullable=False)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    date_issued: Mapped[date] = mapped_column(Date, nullable=False)
+    transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True)
+    is_recovered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    recovered_period_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recovered_period_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    staff_member: Mapped["Staff"] = relationship("Staff")
+    transaction: Mapped[Optional["Transaction"]] = relationship("Transaction")
+
+
 class SchoolLoan(Base):
     """A loan the school has borrowed (collected) from a lender, e.g. a bank or cooperative."""
     __tablename__ = "school_loans"
@@ -289,6 +312,7 @@ class PayrollEntry(Base):
     gross_salary: Mapped[float] = mapped_column(Float)
     bonus: Mapped[float] = mapped_column(Float, default=0.0)
     loan_deduction: Mapped[float] = mapped_column(Float, default=0.0)
+    advance_deduction: Mapped[float] = mapped_column(Float, default=0.0)
     other_deductions: Mapped[float] = mapped_column(Float, default=0.0)
     net_salary: Mapped[float] = mapped_column(Float)
     is_paid: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -83,6 +83,7 @@ def initialize_database() -> None:
         ],
         "payroll_entries": [
             "bonus REAL DEFAULT 0.0",
+            "advance_deduction REAL DEFAULT 0.0",
         ],
         "staff_loan_payments": [
             "transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL",

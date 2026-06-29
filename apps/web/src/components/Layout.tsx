@@ -24,6 +24,7 @@ import {
   Landmark,
   CalendarRange,
   HandCoins,
+  Banknote,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
@@ -58,6 +59,7 @@ const taxSubItems = [
 const staffSubItems = [
   { to: '/staff/directory', icon: Users, label: 'Staff Directory' },
   { to: '/staff/loans', icon: CreditCard, label: 'Staff Loans' },
+  { to: '/staff/advances', icon: Banknote, label: 'Advance Payment (IOU)' },
   { to: '/staff/payroll', icon: Calculator, label: 'Payroll' },
   { to: '/staff/terms', icon: CalendarRange, label: 'Terms' },
 ];
