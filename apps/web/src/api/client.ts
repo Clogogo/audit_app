@@ -30,6 +30,22 @@ import type {
   AssetsSummary,
   Term,
   TermCreate,
+  StaffMember,
+  StaffMemberIn,
+  StaffLoan,
+  StaffLoanIn,
+  LoanPayment,
+  LoanPaymentIn,
+  MatchedTransaction,
+  PayrollLine,
+  PayrollLineIn,
+  PayrollEntryOut,
+  SchoolLoan,
+  SchoolLoanIn,
+  SchoolLoanPaymentOut,
+  SchoolLoanPaymentIn,
+  AdvancePayment,
+  AdvancePaymentIn,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -422,7 +438,6 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 export const getCurrentUser = () =>
   api.get('/auth/me').then(unwrap);
 // ── Staff Directory ───────────────────────────────────────────────────────────
-import type { StaffMember, StaffMemberIn, StaffLoan, StaffLoanIn, LoanPayment, LoanPaymentIn, MatchedTransaction, PayrollLine, PayrollLineIn, PayrollEntryOut, SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn, AdvancePayment, AdvancePaymentIn } from './types';
 
 export const listStaffMembers = (activeOnly = false) =>
   api.get<StaffMember[]>('/staff-directory/', { params: { active_only: activeOnly } }).then(unwrap);

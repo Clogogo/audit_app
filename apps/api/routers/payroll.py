@@ -183,7 +183,7 @@ def _recover_advances_for_month(staff: Staff, year: int, month: int, applied_amo
         return
 
     full_sum = round(sum(a.amount for a in advances), 2)
-    if applied_amount + 0.01 < full_sum:
+    if applied_amount + 1e-6 < full_sum:
         return
 
     for advance in advances:
