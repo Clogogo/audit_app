@@ -45,6 +45,7 @@ def register(request: Request, data: UserRegister, db: Session = Depends(get_db)
     Register a new user account.
 
     Args:
+        request: Required by the rate limiter (5/minute) to key on client IP
         data: User registration data (email, password, optional full_name)
         db: Database session
 
