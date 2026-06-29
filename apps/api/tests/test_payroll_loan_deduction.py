@@ -210,3 +210,49 @@ def test_process_payroll_caps_deduction_against_the_submitted_lines_own_earnings
     entry = resp.json()[0]
     assert entry["loan_deduction"] == 20000.0
     assert entry["net_salary"] == 0.0
+
+
+def test_unpaid_entry_net_salary_is_clamped_when_other_deductions_alone_exceed_earnings(client, db_session):
+    # _capped_deductions only caps loan_deduction/advance_deduction against
+    # this line's earnings — other_deductions isn't capped by anything and
+    # is taken at face value from the user's draft override. A Copilot
+    # review finding: an other_deductions value that alone exceeds
+    # gross+bonus could still drive net_salary negative, which would make
+    # the salary-transaction fallback matcher's amount >= net check too
+    # permissive.
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=100000.0)
+
+    draft_entry = PayrollEntry(
+        staff_id=staff.id, period_year=2026, period_month=1,
+        gross_salary=20000.0, bonus=0.0, loan_deduction=0.0,
+        other_deductions=30000.0, net_salary=0.0, is_paid=False,
+    )
+    db_session.add(draft_entry)
+    db_session.commit()
+
+    resp = client.get("/payroll/compute", params={"year": 2026, "month": 1})
+    assert resp.status_code == 200, resp.text
+    line = next(l for l in resp.json() if l["staff_id"] == staff.id)
+    assert line["net_salary"] == 0.0
+
+
+def test_process_payroll_net_salary_is_clamped_when_other_deductions_alone_exceed_earnings(client, db_session):
+    from models import Transaction
+
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=20000.0)
+
+    tx = Transaction(
+        type="expense", amount=0.0, currency="NGN", category="Salary and Wages",
+        description="Transfer to Ngozi Williams | OPay | 0000000000 | January 2026",
+        date=date(2026, 1, 30), vendor="Ngozi Williams",
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 20000.0, "other_deductions": 30000.0}],
+    })
+    assert resp.status_code == 200, resp.text
+    entry = resp.json()[0]
+    assert entry["net_salary"] == 0.0
