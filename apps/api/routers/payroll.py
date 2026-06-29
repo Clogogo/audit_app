@@ -312,7 +312,13 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
             loan_ded, advance_ded = _capped_deductions(
                 s, year, month, existing.gross_salary, existing.bonus, existing.other_deductions, db,
             )
-            net = round(existing.gross_salary + existing.bonus - loan_ded - advance_ded - existing.other_deductions, 2)
+            # loan_ded/advance_ded are already capped against this line's
+            # earnings, but other_deductions isn't — clamp the result so a
+            # user-entered other_deductions that alone exceeds gross+bonus
+            # can't drive net negative (which would also make the
+            # salary-transaction fallback matcher's amount >= net check
+            # too permissive).
+            net = max(0.0, round(existing.gross_salary + existing.bonus - loan_ded - advance_ded - existing.other_deductions, 2))
             result.append(PayrollLineOut(
                 staff_id=s.id,
                 full_name=s.full_name,
@@ -393,7 +399,12 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
         )
         loan_ded_by_staff[line.staff_id] = loan_ded
         advance_ded_by_staff[line.staff_id] = advance_ded
-        net_by_staff[line.staff_id] = round(line.gross_salary + line.bonus - loan_ded - advance_ded - line.other_deductions, 2)
+        # loan_ded/advance_ded are already capped against this line's
+        # earnings, but other_deductions isn't — clamp so a submitted
+        # other_deductions that alone exceeds gross+bonus can't drive net
+        # negative (which would also make the salary-transaction fallback
+        # matcher's amount >= net check too permissive).
+        net_by_staff[line.staff_id] = max(0.0, round(line.gross_salary + line.bonus - loan_ded - advance_ded - line.other_deductions, 2))
 
         # Manual override: the user explicitly picked this transaction (e.g.
         # after automatic matching failed to find it) — use it as-is, no
