@@ -6,13 +6,10 @@ from pydantic import BaseModel, EmailStr
 # ── Authentication ────────────────────────────────────────────────────────────
 
 class UserRegister(BaseModel):
-    """Schema for user registration. invite_code must match REGISTRATION_INVITE_CODE.
-    Optional (not required) so a request that omits it gets the same 403 the
-    router raises for a wrong code, rather than a 422 validation error."""
+    """Schema for user registration."""
     email: EmailStr
     password: str
     full_name: Optional[str] = None
-    invite_code: Optional[str] = None
 
 
 class UserLogin(BaseModel):

@@ -423,8 +423,8 @@ export const deleteAsset = (id: number) =>
 export const login = (email: string, password: string) =>
   api.post<{ access_token: string; token_type: string }>('/auth/login', { email, password }).then(unwrap);
 
-export const register = (email: string, password: string, inviteCode: string, fullName?: string) =>
-  api.post('/auth/register', { email, password, invite_code: inviteCode, full_name: fullName }).then(unwrap);
+export const register = (email: string, password: string, fullName?: string) =>
+  api.post('/auth/register', { email, password, full_name: fullName }).then(unwrap);
 
 export const requestPasswordReset = (email: string) =>
   api.post<{ message: string }>('/auth/forgot-password', { email }).then(unwrap);
