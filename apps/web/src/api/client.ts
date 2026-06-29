@@ -422,7 +422,7 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 export const getCurrentUser = () =>
   api.get('/auth/me').then(unwrap);
 // ── Staff Directory ───────────────────────────────────────────────────────────
-import type { StaffMember, StaffMemberIn, StaffLoan, StaffLoanIn, LoanPayment, LoanPaymentIn, MatchedTransaction, PayrollLine, PayrollLineIn, PayrollEntryOut, SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn } from './types';
+import type { StaffMember, StaffMemberIn, StaffLoan, StaffLoanIn, LoanPayment, LoanPaymentIn, MatchedTransaction, PayrollLine, PayrollLineIn, PayrollEntryOut, SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn, AdvancePayment, AdvancePaymentIn } from './types';
 
 export const listStaffMembers = (activeOnly = false) =>
   api.get<StaffMember[]>('/staff-directory/', { params: { active_only: activeOnly } }).then(unwrap);
@@ -461,6 +461,20 @@ export const deleteLoanPayment = (loanId: number, paymentId: number) =>
 
 export const matchLoanTransactions = (loanId: number, year: number, month: number) =>
   api.get<MatchedTransaction[]>(`/staff-loans/${loanId}/match-transactions`, { params: { year, month } }).then(unwrap);
+
+// ── Advance Payment (IOU) ────────────────────────────────────────────────────────
+
+export const listAdvancePayments = () =>
+  api.get<AdvancePayment[]>('/advance-payments/').then(unwrap);
+
+export const createAdvancePayment = (body: AdvancePaymentIn) =>
+  api.post<AdvancePayment>('/advance-payments/', body).then(unwrap);
+
+export const updateAdvancePayment = (id: number, body: AdvancePaymentIn) =>
+  api.put<AdvancePayment>(`/advance-payments/${id}`, body).then(unwrap);
+
+export const deleteAdvancePayment = (id: number) =>
+  api.delete<void>(`/advance-payments/${id}`).then(unwrap);
 
 // ── School Loans (loans the school has borrowed) ───────────────────────────────
 

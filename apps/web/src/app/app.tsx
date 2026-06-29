@@ -20,6 +20,7 @@ import { FinancialStatements } from '../pages/FinancialStatements';
 import { Assets } from '../pages/Assets';
 import { TaxCalendar } from '../pages/TaxCalendar';
 import { StaffLoans } from '../pages/StaffLoans';
+import { AdvancePayments } from '../pages/AdvancePayments';
 import { StaffDirectory } from '../pages/StaffDirectory';
 import { Payroll } from '../pages/Payroll';
 import { Terms } from '../pages/Terms';
@@ -59,6 +60,7 @@ export function App() {
                       <Route path="/tax/school-loans" element={<SchoolLoans />} />
                       <Route path="/staff/directory" element={<StaffDirectory />} />
                       <Route path="/staff/loans" element={<StaffLoans />} />
+                      <Route path="/staff/advances" element={<AdvancePayments />} />
                       <Route path="/staff/payroll" element={<Payroll />} />
                       <Route path="/staff/terms" element={<Terms />} />
                     </Routes>

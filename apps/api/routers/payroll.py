@@ -15,7 +15,7 @@ from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import PayrollEntry, Staff, StaffLoan, StaffLoanPayment, Transaction
+from models import AdvancePayment, PayrollEntry, Staff, StaffLoan, StaffLoanPayment, Transaction
 
 router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(get_current_user)])
 
@@ -125,19 +125,71 @@ def _loan_deduction_for_month(staff: Staff, year: int, month: int, db: Session) 
     return round(min(total, staff.monthly_gross), 2)
 
 
-def _capped_loan_deduction(
+def _advance_deduction_for_month(staff: Staff, year: int, month: int, db: Session) -> float:
+    """Total advance/IOU deduction for a staff member in a given month — the
+    sum of AdvancePayment.amount for advances not yet recovered, issued on
+    or before this period's end. An advance becomes eligible for recovery
+    in whichever payroll period is next *processed* after it's recorded —
+    this picks it up regardless of exact calendar timing, then
+    process_payroll marks it is_recovered so it's never deducted twice."""
+    period_end = date(year, month, calendar.monthrange(year, month)[1])
+
+    from sqlalchemy import func
+    total = db.query(func.sum(AdvancePayment.amount)).filter(
+        AdvancePayment.staff_id == staff.id,
+        AdvancePayment.is_recovered == False,  # noqa: E712
+        AdvancePayment.date_issued <= period_end,
+    ).scalar() or 0.0
+
+    return round(min(total, staff.monthly_gross), 2)
+
+
+def _capped_deductions(
     staff: Staff, year: int, month: int, gross: float, bonus: float, other_deductions: float, db: Session,
-) -> float:
-    """_loan_deduction_for_month caps against the Staff record's current
-    monthly_gross, but a specific payroll line (a draft override, or a
-    submitted process_payroll line) may use its own reduced gross/bonus —
-    re-cap against what's actually available on THIS line (gross + bonus -
-    other_deductions) so the loan deduction itself can't exceed those
-    earnings. Doesn't guarantee net_salary >= 0 on its own — other_deductions
-    alone could still exceed gross + bonus, independent of any loan."""
-    loan_ded = _loan_deduction_for_month(staff, year, month, db)
+) -> tuple[float, float]:
+    """_loan_deduction_for_month and _advance_deduction_for_month each cap
+    against the Staff record's current monthly_gross individually, but a
+    specific payroll line (a draft override, or a submitted process_payroll
+    line) may use its own reduced gross/bonus — and capping each deduction
+    independently against that line's earnings could still let their SUM
+    exceed what's available. Cap them together instead: loan first, then
+    advance fills whatever room is left. Doesn't guarantee net_salary >= 0
+    on its own — other_deductions alone could still exceed gross + bonus,
+    independent of either of these."""
     available = max(0.0, gross + bonus - other_deductions)
-    return round(min(loan_ded, available), 2)
+    loan_ded = min(_loan_deduction_for_month(staff, year, month, db), available)
+    advance_ded = min(_advance_deduction_for_month(staff, year, month, db), available - loan_ded)
+    return round(loan_ded, 2), round(advance_ded, 2)
+
+
+def _recover_advances_for_month(staff: Staff, year: int, month: int, applied_amount: float, db: Session) -> None:
+    """Mark this staff's not-yet-recovered advances as recovered for this
+    period — but only if `applied_amount` (the actual deduction applied,
+    after _capped_deductions' line-specific capping) covers their full
+    outstanding sum. A partially-capped advance is left unrecovered so it
+    rolls over and gets picked up again next period, rather than being
+    marked recovered for less than it's actually worth."""
+    period_end = date(year, month, calendar.monthrange(year, month)[1])
+    advances = (
+        db.query(AdvancePayment)
+        .filter(
+            AdvancePayment.staff_id == staff.id,
+            AdvancePayment.is_recovered == False,  # noqa: E712
+            AdvancePayment.date_issued <= period_end,
+        )
+        .all()
+    )
+    if not advances:
+        return
+
+    full_sum = round(sum(a.amount for a in advances), 2)
+    if applied_amount + 0.01 < full_sum:
+        return
+
+    for advance in advances:
+        advance.is_recovered = True
+        advance.recovered_period_year = year
+        advance.recovered_period_month = month
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -158,6 +210,7 @@ class PayrollLineOut(BaseModel):
     gross_salary: float
     bonus: float
     loan_deduction: float
+    advance_deduction: float
     other_deductions: float
     net_salary: float
     is_paid: bool
@@ -180,6 +233,7 @@ class PayrollEntryOut(BaseModel):
     gross_salary: float
     bonus: float
     loan_deduction: float
+    advance_deduction: float
     other_deductions: float
     net_salary: float
     is_paid: bool
@@ -241,6 +295,7 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 gross_salary=existing.gross_salary,
                 bonus=existing.bonus,
                 loan_deduction=existing.loan_deduction,
+                advance_deduction=existing.advance_deduction,
                 other_deductions=existing.other_deductions,
                 net_salary=existing.net_salary,
                 is_paid=bool(existing.is_paid),
@@ -249,14 +304,15 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
             ))
         elif existing:
             # Not yet paid (e.g. skipped, or reset via "Edit Payroll") — the
-            # stored loan_deduction is a stale snapshot from whenever this
-            # row was last touched, which can predate loan payments recorded
-            # since. Recompute it live; keep the user's own gross/bonus/other
-            # overrides rather than discarding their draft edits.
-            loan_ded = _capped_loan_deduction(
+            # stored loan_deduction/advance_deduction is a stale snapshot
+            # from whenever this row was last touched, which can predate
+            # loan payments or advances recorded since. Recompute it live;
+            # keep the user's own gross/bonus/other overrides rather than
+            # discarding their draft edits.
+            loan_ded, advance_ded = _capped_deductions(
                 s, year, month, existing.gross_salary, existing.bonus, existing.other_deductions, db,
             )
-            net = round(existing.gross_salary + existing.bonus - loan_ded - existing.other_deductions, 2)
+            net = round(existing.gross_salary + existing.bonus - loan_ded - advance_ded - existing.other_deductions, 2)
             result.append(PayrollLineOut(
                 staff_id=s.id,
                 full_name=s.full_name,
@@ -264,6 +320,7 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 gross_salary=existing.gross_salary,
                 bonus=existing.bonus,
                 loan_deduction=loan_ded,
+                advance_deduction=advance_ded,
                 other_deductions=existing.other_deductions,
                 net_salary=net,
                 is_paid=False,
@@ -271,8 +328,8 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 entry_id=existing.id,
             ))
         else:
-            loan_ded = _loan_deduction_for_month(s, year, month, db)
-            net = round(s.monthly_gross - loan_ded, 2)
+            loan_ded, advance_ded = _capped_deductions(s, year, month, s.monthly_gross, 0.0, 0.0, db)
+            net = round(s.monthly_gross - loan_ded - advance_ded, 2)
             result.append(PayrollLineOut(
                 staff_id=s.id,
                 full_name=s.full_name,
@@ -280,6 +337,7 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 gross_salary=s.monthly_gross,
                 bonus=0.0,
                 loan_deduction=loan_ded,
+                advance_deduction=advance_ded,
                 other_deductions=0.0,
                 net_salary=net,
                 is_paid=False,
@@ -316,6 +374,8 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     missing: list[str] = []
     tx_map: dict[int, int] = {}  # staff_id → transaction.id
     net_by_staff: dict[int, float] = {}  # staff_id → net salary, computed once and reused in Phase 2
+    loan_ded_by_staff: dict[int, float] = {}  # staff_id → loan deduction, computed once and reused in Phase 2
+    advance_ded_by_staff: dict[int, float] = {}  # staff_id → advance deduction, computed once and reused in Phase 2
     # Seed with manual overrides up front so an automatic search later in this
     # same request can't claim a transaction the user already hand-picked.
     manual_tx_ids = [l.transaction_id for l in req.lines if l.transaction_id]
@@ -328,10 +388,12 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
         if not staff:
             raise HTTPException(404, f"Staff {line.staff_id} not found")
 
-        loan_ded = _capped_loan_deduction(
+        loan_ded, advance_ded = _capped_deductions(
             staff, req.year, req.month, line.gross_salary, line.bonus, line.other_deductions, db,
         )
-        net_by_staff[line.staff_id] = round(line.gross_salary + line.bonus - loan_ded - line.other_deductions, 2)
+        loan_ded_by_staff[line.staff_id] = loan_ded
+        advance_ded_by_staff[line.staff_id] = advance_ded
+        net_by_staff[line.staff_id] = round(line.gross_salary + line.bonus - loan_ded - advance_ded - line.other_deductions, 2)
 
         # Manual override: the user explicitly picked this transaction (e.g.
         # after automatic matching failed to find it) — use it as-is, no
@@ -435,9 +497,8 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
 
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
-        loan_ded = _capped_loan_deduction(
-            staff, req.year, req.month, line.gross_salary, line.bonus, line.other_deductions, db,
-        )
+        loan_ded = loan_ded_by_staff[line.staff_id]
+        advance_ded = advance_ded_by_staff[line.staff_id]
         net = net_by_staff[line.staff_id]
         pay_date = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
 
@@ -461,6 +522,7 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
         entry.gross_salary   = line.gross_salary
         entry.bonus          = line.bonus
         entry.loan_deduction = loan_ded
+        entry.advance_deduction = advance_ded
         entry.other_deductions = line.other_deductions
         entry.net_salary     = net
         entry.notes          = line.notes
@@ -468,6 +530,8 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
         entry.is_paid        = True
         entry.paid_date      = pay_date
         entry.updated_at     = datetime.utcnow()
+
+        _recover_advances_for_month(staff, req.year, req.month, advance_ded, db)
 
         db.commit()
         db.refresh(entry)
@@ -488,6 +552,7 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
             gross_salary=e.gross_salary,
             bonus=e.bonus,
             loan_deduction=e.loan_deduction,
+            advance_deduction=e.advance_deduction,
             other_deductions=e.other_deductions,
             net_salary=e.net_salary,
             is_paid=bool(e.is_paid),
@@ -543,6 +608,7 @@ def get_payroll_entries(year: int, month: int, db: Session = Depends(get_db)):
             gross_salary=e.gross_salary,
             bonus=e.bonus,
             loan_deduction=e.loan_deduction,
+            advance_deduction=e.advance_deduction,
             other_deductions=e.other_deductions,
             net_salary=e.net_salary,
             is_paid=bool(e.is_paid),

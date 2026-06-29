@@ -164,15 +164,16 @@ export function Payroll() {
   const getGross = (l: PayrollLine) => overrides[l.staff_id]?.gross ?? l.gross_salary;
   const getBonus = (l: PayrollLine) => overrides[l.staff_id]?.bonus ?? l.bonus;
   const getOther = (l: PayrollLine) => overrides[l.staff_id]?.other ?? l.other_deductions;
-  const getNet   = (l: PayrollLine) => Math.max(0, getGross(l) + getBonus(l) - l.loan_deduction - getOther(l));
+  const getNet   = (l: PayrollLine) => Math.max(0, getGross(l) + getBonus(l) - l.loan_deduction - l.advance_deduction - getOther(l));
 
   // Totals exclude skipped rows
   const activeLines = lines.filter((l) => !isSkipped(l));
-  const totalGross = activeLines.reduce((s, l) => s + getGross(l), 0);
-  const totalBonus = activeLines.reduce((s, l) => s + getBonus(l), 0);
-  const totalLoan  = activeLines.reduce((s, l) => s + l.loan_deduction, 0);
-  const totalOther = activeLines.reduce((s, l) => s + getOther(l), 0);
-  const totalNet   = activeLines.reduce((s, l) => s + getNet(l), 0);
+  const totalGross   = activeLines.reduce((s, l) => s + getGross(l), 0);
+  const totalBonus   = activeLines.reduce((s, l) => s + getBonus(l), 0);
+  const totalLoan    = activeLines.reduce((s, l) => s + l.loan_deduction, 0);
+  const totalAdvance = activeLines.reduce((s, l) => s + l.advance_deduction, 0);
+  const totalOther   = activeLines.reduce((s, l) => s + getOther(l), 0);
+  const totalNet     = activeLines.reduce((s, l) => s + getNet(l), 0);
 
   const skippedCount = lines.filter((l) => isSkipped(l)).length;
   // Payroll is "fully processed" when every non-skipped row is paid
@@ -385,7 +386,7 @@ export function Payroll() {
       )}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">Total Gross</p>
@@ -402,6 +403,12 @@ export function Payroll() {
           <CardContent className="pt-4 pb-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">Loan Deductions</p>
             <p className="text-lg font-bold mt-0.5 text-expense">{formatCurrency(totalLoan)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Advance Deductions</p>
+            <p className="text-lg font-bold mt-0.5 text-expense">{formatCurrency(totalAdvance)}</p>
           </CardContent>
         </Card>
         <Card>
@@ -460,6 +467,7 @@ export function Payroll() {
                     <th className="text-right py-2 pr-3 font-medium">Gross Salary</th>
                     <th className="text-right py-2 pr-3 font-medium">Bonus</th>
                     <th className="text-right py-2 pr-3 font-medium">Loan Deduction</th>
+                    <th className="text-right py-2 pr-3 font-medium">Advance Deduction</th>
                     <th className="text-right py-2 pr-3 font-medium">Other Deductions</th>
                     <th className="text-right py-2 pr-3 font-medium">Net Pay</th>
                     <th className="text-center py-2 font-medium">Status</th>
@@ -507,6 +515,9 @@ export function Payroll() {
                         </td>
                         <td className="py-3 pr-3 text-right text-expense font-medium">
                           {l.loan_deduction > 0 ? `(${formatCurrency(l.loan_deduction)})` : '—'}
+                        </td>
+                        <td className="py-3 pr-3 text-right text-expense font-medium">
+                          {l.advance_deduction > 0 ? `(${formatCurrency(l.advance_deduction)})` : '—'}
                         </td>
                         <td className="py-3 pr-3 text-right">
                           {rowDisabled ? (
@@ -569,6 +580,9 @@ export function Payroll() {
                     </td>
                     <td className="py-3 pr-3 text-right text-expense">
                       {totalLoan > 0 ? `(${formatCurrency(totalLoan)})` : '—'}
+                    </td>
+                    <td className="py-3 pr-3 text-right text-expense">
+                      {totalAdvance > 0 ? `(${formatCurrency(totalAdvance)})` : '—'}
                     </td>
                     <td className="py-3 pr-3 text-right text-expense">
                       {totalOther > 0 ? `(${formatCurrency(totalOther)})` : '—'}
