@@ -1,0 +1,44 @@
+name: Sync main → staging
+
+# Runs after every push to main (e.g., after a staging→main merge) and
+# merges main back into staging so the two branches stay in sync.
+# Without this, staging would show "1 commit behind main" after every
+# staging→main merge, which is confusing even though no content differs.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Open sync PR (if needed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if staging is behind main
+        id: check
+        run: |
+          git fetch origin main staging
+          BEHIND=$(git rev-list origin/staging..origin/main --count)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+
+      - name: Open sync PR and enable auto-merge
+        if: steps.check.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="sync/main-to-staging-${{ github.run_id }}"
+          git checkout -b "$BRANCH" origin/main
+          git push origin "$BRANCH"
+          PR_URL=$(gh pr create \
+            --base staging \
+            --head "$BRANCH" \
+            --title "sync: merge main back into staging (auto)" \
+            --body "Automatic sync — merges main back into staging to keep the two branches in line after a staging→main merge. Opened by the CI/CD workflow.")
+          gh pr merge "$PR_URL" --merge --auto --delete-branch
