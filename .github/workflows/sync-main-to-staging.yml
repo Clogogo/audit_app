@@ -12,6 +12,12 @@ permissions:
   contents: write
   pull-requests: write
 
+# Cancel any in-progress sync if a new push to main arrives, so only the
+# most recent state of main gets synced and we don't create duplicate PRs.
+concurrency:
+  group: sync-main-to-staging
+  cancel-in-progress: true
+
 jobs:
   sync:
     name: Open sync PR (if needed)
