@@ -71,11 +71,16 @@ def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tupl
     # Narrow candidates in SQL on the cheap exact keys (date + type + bank),
     # then confirm amount and the remaining text fields in Python so string
     # comparison is case-insensitive and whitespace-insensitive.
+    # NOTE: do NOT filter by duplicate_reviewed here. A transaction that was
+    # previously reviewed and kept is still a real existing record — a
+    # re-import of the same data IS a duplicate of it and must be flagged.
+    # Filtering by duplicate_reviewed == False caused reviewed transactions
+    # to become invisible to the scanner, letting re-imports silently create
+    # genuine un-flagged duplicates in the transaction list.
     candidates = (
         db.query(Transaction)
         .filter(
             Transaction.id != tx.id,
-            Transaction.duplicate_reviewed == False,
             Transaction.date == tx.date,
         )
         .all()
