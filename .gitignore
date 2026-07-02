@@ -81,3 +81,5 @@ RENDER_DEPLOYMENT_CONFIRMATION.md
 test-local.sh
 restore-production.sh
 deploy-production.sh
+*.xlsx
+
