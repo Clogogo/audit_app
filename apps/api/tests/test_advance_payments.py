@@ -90,6 +90,28 @@ def test_linking_a_non_expense_transaction_returns_400(client, db_session):
     assert resp.status_code == 400
 
 
+def test_updating_amount_keeps_remaining_amount_in_sync(client, db_session):
+    from models import AdvancePayment
+
+    staff = _create_staff(db_session, "Ngozi Williams")
+    # Simulate a partially-deducted advance: ₦15,000 issued, ₦5,000 already deducted.
+    advance = AdvancePayment(
+        staff_id=staff.id, amount=15000.0, remaining_amount=10000.0,
+        date_issued=date(2026, 1, 10), is_recovered=False,
+    )
+    db_session.add(advance)
+    db_session.commit()
+
+    resp = client.put(f"/advance-payments/{advance.id}", json={
+        "staff_id": staff.id, "amount": 20000.0, "date_issued": "2026-01-10",
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["amount"] == 20000.0
+    # ₦5,000 was already deducted; new outstanding = 20,000 - 5,000 = 15,000
+    assert body["remaining_amount"] == 15000.0
+
+
 def test_cannot_edit_or_delete_a_recovered_advance(client, db_session):
     from models import AdvancePayment
 

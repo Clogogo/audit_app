@@ -130,8 +130,12 @@ def update_advance_payment(advance_id: int, body: AdvancePaymentIn, db: Session 
     if not staff:
         raise HTTPException(404, "Staff member not found")
     _validate_transaction(body.transaction_id, db)
+    # Capture how much has already been deducted before overwriting amount,
+    # so we can keep remaining_amount consistent with the new amount.
+    already_deducted = round(advance.amount - advance.remaining_amount, 2)
     for k, v in body.model_dump().items():
         setattr(advance, k, v)
+    advance.remaining_amount = round(max(0.0, advance.amount - already_deducted), 2)
     advance.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(advance)
