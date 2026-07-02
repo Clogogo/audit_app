@@ -28,14 +28,14 @@ feature/* ──PR──▶ staging ──PR──▶ main ──auto-deploy─�
 - **`staging`** — integration branch. PRs require all 4 CI checks to pass (`Backend — checks`, `Backend — tests (Postgres)`, `Frontend — build`, `Frontend — tests`). No required approvals, but branch protection is enforced for admins too.
 - **`main`** — production. Same 4 checks, plus:
   - `strict` — the PR branch must be up to date with `main` before merging
-  - `required_linear_history` — **squash or rebase merges only**, no merge commits
   - `required_conversation_resolution` — all GitHub Copilot automated review threads must be resolved before merging
+  - Use `--merge` (regular merge commit) for `staging → main` PRs — **not squash**
 
 GitHub Copilot's automated PR reviewer (`copilot-pull-request-reviewer`) leaves inline comments on most PRs. Treat its findings as you would a human reviewer's — fix real issues, add regression tests, then resolve the thread once addressed (resolving without fixing won't satisfy the `main` branch protection rule's *intent*, but GitHub only enforces that threads are marked resolved, not that they were acted on — don't abuse that).
 
 Standard PR cleanup after merging: delete the feature branch (`gh pr merge --delete-branch`), then `git checkout staging && git pull`.
 
-**Squash-merge note:** squashing a `staging → main` PR creates a new commit SHA on `main` that `staging`'s individual commits never had. This can make `git log` comparisons between the two branches look confusingly diverged even when content is identical — `git diff main/main main/staging --stat` is the reliable way to check whether they actually differ. If a real conflict shows up in a `staging → main` PR because of this (git picks a stale merge-base), open a short-lived branch that merges `main` back into `staging` to reconcile history before retrying.
+After every `staging → main` merge, the [Sync main → staging](.github/workflows/sync-main-to-staging.yml) workflow automatically opens a PR merging main back into staging (with auto-merge enabled), so staging never shows as "behind main". To check whether staging and main actually differ in content: `git diff origin/main origin/staging --stat`.
 
 ## Local development
 
