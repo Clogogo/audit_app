@@ -741,6 +741,7 @@ export interface AdvancePayment {
   staff_id: number;
   staff_name: string;
   amount: number;
+  remaining_amount: number;
   date_issued: string;
   transaction_id: number | null;
   is_recovered: boolean;

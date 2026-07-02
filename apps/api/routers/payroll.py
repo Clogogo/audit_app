@@ -126,16 +126,15 @@ def _loan_deduction_for_month(staff: Staff, year: int, month: int, db: Session) 
 
 
 def _advance_deduction_for_month(staff: Staff, year: int, month: int, db: Session) -> float:
-    """Total advance/IOU deduction for a staff member in a given month — the
-    sum of AdvancePayment.amount for advances not yet recovered, issued on
-    or before this period's end. An advance becomes eligible for recovery
-    in whichever payroll period is next *processed* after it's recorded —
-    this picks it up regardless of exact calendar timing, then
-    process_payroll marks it is_recovered so it's never deducted twice."""
+    """Total outstanding advance deduction for a staff member — sums
+    remaining_amount (not the original amount) across all unrecovered
+    advances issued on or before this period's end. Using remaining_amount
+    means a partial deduction in a prior period correctly reduces what's
+    owed in the next one, preventing cumulative over-deduction."""
     period_end = date(year, month, calendar.monthrange(year, month)[1])
 
     from sqlalchemy import func
-    total = db.query(func.sum(AdvancePayment.amount)).filter(
+    total = db.query(func.sum(AdvancePayment.remaining_amount)).filter(
         AdvancePayment.staff_id == staff.id,
         AdvancePayment.is_recovered == False,  # noqa: E712
         AdvancePayment.date_issued <= period_end,
@@ -163,12 +162,11 @@ def _capped_deductions(
 
 
 def _recover_advances_for_month(staff: Staff, year: int, month: int, applied_amount: float, db: Session) -> None:
-    """Mark this staff's not-yet-recovered advances as recovered for this
-    period — but only if `applied_amount` (the actual deduction applied,
-    after _capped_deductions' line-specific capping) covers their full
-    outstanding sum. A partially-capped advance is left unrecovered so it
-    rolls over and gets picked up again next period, rather than being
-    marked recovered for less than it's actually worth."""
+    """Drain `applied_amount` across this staff's unrecovered advances
+    (oldest first). Partially draining an advance reduces its
+    remaining_amount so the next payroll period only picks up what's
+    still outstanding — preventing cumulative over-deduction when a
+    single advance exceeds one period's available earnings."""
     period_end = date(year, month, calendar.monthrange(year, month)[1])
     advances = (
         db.query(AdvancePayment)
@@ -177,19 +175,23 @@ def _recover_advances_for_month(staff: Staff, year: int, month: int, applied_amo
             AdvancePayment.is_recovered == False,  # noqa: E712
             AdvancePayment.date_issued <= period_end,
         )
+        .order_by(AdvancePayment.date_issued.asc(), AdvancePayment.id.asc())
         .all()
     )
     if not advances:
         return
 
-    full_sum = round(sum(a.amount for a in advances), 2)
-    if applied_amount + 1e-6 < full_sum:
-        return
-
+    remaining_to_apply = round(applied_amount, 2)
     for advance in advances:
-        advance.is_recovered = True
-        advance.recovered_period_year = year
-        advance.recovered_period_month = month
+        if remaining_to_apply <= 1e-6:
+            break
+        reduction = round(min(advance.remaining_amount, remaining_to_apply), 2)
+        advance.remaining_amount = round(advance.remaining_amount - reduction, 2)
+        remaining_to_apply = round(remaining_to_apply - reduction, 2)
+        if advance.remaining_amount <= 1e-6:
+            advance.is_recovered = True
+            advance.recovered_period_year = year
+            advance.recovered_period_month = month
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────

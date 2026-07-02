@@ -1,6 +1,6 @@
 """
 Advance Payment (IOU) — a one-off salary advance given to a staff member,
-recovered in full from the next payroll run processed after it's recorded
+recovered from the next payroll run processed after it's recorded
 (see payroll.py's _advance_deduction_for_month), not repaid in installments
 like a StaffLoan.
 """
@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
 from models import AdvancePayment, Staff, Transaction
@@ -42,13 +42,14 @@ class AdvancePaymentOut(BaseModel):
     staff_id: int
     staff_name: str
     amount: float
+    remaining_amount: float
     date_issued: date
     transaction_id: Optional[int]
     is_recovered: bool
     recovered_period_year: Optional[int]
     recovered_period_month: Optional[int]
     notes: Optional[str]
-    verified: bool  # True when linked to a transaction
+    verified: bool
     matched_tx: Optional[MatchedTransaction]
     created_at: datetime
     updated_at: datetime
@@ -64,6 +65,7 @@ def _serialize(advance: AdvancePayment) -> AdvancePaymentOut:
         staff_id=advance.staff_id,
         staff_name=advance.staff_member.full_name if advance.staff_member else "Unknown",
         amount=advance.amount,
+        remaining_amount=advance.remaining_amount,
         date_issued=advance.date_issued,
         transaction_id=advance.transaction_id,
         is_recovered=bool(advance.is_recovered),
@@ -80,11 +82,26 @@ def _serialize(advance: AdvancePayment) -> AdvancePaymentOut:
     )
 
 
+def _validate_transaction(transaction_id: Optional[int], db: Session) -> None:
+    if transaction_id is None:
+        return
+    tx = db.get(Transaction, transaction_id)
+    if not tx:
+        raise HTTPException(404, f"Transaction {transaction_id} not found")
+    if tx.type != "expense":
+        raise HTTPException(400, "Advance payments can only be linked to expense transactions")
+
+
 # ── CRUD ───────────────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=list[AdvancePaymentOut])
 def list_advance_payments(db: Session = Depends(get_db)):
-    advances = db.query(AdvancePayment).order_by(AdvancePayment.date_issued.desc()).all()
+    advances = (
+        db.query(AdvancePayment)
+        .options(selectinload(AdvancePayment.staff_member), selectinload(AdvancePayment.transaction))
+        .order_by(AdvancePayment.date_issued.desc())
+        .all()
+    )
     return [_serialize(a) for a in advances]
 
 
@@ -93,7 +110,9 @@ def create_advance_payment(body: AdvancePaymentIn, db: Session = Depends(get_db)
     staff = db.get(Staff, body.staff_id)
     if not staff:
         raise HTTPException(404, "Staff member not found")
-    advance = AdvancePayment(**body.model_dump())
+    _validate_transaction(body.transaction_id, db)
+    data = body.model_dump()
+    advance = AdvancePayment(**data, remaining_amount=data["amount"])
     db.add(advance)
     db.commit()
     db.refresh(advance)
@@ -110,6 +129,7 @@ def update_advance_payment(advance_id: int, body: AdvancePaymentIn, db: Session 
     staff = db.get(Staff, body.staff_id)
     if not staff:
         raise HTTPException(404, "Staff member not found")
+    _validate_transaction(body.transaction_id, db)
     for k, v in body.model_dump().items():
         setattr(advance, k, v)
     advance.updated_at = datetime.utcnow()

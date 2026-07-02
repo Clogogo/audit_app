@@ -194,7 +194,14 @@ export function AdvancePayments() {
                     <tr key={a.id}>
                       <td className="py-3 pr-3 font-medium">{a.staff_name}</td>
                       <td className="py-3 pr-3">{fmt(a.date_issued)}</td>
-                      <td className="py-3 pr-3 text-right text-expense font-medium">{formatCurrency(a.amount)}</td>
+                      <td className="py-3 pr-3 text-right text-expense font-medium">
+                        {formatCurrency(a.amount)}
+                        {!a.is_recovered && a.remaining_amount < a.amount && (
+                          <div className="text-xs text-muted-foreground font-normal">
+                            {formatCurrency(a.remaining_amount)} remaining
+                          </div>
+                        )}
+                      </td>
                       <td className="py-3 pr-3">
                         {a.verified ? (
                           <span
