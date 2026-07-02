@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database import get_db
-from models import Transaction, AuditLog
+from models import Transaction, AuditLog, BankTransaction
 from schemas import TransactionOut
 
 router = APIRouter(prefix="/duplicates", tags=["duplicates"], dependencies=[Depends(get_current_user)])
@@ -42,6 +42,19 @@ def _norm(value: str | None) -> str:
 def _is_recurring_fee(description: str | None) -> bool:
     text = _norm(description)
     return any(keyword in text for keyword in _RECURRING_FEE_KEYWORDS)
+
+
+def _references_for(db: Session, tx: Transaction) -> set[str]:
+    """Bank statement references linked to this transaction (across re-imports)."""
+    rows = (
+        db.query(BankTransaction.reference)
+        .filter(
+            BankTransaction.matched_transaction_id == tx.id,
+            BankTransaction.reference.isnot(None),
+        )
+        .all()
+    )
+    return {r[0] for r in rows}
 
 
 def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tuple[Transaction, float]]:
@@ -86,6 +99,8 @@ def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tupl
         .all()
     )
 
+    tx_refs = _references_for(db, tx)
+
     matches: list[tuple[Transaction, float]] = []
     for candidate in candidates:
         if abs(candidate.amount - tx.amount) > _AMOUNT_EPSILON:
@@ -99,7 +114,13 @@ def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tupl
         if _norm(candidate.bank) != _norm(tx.bank):
             continue
 
-        # All six fields matched exactly → definite duplicate.
+        # Both sides carry a bank statement reference and they disagree →
+        # two distinct real transfers that happen to look identical (e.g. the
+        # same sender paying twice in one day), never a duplicate.
+        if tx_refs and tx_refs.isdisjoint(_references_for(db, candidate)):
+            continue
+
+        # All fields matched exactly → definite duplicate.
         matches.append((candidate, 1.0))
 
     return matches
