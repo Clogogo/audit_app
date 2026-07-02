@@ -3,7 +3,7 @@ re-imports creating un-flagged duplicates against already-reviewed transactions.
 """
 from datetime import date
 
-from models import Transaction
+from models import BankStatement, BankTransaction, Transaction
 from routers.duplicates import detect_duplicates_for_transaction
 
 
@@ -47,6 +47,31 @@ def test_different_description_is_not_flagged(db_session):
     different = _tx(db_session, description="Transfer to Chidi Okonkwo")
 
     matches = detect_duplicates_for_transaction(db_session, different)
+    assert matches == []
+
+
+def _link_reference(db_session, tx: Transaction, reference: str) -> None:
+    stmt = BankStatement(bank_name=tx.bank, file_type="excel", status="pending")
+    db_session.add(stmt)
+    db_session.flush()
+    db_session.add(BankTransaction(
+        statement_id=stmt.id, date=tx.date, description=tx.description,
+        amount=tx.amount, transaction_type="credit", reference=reference,
+        matched_transaction_id=tx.id, match_status="matched",
+    ))
+    db_session.commit()
+
+
+def test_same_sender_twice_in_one_day_is_not_flagged_when_references_differ(db_session):
+    # Real-world case: a sender (e.g. a proprietor) transfers the same amount
+    # twice in one day. Field-matching alone can't tell these apart — only
+    # the bank statement reference proves they're two distinct events.
+    first = _tx(db_session, description="Transfer from PATRICIA NKECHI OGOGO", amount=5000.0)
+    second = _tx(db_session, description="Transfer from PATRICIA NKECHI OGOGO", amount=5000.0)
+    _link_reference(db_session, first, "MIT|HBP|ref-aaaa")
+    _link_reference(db_session, second, "MIT|TMP|ref-bbbb")
+
+    matches = detect_duplicates_for_transaction(db_session, second)
     assert matches == []
 
 
