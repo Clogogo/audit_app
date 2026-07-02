@@ -15,7 +15,8 @@ def _create_staff(db_session, full_name: str, monthly_gross: float) -> Staff:
 
 def _create_advance(db_session, staff: Staff, amount: float, date_issued: str, is_recovered: bool = False) -> AdvancePayment:
     advance = AdvancePayment(
-        staff_id=staff.id, amount=amount, date_issued=date.fromisoformat(date_issued), is_recovered=is_recovered,
+        staff_id=staff.id, amount=amount, remaining_amount=0.0 if is_recovered else amount,
+        date_issued=date.fromisoformat(date_issued), is_recovered=is_recovered,
     )
     db_session.add(advance)
     db_session.commit()
@@ -121,20 +122,23 @@ def test_loan_and_advance_deductions_are_capped_together_not_independently(clien
     assert line["net_salary"] == 0.0
 
 
-def test_partially_capped_advance_is_not_marked_recovered(client, db_session):
-    # If process_payroll can only apply part of an advance (capped by other
-    # deductions eating into the available room), it must roll over to the
-    # next period rather than being marked recovered for less than it's
-    # actually worth.
+def test_partial_deduction_reduces_remaining_amount_and_does_not_over_deduct(client, db_session):
+    # Regression for the Copilot finding: the original implementation used
+    # advance.amount (always the full original sum) as the outstanding balance,
+    # so a ₦30,000 advance with ₦20,000 earnings would deduct ₦20,000 in month
+    # 1, then ₦20,000 AGAIN in month 2 (total ₦40,000 against a ₦30,000 debt).
+    # Now remaining_amount is decremented by however much was actually applied,
+    # so month 2 only sees the ₦10,000 still outstanding.
     staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=20000.0)
     advance = _create_advance(db_session, staff, amount=30000.0, date_issued="2026-01-10")
 
-    tx = Transaction(
+    # Month 1: advance is ₦30,000 but gross is only ₦20,000 — partial cap
+    tx1 = Transaction(
         type="expense", amount=0.0, currency="NGN", category="Salary and Wages",
         description="Transfer to Ngozi Williams | OPay | 0000000000 | January 2026",
         date=date(2026, 1, 30), vendor="Ngozi Williams",
     )
-    db_session.add(tx)
+    db_session.add(tx1)
     db_session.commit()
 
     resp = client.post("/payroll/process", json={
@@ -143,8 +147,32 @@ def test_partially_capped_advance_is_not_marked_recovered(client, db_session):
     })
     assert resp.status_code == 200, resp.text
     entry = resp.json()[0]
-    assert entry["advance_deduction"] == 20000.0  # capped at gross, not the full 30000
+    assert entry["advance_deduction"] == 20000.0  # capped at gross
     assert entry["net_salary"] == 0.0
 
     db_session.refresh(advance)
     assert advance.is_recovered is False
+    assert advance.remaining_amount == 10000.0  # ₦10,000 still outstanding
+
+    # Month 2: only ₦10,000 outstanding — deducted in full, advance marked recovered
+    tx2 = Transaction(
+        type="expense", amount=10000.0, currency="NGN", category="Salary and Wages",
+        description="Transfer to Ngozi Williams | OPay | 0000000000 | February 2026",
+        date=date(2026, 2, 28), vendor="Ngozi Williams",
+    )
+    db_session.add(tx2)
+    db_session.commit()
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 2,
+        "lines": [{"staff_id": staff.id, "gross_salary": 20000.0}],
+    })
+    assert resp.status_code == 200, resp.text
+    entry2 = resp.json()[0]
+    assert entry2["advance_deduction"] == 10000.0  # only the remaining balance
+    assert entry2["net_salary"] == 10000.0
+
+    db_session.refresh(advance)
+    assert advance.is_recovered is True
+    assert advance.recovered_period_year == 2026
+    assert advance.recovered_period_month == 2
