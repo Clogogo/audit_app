@@ -115,6 +115,10 @@ def test_ai_summary_term_forecast_covers_payroll_with_no_surplus(client, db_sess
     #   remaining_days = 0 -> both projections are exactly 0
     #   remaining_payroll = 1 staff x 1 remaining month = monthly_gross
     #   current_net_position = income_so_far - expenses_so_far
+    #
+    # term_id is passed WITHOUT start_date/end_date — the term's own dates
+    # must be authoritative (regression guard: an out-of-range transaction,
+    # 60 days before the term starts, must not leak into the totals).
     transactions_module._AI_SUMMARY_CACHE.clear()
     today = date.today()
     start = today - timedelta(days=5)
@@ -129,15 +133,13 @@ def test_ai_summary_term_forecast_covers_payroll_with_no_surplus(client, db_sess
 
     _create_income(client, 200000.0, "School Fees", start.isoformat())
     _create_expense(client, 100000.0, "Salary and Wages", start.isoformat())
+    _create_income(client, 500.0, "Other Income", (start - timedelta(days=60)).isoformat())
 
     mock_client = MagicMock()
     mock_client.create_message.return_value = "narrative"
     monkeypatch.setattr(transactions_module, "get_llm_client", lambda: mock_client)
 
-    resp = client.get(
-        "/transactions/ai-summary",
-        params={"start_date": start.isoformat(), "end_date": today.isoformat(), "term_id": term.id},
-    )
+    resp = client.get("/transactions/ai-summary", params={"term_id": term.id})
     assert resp.status_code == 200
     assert resp.json()["available"] is True
 
@@ -163,10 +165,7 @@ def test_ai_summary_term_forecast_handles_future_term_without_dividing_by_zero(c
     mock_client.create_message.return_value = "narrative"
     monkeypatch.setattr(transactions_module, "get_llm_client", lambda: mock_client)
 
-    resp = client.get(
-        "/transactions/ai-summary",
-        params={"start_date": start.isoformat(), "end_date": end.isoformat(), "term_id": term.id},
-    )
+    resp = client.get("/transactions/ai-summary", params={"term_id": term.id})
     assert resp.status_code == 200
     assert resp.json()["available"] is True
 

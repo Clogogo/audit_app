@@ -1,4 +1,3 @@
-import calendar
 import json
 import logging
 from datetime import date, datetime
@@ -276,17 +275,26 @@ def _build_term_forecast(term: Term, summary: TransactionSummary, db: Session) -
     remaining_months = 0
     if active_staff_ids:
         walk_start = max(today, term.start_date)
-        for year, month in _iter_year_months(walk_start, term.end_date):
-            paid_count = db.query(func.count(PayrollEntry.id)).filter(
-                PayrollEntry.staff_id.in_(active_staff_ids),
-                PayrollEntry.period_year == year,
-                PayrollEntry.period_month == month,
-                PayrollEntry.is_paid == True,
-            ).scalar() or 0
-            # ponytail: a partially-paid month counts as fully remaining —
-            # precise partial tracking isn't worth the extra queries here.
-            if paid_count < len(active_staff_ids):
-                remaining_months += 1
+        months = list(_iter_year_months(walk_start, term.end_date))
+        if months:
+            # One query for every candidate month, not one query per month.
+            paid_rows = (
+                db.query(PayrollEntry.period_year, PayrollEntry.period_month, func.count(PayrollEntry.id))
+                .filter(
+                    PayrollEntry.staff_id.in_(active_staff_ids),
+                    PayrollEntry.is_paid == True,
+                    PayrollEntry.period_year.in_({year for year, _ in months}),
+                )
+                .group_by(PayrollEntry.period_year, PayrollEntry.period_month)
+                .all()
+            )
+            paid_counts = {(year, month): count for year, month, count in paid_rows}
+            # A month with only some active staff already paid still counts
+            # as fully remaining — a simplification, not precise partial
+            # tracking, since that would need a per-staff shortfall figure.
+            for year, month in months:
+                if paid_counts.get((year, month), 0) < len(active_staff_ids):
+                    remaining_months += 1
     remaining_payroll = round(active_monthly_cost * remaining_months, 2)
 
     salary_expense_so_far = db.execute(
@@ -392,16 +400,20 @@ def get_ai_summary(
     db: Session = Depends(get_db),
 ):
     """AI-generated narrative over the same data as GET /transactions/summary.
-    When term_id is given, also folds a payroll forecast for the rest of that
-    term into the prompt. Never raises on AI failure — returns available=False
-    instead, so the frontend can simply omit the summary card rather than show
-    an error."""
-    summary = get_summary(start_date=start_date, end_date=end_date, bank=bank, vendor=vendor, db=db)
-
-    forecast = None
+    When term_id is given, the term's own start/end dates are authoritative —
+    they override start_date/end_date so the narrative and the payroll
+    forecast always describe the same period, regardless of what date_range
+    the caller separately passed. Never raises on AI failure — returns
+    available=False instead, so the frontend can simply omit the summary
+    card rather than show an error."""
+    term = None
     if term_id is not None:
         term = get_or_404(db, Term, term_id, "Term")
-        forecast = _build_term_forecast(term, summary, db)
+        start_date, end_date = term.start_date, term.end_date
+
+    summary = get_summary(start_date=start_date, end_date=end_date, bank=bank, vendor=vendor, db=db)
+
+    forecast = _build_term_forecast(term, summary, db) if term is not None else None
 
     cache_key = _ai_summary_cache_key(start_date, end_date, bank, vendor, summary, forecast)
     cached = _AI_SUMMARY_CACHE.get(cache_key)
