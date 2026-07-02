@@ -1,3 +1,4 @@
+import calendar
 import json
 import logging
 from datetime import date, datetime
@@ -6,12 +7,13 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from utils.auth import get_current_user
+from utils.errors import get_or_404
 from sqlalchemy.orm import Session
 from sqlalchemy import func, select as sa_select
 
 from database import get_db
 from llm_providers import get_llm_client
-from models import Transaction, AuditLog, BankAccount
+from models import Transaction, AuditLog, BankAccount, Staff, PayrollEntry, Term
 from pydantic import BaseModel as _BaseModel
 from schemas import TransactionCreate, TransactionOut, TransactionPage, TransactionUpdate, TransactionSummary, TransactionAISummary, MonthlySummary
 from routers.bank_statements import _transfer_is_income, _is_intra_account_transfer
@@ -215,7 +217,18 @@ _AI_SUMMARY_CACHE_MAX = 64
 def _ai_summary_cache_key(
     start_date: Optional[date], end_date: Optional[date], bank: Optional[str],
     vendor: Optional[str], summary: TransactionSummary,
+    forecast: Optional[dict] = None,
 ) -> tuple:
+    # The projection moves forward every day even when no new transactions
+    # exist, so today's date must be part of the key whenever a forecast is
+    # active — otherwise yesterday's forecast would be served forever.
+    forecast_key = (
+        forecast["term_id"], date.today().isoformat(),
+        round(forecast["remaining_payroll"], 2),
+        round(forecast["projected_income_remaining"], 2),
+        round(forecast["projected_nonpayroll_expense_remaining"], 2),
+        round(forecast["projected_term_end_surplus"], 2),
+    ) if forecast is not None else None
     return (
         start_date, end_date, bank, vendor,
         round(summary.total_income, 2),
@@ -223,16 +236,135 @@ def _ai_summary_cache_key(
         round(summary.balance, 2),
         tuple((m.month, round(m.income, 2), round(m.expenses, 2)) for m in summary.monthly[-6:]),
         tuple(sorted((k, round(v, 2)) for k, v in summary.by_category.items())),
+        forecast_key,
     )
 
 
-def _build_ai_summary_prompt(summary: TransactionSummary) -> str:
+def _iter_year_months(start: date, end: date):
+    """Yield (year, month) tuples from start through end, inclusive."""
+    if start > end:
+        return
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        yield y, m
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+
+
+def _build_term_forecast(term: Term, summary: TransactionSummary, db: Session) -> dict:
+    """
+    Forecast whether this term's profit will cover the remaining staff
+    payroll before the term ends, and the projected surplus/deficit after.
+
+    Uses a simple linear run-rate on this term's own income/expense pace so
+    far — no seasonal modeling, no comparison to prior terms. Salary expenses
+    already paid ("Salary and Wages" transactions) are split out of the
+    historical total so they aren't double-counted against the
+    forward-looking remaining_payroll figure below.
+    """
+    today = date.today()
+    total_days = (term.end_date - term.start_date).days + 1
+    elapsed_days = max(0, min((today - term.start_date).days + 1, total_days))
+    remaining_days = total_days - elapsed_days
+
+    active_staff = db.query(Staff).filter(Staff.is_active == True).all()
+    active_staff_ids = [s.id for s in active_staff]
+    active_monthly_cost = sum(s.monthly_gross for s in active_staff)
+
+    remaining_months = 0
+    if active_staff_ids:
+        walk_start = max(today, term.start_date)
+        for year, month in _iter_year_months(walk_start, term.end_date):
+            paid_count = db.query(func.count(PayrollEntry.id)).filter(
+                PayrollEntry.staff_id.in_(active_staff_ids),
+                PayrollEntry.period_year == year,
+                PayrollEntry.period_month == month,
+                PayrollEntry.is_paid == True,
+            ).scalar() or 0
+            # ponytail: a partially-paid month counts as fully remaining —
+            # precise partial tracking isn't worth the extra queries here.
+            if paid_count < len(active_staff_ids):
+                remaining_months += 1
+    remaining_payroll = round(active_monthly_cost * remaining_months, 2)
+
+    salary_expense_so_far = db.execute(
+        sa_select(func.coalesce(func.sum(Transaction.amount), 0.0))
+        .where(
+            Transaction.type == "expense",
+            Transaction.category == "Salary and Wages",
+            Transaction.date >= term.start_date,
+            Transaction.date <= term.end_date,
+        )
+    ).scalar() or 0.0
+
+    non_payroll_expenses_so_far = summary.total_expenses - salary_expense_so_far
+    daily_income_rate = summary.total_income / elapsed_days if elapsed_days > 0 else 0.0
+    daily_nonpayroll_expense_rate = non_payroll_expenses_so_far / elapsed_days if elapsed_days > 0 else 0.0
+    projected_income_remaining = round(daily_income_rate * remaining_days, 2)
+    projected_nonpayroll_expense_remaining = round(daily_nonpayroll_expense_rate * remaining_days, 2)
+
+    current_net_position = round(summary.total_income - summary.total_expenses, 2)
+    projected_term_end_surplus = round(
+        current_net_position
+        + projected_income_remaining
+        - projected_nonpayroll_expense_remaining
+        - remaining_payroll,
+        2,
+    )
+
+    return {
+        "term_id": term.id,
+        "term_name": term.name,
+        "start_date": term.start_date.isoformat(),
+        "end_date": term.end_date.isoformat(),
+        "total_days": total_days,
+        "elapsed_days": elapsed_days,
+        "remaining_days": remaining_days,
+        "active_staff_count": len(active_staff_ids),
+        "remaining_months": remaining_months,
+        "remaining_payroll": remaining_payroll,
+        "current_net_position": current_net_position,
+        "projected_income_remaining": projected_income_remaining,
+        "projected_nonpayroll_expense_remaining": projected_nonpayroll_expense_remaining,
+        "projected_term_end_surplus": projected_term_end_surplus,
+    }
+
+
+def _build_ai_summary_prompt(summary: TransactionSummary, forecast: Optional[dict] = None) -> str:
     top_categories = sorted(summary.by_category.items(), key=lambda kv: -abs(kv[1]))[:5]
     categories_text = ", ".join(f"{name}: ₦{amount:,.2f}" for name, amount in top_categories)
     monthly_text = "; ".join(
         f"{m.month}: income ₦{m.income:,.2f}, expenses ₦{m.expenses:,.2f}"
         for m in summary.monthly[-6:]
     )
+
+    forecast_instruction = ""
+    forecast_text = ""
+    if forecast:
+        forecast_instruction = (
+            " Also comment on whether the school's profit is on track to cover "
+            "the remaining staff payroll before the term ends, and whether a "
+            "surplus or shortfall is projected."
+        )
+        forecast_text = (
+            f"\n\nTerm: {forecast['term_name']} ({forecast['start_date']} to {forecast['end_date']}), "
+            f"{forecast['elapsed_days']} of {forecast['total_days']} days elapsed, "
+            f"{forecast['remaining_days']} days remaining.\n"
+            f"Remaining staff payroll obligation for the rest of the term "
+            f"({forecast['remaining_months']} month(s) not yet paid, "
+            f"{forecast['active_staff_count']} active staff): ₦{forecast['remaining_payroll']:,.2f}\n"
+            f"Current net position this term so far (income minus expenses): "
+            f"₦{forecast['current_net_position']:,.2f}\n"
+            f"Projected income for the remaining {forecast['remaining_days']} days "
+            f"(based on this term's pace so far): ₦{forecast['projected_income_remaining']:,.2f}\n"
+            f"Projected non-payroll expenses for the remaining days: "
+            f"₦{forecast['projected_nonpayroll_expense_remaining']:,.2f}\n"
+            f"Projected surplus/deficit at the end of the term after paying all "
+            f"remaining staff salaries: ₦{forecast['projected_term_end_surplus']:,.2f}"
+        )
+
     return (
         "You are a financial assistant summarizing transaction data for a small "
         "organization in Nigeria. All amounts are in Nigerian Naira — always use "
@@ -240,12 +372,13 @@ def _build_ai_summary_prompt(summary: TransactionSummary) -> str:
         "sentence plain-English summary highlighting the overall financial "
         "position, notable spending categories, and any trend over the recent "
         "months. Do not just list raw numbers for every category — focus on "
-        "what matters.\n\n"
+        f"what matters.{forecast_instruction}\n\n"
         f"Total income: ₦{summary.total_income:,.2f}\n"
         f"Total expenses: ₦{summary.total_expenses:,.2f}\n"
         f"Balance: ₦{summary.balance:,.2f}\n"
         f"Top categories: {categories_text}\n"
         f"Recent months: {monthly_text}"
+        f"{forecast_text}"
     )
 
 
@@ -255,14 +388,22 @@ def get_ai_summary(
     end_date: Optional[date] = Query(None),
     bank: Optional[str] = Query(None),
     vendor: Optional[str] = Query(None),
+    term_id: Optional[int] = Query(None, description="When set, also forecasts whether profit covers the remaining term payroll"),
     db: Session = Depends(get_db),
 ):
     """AI-generated narrative over the same data as GET /transactions/summary.
-    Never raises on AI failure — returns available=False instead, so the
-    frontend can simply omit the summary card rather than show an error."""
+    When term_id is given, also folds a payroll forecast for the rest of that
+    term into the prompt. Never raises on AI failure — returns available=False
+    instead, so the frontend can simply omit the summary card rather than show
+    an error."""
     summary = get_summary(start_date=start_date, end_date=end_date, bank=bank, vendor=vendor, db=db)
 
-    cache_key = _ai_summary_cache_key(start_date, end_date, bank, vendor, summary)
+    forecast = None
+    if term_id is not None:
+        term = get_or_404(db, Term, term_id, "Term")
+        forecast = _build_term_forecast(term, summary, db)
+
+    cache_key = _ai_summary_cache_key(start_date, end_date, bank, vendor, summary, forecast)
     cached = _AI_SUMMARY_CACHE.get(cache_key)
     if cached is not None:
         return TransactionAISummary(narrative=cached, available=True)
@@ -270,7 +411,7 @@ def get_ai_summary(
     try:
         client = get_llm_client()
         narrative = client.create_message(
-            messages=[{"role": "user", "content": _build_ai_summary_prompt(summary)}],
+            messages=[{"role": "user", "content": _build_ai_summary_prompt(summary, forecast)}],
             max_tokens=300,
         )
     except Exception as e:

@@ -98,6 +98,7 @@ export const getAISummary = (params?: {
   end_date?: string;
   bank?: string;
   vendor?: string;
+  term_id?: number;
 }) => api.get<TransactionAISummary>('/transactions/ai-summary', { params }).then(unwrap);
 
 export const createTransaction = (body: TransactionCreate) =>

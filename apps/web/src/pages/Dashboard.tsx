@@ -169,7 +169,7 @@ export function Dashboard() {
 
   const start = selectedTerm ? selectedTerm.start_date : `${selectedYear}-01-01`;
   const end   = selectedTerm ? selectedTerm.end_date   : `${selectedYear}-12-31`;
-  const aiSummary = useAISummary(start, end);
+  const aiSummary = useAISummary(start, end, selectedTerm?.id);
 
   useEffect(() => { getTerms().then(setTerms); }, []);
 
