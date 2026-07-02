@@ -251,6 +251,7 @@ class AdvancePayment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     staff_id: Mapped[int] = mapped_column(Integer, ForeignKey("staff.id", ondelete="CASCADE"), nullable=False)
     amount: Mapped[float] = mapped_column(Float, nullable=False)
+    remaining_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     date_issued: Mapped[date] = mapped_column(Date, nullable=False)
     transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True)
     is_recovered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

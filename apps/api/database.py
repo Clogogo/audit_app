@@ -92,6 +92,9 @@ def initialize_database() -> None:
             "opening_balance REAL",
             "current_balance REAL",
         ],
+        "advance_payments": [
+            "remaining_amount REAL DEFAULT 0.0",
+        ],
     }
 
     inspector = inspect(engine)
@@ -151,6 +154,15 @@ def initialize_database() -> None:
         connection.execute(
             text("UPDATE transactions SET currency = 'NGN' WHERE currency = 'USD' OR currency IS NULL")
         )
+        # Backfill remaining_amount = amount for any advance rows that existed
+        # before the remaining_amount column was added (they'd have the column
+        # default of 0.0, making them invisible to _advance_deduction_for_month).
+        # Use :val so SQLAlchemy adapts the bool correctly for both Postgres
+        # (boolean column) and SQLite (integer 0/1).
+        connection.execute(text(
+            "UPDATE advance_payments SET remaining_amount = amount "
+            "WHERE remaining_amount = 0 AND is_recovered = :val"
+        ), {"val": False})
         connection.commit()
 
         # Postgres only: columns that were created as INTEGER (back when the
