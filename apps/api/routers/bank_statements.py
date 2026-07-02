@@ -114,6 +114,27 @@ def _find_duplicate_transaction(
         return item_desc[:40] == ed[:40]
 
     # ── Reference-based match ─────────────────────────────────────────────────
+    # Priority 1a: a BankTransaction with the same reference already exists and
+    # is matched to a Transaction — same reference = definitely the same row,
+    # regardless of description. This is the only reliable dedup signal for
+    # banks like OPay where multiple rows on the same day share identical
+    # descriptions and amounts (e.g. 19 OWealth Withdrawal ₦50 entries on a
+    # busy salary day) — they can only be told apart by their unique references.
+    if reference:
+        existing_bank_tx = (
+            db.query(BankTransaction)
+            .filter(
+                BankTransaction.reference == reference,
+                BankTransaction.matched_transaction_id.isnot(None),
+                BankTransaction.matched_transaction_id.notin_(excluded) if excluded else True,
+            )
+            .first()
+        )
+        if existing_bank_tx:
+            return db.get(Transaction, existing_bank_tx.matched_transaction_id)
+
+    # Priority 1b (legacy): reference embedded in the Transaction description
+    # — kept for banks that write the reference into the narration field.
     if reference:
         ref_match = (
             db.query(Transaction)
