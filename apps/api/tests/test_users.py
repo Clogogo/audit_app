@@ -106,6 +106,33 @@ def test_admin_cannot_demote_the_last_remaining_admin(admin_client, db_session):
     assert "last remaining user with User Management access" in resp.json()["detail"]
 
 
+def test_cannot_deactivate_the_last_remaining_user_management_holder(admin_client, db_session):
+    # Distinct from the last-admin role-change guard: deactivating (not
+    # demoting) the last other holder must be blocked too, or the system
+    # ends up with nobody who can reach User/Role Management.
+    admin_role = _create_role(db_session, "Admin", ["user_management"], is_system=True)
+    only_admin = _create_user(db_session, "only-admin@example.com", role=admin_role, user_id=2)
+
+    resp = admin_client.patch(f"/users/{only_admin.id}", json={"is_active": False})
+    assert resp.status_code == 400
+    assert "last remaining user with User Management access" in resp.json()["detail"]
+
+
+def test_an_inactive_holder_does_not_count_as_an_other_holder(admin_client, db_session):
+    # An already-deactivated user can't actually reach anything, so their
+    # role shouldn't count toward "someone else still has this access" —
+    # otherwise the last real holder could be demoted while believing a
+    # dead account was a valid backup.
+    admin_role = _create_role(db_session, "Admin", ["user_management"], is_system=True)
+    _create_user(db_session, "inactive-admin@example.com", role=admin_role, is_active=False, user_id=2)
+    only_active_admin = _create_user(db_session, "active-admin@example.com", role=admin_role, user_id=3)
+    other_role = _create_role(db_session, "Front Desk", ["staff"])
+
+    resp = admin_client.patch(f"/users/{only_active_admin.id}", json={"role_id": other_role.id})
+    assert resp.status_code == 400
+    assert "last remaining user with User Management access" in resp.json()["detail"]
+
+
 def test_update_unknown_user_returns_404(admin_client, db_session):
     resp = admin_client.patch("/users/999999", json={"is_active": False})
     assert resp.status_code == 404

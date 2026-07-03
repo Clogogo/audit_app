@@ -237,6 +237,13 @@ def _seed_roles_and_permissions() -> None:
         permissions_by_key = {p.key: p for p in session.query(Permission).all()}
 
         existing_role_names = {r.name for r in session.query(Role).all()}
+        # The Role table itself didn't exist before this feature — an empty
+        # table means this is the very first time this code has ever run
+        # against this database. Only THAT run is allowed to cut legacy
+        # is_admin users over automatically (see below); every later restart
+        # must leave a fresh registration's role_id alone.
+        is_first_ever_run = not existing_role_names
+
         role_seeds = [
             ("Admin", "Full access to every section, including User Management.", True, list(permissions_by_key)),
             ("Accountant", "Full access to financial data; cannot manage users or roles.",
@@ -250,19 +257,23 @@ def _seed_roles_and_permissions() -> None:
                 session.add(role)
         session.commit()
 
-        # One-time migration: any user without a role yet gets Admin (if
-        # is_admin was already set) or Accountant (everyone else — matches
-        # their current defacto full financial access, since is_admin was
-        # the only thing previously gating anything). Guarded by
-        # role_id IS NULL, so it's permanently inert once every user has
-        # been migrated — same "fires once" shape as the old admin bootstrap.
         admin_role = session.query(Role).filter(Role.name == "Admin").first()
         accountant_role = session.query(Role).filter(Role.name == "Accountant").first()
-        unmigrated = session.query(User).filter(User.role_id.is_(None)).all()
-        for user in unmigrated:
-            user.role_id = admin_role.id if user.is_admin else accountant_role.id
-        if unmigrated:
-            session.commit()
+
+        # One-time legacy cutover, first run only: any user that predates the
+        # Role table gets Admin (if is_admin was already set) or Accountant
+        # (everyone else — matches their current defacto full financial
+        # access, since is_admin was the only thing previously gating
+        # anything). A user who registers on any LATER run must keep
+        # role_id = NULL until an admin explicitly assigns one — they must
+        # never be silently upgraded to Accountant just because the server
+        # restarted.
+        if is_first_ever_run:
+            legacy_users = session.query(User).filter(User.role_id.is_(None)).all()
+            for user in legacy_users:
+                user.role_id = admin_role.id if user.is_admin else accountant_role.id
+            if legacy_users:
+                session.commit()
 
         # BOOTSTRAP_ADMIN_EMAIL: only fires while nobody holds the Admin role
         # yet — permanently inert afterward, admins can freely reassign

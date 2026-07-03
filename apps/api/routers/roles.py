@@ -37,22 +37,27 @@ def _resolve_permissions(db: Session, keys: list[str]) -> list[Permission]:
 
 
 def _would_strand_user_management(db: Session, role: Role, new_permission_keys: list[str]) -> bool:
-    """True if removing user_management from this role would leave no role
-    with both user_management AND at least one assigned user — i.e. nobody
-    left who could reach Role/User Management to fix it."""
+    """True if removing user_management from this role would leave no
+    *other* active user able to reach Role/User Management. One joined
+    query, not one query per role."""
     had_it = any(p.key == "user_management" for p in role.permissions)
     keeps_it = "user_management" in new_permission_keys
     if not had_it or keeps_it:
         return False
 
-    other_holder_ids = [
-        r.id for r in db.query(Role).all()
-        if r.id != role.id and any(p.key == "user_management" for p in r.permissions)
-    ]
-    if not other_holder_ids:
-        return True
-    remaining = db.query(func.count(User.id)).filter(User.role_id.in_(other_holder_ids)).scalar()
-    return remaining == 0
+    other_holder_exists = (
+        db.query(User)
+        .join(Role, User.role_id == Role.id)
+        .join(Role.permissions)
+        .filter(
+            Permission.key == "user_management",
+            Role.id != role.id,
+            User.is_active == True,
+        )
+        .first()
+        is not None
+    )
+    return not other_holder_exists
 
 
 @router.post("", response_model=RoleOut, status_code=201)

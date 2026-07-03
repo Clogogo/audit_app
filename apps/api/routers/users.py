@@ -6,16 +6,22 @@ written to the AuditLog.
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Role, User
+from models import Permission, Role, User
 from schemas import UserAdminUpdate, UserOut
 from utils.audit import AuditLogger
 from utils.auth import require_permission
 
-router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_permission("user_management"))])
+# A single shared dependency instance — reused for both the router-level
+# gate and update_user's per-endpoint `current_user` parameter, so FastAPI's
+# per-request dependency cache actually applies (require_permission(...)
+# returns a new closure on every call, so using two separate calls here
+# would run the permission check, and its get_current_user/DB lookup, twice).
+require_user_management = require_permission("user_management")
+
+router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_user_management)])
 
 
 @router.get("", response_model=list[UserOut])
@@ -28,21 +34,29 @@ def _has_user_management(role: Optional[Role]) -> bool:
 
 
 def _other_user_management_holder_exists(db: Session, exclude_user_id: int) -> bool:
-    """True if some user other than exclude_user_id belongs to a role that
-    grants user_management — used to stop the last such user losing it."""
-    roles_with_perm = [r.id for r in db.query(Role).all() if _has_user_management(r)]
-    if not roles_with_perm:
-        return False
-    return db.query(User).filter(
-        User.id != exclude_user_id, User.role_id.in_(roles_with_perm)
-    ).first() is not None
+    """True if some other ACTIVE user currently holds a role granting
+    user_management — an inactive holder can't actually reach anything, so
+    doesn't count toward keeping the system manageable. One joined query,
+    not one query per role."""
+    return (
+        db.query(User)
+        .join(Role, User.role_id == Role.id)
+        .join(Role.permissions)
+        .filter(
+            Permission.key == "user_management",
+            User.id != exclude_user_id,
+            User.is_active == True,
+        )
+        .first()
+        is not None
+    )
 
 
 @router.patch("/{user_id}", response_model=UserOut)
 def update_user(
     user_id: int,
     body: UserAdminUpdate,
-    current_user: User = Depends(require_permission("user_management")),
+    current_user: User = Depends(require_user_management),
     db: Session = Depends(get_db),
 ):
     user = db.get(User, user_id)
@@ -68,11 +82,18 @@ def update_user(
     losing_user_management = (
         new_role is not None and _has_user_management(user.role) and not _has_user_management(new_role)
     )
+    # Deactivating someone (not just changing their role) can strand the
+    # system too if they currently hold user_management and no one else does.
+    deactivating_a_holder = updates.get("is_active") is False and _has_user_management(user.role)
 
     if deactivating_self or (is_self and losing_user_management):
         raise HTTPException(400, "You cannot deactivate or demote your own account")
 
-    if losing_user_management and not _other_user_management_holder_exists(db, user_id):
+    strands_user_management = (
+        (losing_user_management or deactivating_a_holder)
+        and not _other_user_management_holder_exists(db, user_id)
+    )
+    if strands_user_management:
         raise HTTPException(400, "Cannot remove the last remaining user with User Management access")
 
     old_values = {"is_active": user.is_active, "role_id": user.role_id}
