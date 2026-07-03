@@ -1,7 +1,11 @@
 """
 School Loans — loans the school has borrowed (collected) from a lender,
 recovered via repayments. Each repayment splits into principal / interest /
-misc charges; outstanding balance only goes down by the principal portion.
+misc charges; the principal-only outstanding balance is the Loans Payable
+liability figure used elsewhere (Financial Statements). A loan is only
+considered fully settled — and auto-closed (is_active flips to False) —
+once BOTH the principal and the loan's agreed total_interest_due are paid,
+not principal alone.
 """
 from datetime import date, datetime
 from typing import Optional
@@ -40,12 +44,32 @@ def _outstanding(loan: SchoolLoan) -> float:
     return max(0.0, round(loan.loan_amount - principal_paid, 2))
 
 
+def _outstanding_interest(loan: SchoolLoan) -> float:
+    due = loan.total_interest_due or 0.0  # defensive: legacy rows predating this column
+    return max(0.0, round(due - _total_interest_paid(loan), 2))
+
+
+def _is_fully_paid(loan: SchoolLoan) -> bool:
+    """Principal AND the agreed total interest must both be cleared —
+    paying off principal alone is not enough to consider the loan settled."""
+    return _outstanding(loan) <= 0 and _outstanding_interest(loan) <= 0
+
+
+def _sync_active_status(loan: SchoolLoan) -> None:
+    """Keep is_active in lockstep with actual payment completeness after any
+    payment is added, edited, or removed — so editing/deleting a payment that
+    used to close the loan correctly reopens it, not just the forward
+    (payment added → maybe closes) direction the old code handled."""
+    loan.is_active = not _is_fully_paid(loan)
+
+
 # ── schemas ────────────────────────────────────────────────────────────────────
 
 class SchoolLoanIn(BaseModel):
     lender_name: str
     loan_amount: float
     interest_rate: float = 0.0   # annual %, kept for reference / display only
+    total_interest_due: float = 0.0  # agreed total interest owed on this loan
     collected_date: date
     notes: Optional[str] = None
     is_active: bool = True
@@ -93,10 +117,13 @@ class SchoolLoanOut(BaseModel):
     lender_name: str
     loan_amount: float
     interest_rate: float
+    total_interest_due: float
     collected_date: date
     notes: Optional[str]
     is_active: bool
-    outstanding_today: float
+    outstanding_today: float          # principal only — the Loans Payable liability figure
+    outstanding_interest: float       # agreed interest not yet paid
+    fully_paid: bool                  # True only when BOTH principal and interest are cleared
     total_paid: float
     total_interest_paid: float
     total_misc_paid: float
@@ -140,10 +167,13 @@ def _to_out(loan: SchoolLoan) -> SchoolLoanOut:
         lender_name=loan.lender_name,
         loan_amount=loan.loan_amount,
         interest_rate=loan.interest_rate,
+        total_interest_due=loan.total_interest_due,
         collected_date=loan.collected_date,
         notes=loan.notes,
         is_active=bool(loan.is_active),
         outstanding_today=_outstanding(loan),
+        outstanding_interest=_outstanding_interest(loan),
+        fully_paid=_is_fully_paid(loan),
         total_paid=_total_paid(loan),
         total_interest_paid=_total_interest_paid(loan),
         total_misc_paid=_total_misc_paid(loan),
@@ -178,6 +208,17 @@ def update_school_loan(loan_id: int, body: SchoolLoanIn, db: Session = Depends(g
     for k, v in body.model_dump().items():
         setattr(loan, k, v)
     loan.updated_at = datetime.utcnow()
+    db.flush()
+    db.refresh(loan)
+    # Editing loan terms (e.g. raising total_interest_due after principal was
+    # already paid off) can make a previously fully-paid loan incomplete
+    # again. A loan can never be inactive while money is still owed — that
+    # would silently drop real debt from the Outstanding (Payable) total,
+    # which only sums is_active loans — so force it back open in that case.
+    # The reverse isn't forced: a genuinely fully-paid loan may still be
+    # explicitly marked active or inactive by the user, either is harmless.
+    if not _is_fully_paid(loan):
+        loan.is_active = True
     db.commit()
     db.refresh(loan)
     return _to_out(loan)
@@ -257,8 +298,7 @@ def add_payment(loan_id: int, body: LoanPaymentIn, db: Session = Depends(get_db)
     db.add(payment)
     db.flush()
     db.refresh(loan)
-    if _outstanding(loan) <= 0:
-        loan.is_active = False
+    _sync_active_status(loan)
     db.commit()
     db.refresh(payment)
     return _serialize_payment(payment)
@@ -272,6 +312,10 @@ def update_payment(loan_id: int, payment_id: int, body: LoanPaymentIn, db: Sessi
     for k, v in body.model_dump().items():
         setattr(payment, k, v)
     payment.updated_at = datetime.utcnow()
+    db.flush()
+    loan = db.get(SchoolLoan, loan_id)
+    db.refresh(loan)
+    _sync_active_status(loan)
     db.commit()
     db.refresh(payment)
     return _serialize_payment(payment)
@@ -283,6 +327,10 @@ def delete_payment(loan_id: int, payment_id: int, db: Session = Depends(get_db))
     if not payment or payment.loan_id != loan_id:
         raise HTTPException(404, "Payment not found")
     db.delete(payment)
+    db.flush()
+    loan = db.get(SchoolLoan, loan_id)
+    db.refresh(loan)
+    _sync_active_status(loan)
     db.commit()
 
 
