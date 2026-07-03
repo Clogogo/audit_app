@@ -309,13 +309,13 @@ def update_payment(loan_id: int, payment_id: int, body: LoanPaymentIn, db: Sessi
     payment = db.get(SchoolLoanPayment, payment_id)
     if not payment or payment.loan_id != loan_id:
         raise HTTPException(404, "Payment not found")
+    loan = db.get(SchoolLoan, loan_id)
+    if not loan:
+        raise HTTPException(404, "School loan not found")
     for k, v in body.model_dump().items():
         setattr(payment, k, v)
     payment.updated_at = datetime.utcnow()
     db.flush()
-    loan = db.get(SchoolLoan, loan_id)
-    if not loan:
-        raise HTTPException(404, "School loan not found")
     db.refresh(loan)
     _sync_active_status(loan)
     db.commit()
@@ -328,11 +328,11 @@ def delete_payment(loan_id: int, payment_id: int, db: Session = Depends(get_db))
     payment = db.get(SchoolLoanPayment, payment_id)
     if not payment or payment.loan_id != loan_id:
         raise HTTPException(404, "Payment not found")
-    db.delete(payment)
-    db.flush()
     loan = db.get(SchoolLoan, loan_id)
     if not loan:
         raise HTTPException(404, "School loan not found")
+    db.delete(payment)
+    db.flush()
     db.refresh(loan)
     _sync_active_status(loan)
     db.commit()
