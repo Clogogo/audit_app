@@ -28,10 +28,15 @@ services:
         value: HS256         # JWT algorithm
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "1440"
-      # Both of these must be set together — /auth/forgot-password checks
-      # both before touching the DB; if only one is set it still
-      # short-circuits (no token created), but better to never deploy with
-      # just one configured.
+      # One-time admin bootstrap — only fires while zero admins exist yet;
+      # a no-op forever after the first admin is established. Leave unset
+      # to bootstrap no admin at all.
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      # Both of these must be set together — /auth/forgot-password always
+      # writes an audit log entry regardless, but short-circuits before
+      # creating a reset token or sending an email if only one (or neither)
+      # is set — better to never deploy with just one configured.
       - key: MAILEROO_API_KEY
         sync: false          # Required for POST /auth/forgot-password to actually send an email
       - key: MAILEROO_FROM_EMAIL

@@ -12,7 +12,7 @@ import models  # noqa: ensure all models are registered before create_all
 from utils.rate_limit import limiter
 
 from routers import transactions, upload, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates, auth
-from routers import tax, financial_statements, assets, staff_loans, staff_directory, payroll, terms, school_loans, advance_payments
+from routers import tax, financial_statements, assets, staff_loans, staff_directory, payroll, terms, school_loans, advance_payments, users
 
 if __name__ != "__pytest_main__":
     # Ensure local SQLite DB is initialized when running the app normally.
@@ -82,6 +82,7 @@ app.include_router(payroll.router)
 app.include_router(terms.router)
 app.include_router(school_loans.router)
 app.include_router(advance_payments.router)
+app.include_router(users.router)
 
 
 @app.get("/health")

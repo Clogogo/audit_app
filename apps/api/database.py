@@ -98,6 +98,9 @@ def initialize_database() -> None:
         "school_loans": [
             "total_interest_due REAL NOT NULL DEFAULT 0.0",
         ],
+        "users": [
+            "is_admin BOOLEAN NOT NULL DEFAULT FALSE",
+        ],
     }
 
     inspector = inspect(engine)
@@ -166,6 +169,25 @@ def initialize_database() -> None:
             "UPDATE advance_payments SET remaining_amount = amount "
             "WHERE remaining_amount = 0 AND is_recovered = :val"
         ), {"val": False})
+
+        # One-time admin bootstrap: only fires while zero admins exist
+        # anywhere, so it can never re-assert itself once the first admin
+        # (this one, or any later promotion) exists — admins can freely
+        # demote each other afterward without this migration fighting them.
+        # The email is deployment config (BOOTSTRAP_ADMIN_EMAIL), not a
+        # hardcoded literal — an unconfigured deployment (a fresh DB with no
+        # var set, e.g. local dev or CI) bootstraps no admin at all rather
+        # than silently trusting whoever registers a baked-in address first.
+        bootstrap_admin_email = os.getenv("BOOTSTRAP_ADMIN_EMAIL")
+        if bootstrap_admin_email:
+            admin_count = connection.execute(
+                text("SELECT COUNT(*) FROM users WHERE is_admin = :val"), {"val": True}
+            ).scalar()
+            if admin_count == 0:
+                connection.execute(
+                    text("UPDATE users SET is_admin = :true_val WHERE email = :email"),
+                    {"true_val": True, "email": bootstrap_admin_email},
+                )
         connection.commit()
 
         # Postgres only: columns that were created as INTEGER (back when the

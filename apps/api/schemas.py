@@ -48,9 +48,16 @@ class UserOut(BaseModel):
     email: str
     full_name: Optional[str]
     is_active: bool
+    is_admin: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class UserAdminUpdate(BaseModel):
+    """Partial-update body for PATCH /users/{user_id} — admin-only."""
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
 
 
 # ── Transactions ──────────────────────────────────────────────────────────────

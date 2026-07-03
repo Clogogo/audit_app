@@ -1,6 +1,7 @@
 import axios, { type AxiosResponse } from 'axios';
 import type {
   User,
+  UserAdminUpdate,
   Transaction,
   TransactionCreate,
   TransactionSummary,
@@ -439,6 +440,15 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 
 export const getCurrentUser = () =>
   api.get('/auth/me').then(unwrap);
+
+// ── User Management (admin-only) ─────────────────────────────────────────────
+
+export const listUsers = () =>
+  api.get<User[]>('/users').then(unwrap);
+
+export const updateUser = (id: number, body: UserAdminUpdate) =>
+  api.patch<User>(`/users/${id}`, body).then(unwrap);
+
 // ── Staff Directory ───────────────────────────────────────────────────────────
 
 export const listStaffMembers = (activeOnly = false) =>

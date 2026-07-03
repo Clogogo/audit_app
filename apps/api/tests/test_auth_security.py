@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from models import PasswordResetToken, User
-from utils.auth import hash_password
+from utils.auth import create_access_token, hash_password
 
 
 def test_anonymous_request_to_protected_route_is_rejected(anon_client):
@@ -234,3 +234,23 @@ def test_change_password_sends_confirmation_email(client):
         assert resp.status_code == 200
         assert mock_send.call_count == 1
         assert mock_send.call_args[0][0] == "test@example.com"
+
+
+def test_deactivating_a_user_immediately_revokes_their_existing_token(anon_client, db_session):
+    # get_current_user must re-check is_active on every request, not just at
+    # login — otherwise an admin deactivating a user has no real effect
+    # until that user's token happens to expire on its own.
+    user = User(email="revoke-test@example.com", hashed_password=hash_password("secret123"), is_active=True)
+    db_session.add(user)
+    db_session.commit()
+    token = create_access_token(data={"sub": str(user.id)})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = anon_client.get("/auth/me", headers=headers)
+    assert resp.status_code == 200
+
+    user.is_active = False
+    db_session.commit()
+
+    resp = anon_client.get("/auth/me", headers=headers)
+    assert resp.status_code == 401

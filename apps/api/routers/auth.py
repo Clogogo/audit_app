@@ -25,6 +25,7 @@ from utils.auth import (
     create_access_token,
     get_current_user,
 )
+from utils.audit import AuditLogger
 from utils.email import send_password_reset_email, send_welcome_email, send_password_changed_email
 from utils.rate_limit import limiter
 
@@ -71,6 +72,11 @@ def register(request: Request, data: UserRegister, db: Session = Depends(get_db)
         full_name=data.full_name,
     )
     db.add(new_user)
+    db.flush()  # assigns new_user.id without committing yet
+    AuditLogger.log_action(
+        db, "user", new_user.id, "register",
+        new_values={"email": new_user.email, "full_name": new_user.full_name},
+    )
     db.commit()
     db.refresh(new_user)
 
@@ -102,6 +108,14 @@ def login(request: Request, credentials: UserLogin, db: Session = Depends(get_db
     """
     user = authenticate_user(db, credentials.email, credentials.password)
     if not user:
+        # No matching account, or wrong password — no real user to attach
+        # the log entry to, so entity_id=0 is a sentinel; the attempted
+        # email is preserved in new_values so the attempt is still traceable.
+        AuditLogger.log_action(
+            db, "user", 0, "login_failed",
+            new_values={"attempted_email": credentials.email},
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -109,10 +123,15 @@ def login(request: Request, credentials: UserLogin, db: Session = Depends(get_db
         )
 
     if not user.is_active:
+        AuditLogger.log_action(db, "user", user.id, "login_blocked_inactive")
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",
         )
+
+    AuditLogger.log_action(db, "user", user.id, "login")
+    db.commit()
 
     # Create access token (sub must be string per JWT spec)
     access_token = create_access_token(data={"sub": str(user.id)})
@@ -128,14 +147,23 @@ def forgot_password(request: Request, data: ForgotPasswordRequest, db: Session =
     to enumerate which emails have accounts — the token is only generated
     and emailed if a matching user actually exists.
     """
+    # Every attempt is audited regardless of what happens next — including
+    # an unregistered email or a misconfigured mail provider — the same way
+    # login_failed logs an attempted_email with no matching user (entity_id=0).
+    user = db.query(User).filter(User.email == data.email).first()
+    AuditLogger.log_action(
+        db, "user", user.id if user else 0, "forgot_password_requested",
+        new_values={"attempted_email": data.email},
+    )
+    db.commit()
+
     # If email sending is unconfigured, there's no point creating a token
-    # that can never be delivered — short-circuit before touching the DB,
+    # that can never be delivered — short-circuit before creating one,
     # still returning the same generic response either way.
     if not os.getenv("MAILEROO_API_KEY") or not os.getenv("MAILEROO_FROM_EMAIL"):
         logger.error("MAILEROO_API_KEY/MAILEROO_FROM_EMAIL are not set — /auth/forgot-password cannot send reset emails")
         return {"message": "If that email is registered, a password reset link has been sent."}
 
-    user = db.query(User).filter(User.email == data.email).first()
     if user:
         raw_token = secrets.token_urlsafe(32)
         reset_token = PasswordResetToken(
@@ -213,6 +241,7 @@ def reset_password(request: Request, data: ResetPasswordRequest, db: Session = D
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
 
     user.hashed_password = hash_password(data.new_password)
+    AuditLogger.log_action(db, "user", user.id, "reset_password")
     db.commit()
 
     try:
@@ -241,6 +270,8 @@ def change_password(
         HTTPException: 422 if the new password is too short
     """
     if not verify_password(data.current_password, current_user.hashed_password):
+        AuditLogger.log_action(db, "user", current_user.id, "change_password_failed")
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Current password is incorrect",
@@ -252,6 +283,7 @@ def change_password(
         )
 
     current_user.hashed_password = hash_password(data.new_password)
+    AuditLogger.log_action(db, "user", current_user.id, "change_password")
     db.commit()
 
     try:
