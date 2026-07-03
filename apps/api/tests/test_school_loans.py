@@ -1,6 +1,9 @@
 """Tests for School Loan payment handling — specifically that a loan only
 auto-closes (is_active -> False) once BOTH principal and the agreed
 total_interest_due are paid, not principal alone."""
+from datetime import date
+
+from models import SchoolLoanPayment
 
 
 def _create_loan(client, total_interest_due: float = 0.0, loan_amount: float = 100000.0):
@@ -164,3 +167,31 @@ def test_explicit_is_active_is_respected_when_loan_is_genuinely_fully_paid(clien
     resp = _update_loan(client, loan, is_active=True)
     assert resp.status_code == 200, resp.text
     assert resp.json()["is_active"] is True
+
+
+def _create_dangling_payment(db_session) -> SchoolLoanPayment:
+    # SQLite in this test setup doesn't enforce foreign keys, so a payment
+    # whose parent loan no longer exists is a real (if rare) possibility —
+    # regression guard for the 404-not-500 fix.
+    payment = SchoolLoanPayment(
+        loan_id=999999, amount_paid=1000.0, interest_amount=0.0, misc_amount=0.0,
+        paid_date=date(2026, 1, 1),
+    )
+    db_session.add(payment)
+    db_session.commit()
+    return payment
+
+
+def test_updating_a_payment_with_a_missing_parent_loan_returns_404_not_500(client, db_session):
+    payment = _create_dangling_payment(db_session)
+    resp = client.put(f"/school-loans/999999/payments/{payment.id}", json={
+        "amount_paid": 2000.0, "interest_amount": 0.0, "misc_amount": 0.0,
+        "paid_date": "2026-01-01",
+    })
+    assert resp.status_code == 404
+
+
+def test_deleting_a_payment_with_a_missing_parent_loan_returns_404_not_500(client, db_session):
+    payment = _create_dangling_payment(db_session)
+    resp = client.delete(f"/school-loans/999999/payments/{payment.id}")
+    assert resp.status_code == 404
