@@ -421,7 +421,9 @@ export function SchoolLoans() {
                                 ref={(el) => { if (el) el.style.width = `${pct}%`; }}
                               />
                             </div>
-                            <p className="text-xs text-muted-foreground text-right">{pct}% repaid</p>
+                            <p className="text-xs text-muted-foreground text-right">
+                              {pct}% principal repaid{loan.outstanding_interest > 0 ? ' — interest still outstanding' : ''}
+                            </p>
                           </div>
 
                           {/* Toggle payments */}

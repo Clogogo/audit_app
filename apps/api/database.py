@@ -96,7 +96,7 @@ def initialize_database() -> None:
             "remaining_amount REAL DEFAULT 0.0",
         ],
         "school_loans": [
-            "total_interest_due REAL DEFAULT 0.0",
+            "total_interest_due REAL NOT NULL DEFAULT 0.0",
         ],
     }
 

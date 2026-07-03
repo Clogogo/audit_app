@@ -45,7 +45,8 @@ def _outstanding(loan: SchoolLoan) -> float:
 
 
 def _outstanding_interest(loan: SchoolLoan) -> float:
-    return max(0.0, round(loan.total_interest_due - _total_interest_paid(loan), 2))
+    due = loan.total_interest_due or 0.0  # defensive: legacy rows predating this column
+    return max(0.0, round(due - _total_interest_paid(loan), 2))
 
 
 def _is_fully_paid(loan: SchoolLoan) -> bool:
@@ -207,6 +208,17 @@ def update_school_loan(loan_id: int, body: SchoolLoanIn, db: Session = Depends(g
     for k, v in body.model_dump().items():
         setattr(loan, k, v)
     loan.updated_at = datetime.utcnow()
+    db.flush()
+    db.refresh(loan)
+    # Editing loan terms (e.g. raising total_interest_due after principal was
+    # already paid off) can make a previously fully-paid loan incomplete
+    # again. A loan can never be inactive while money is still owed — that
+    # would silently drop real debt from the Outstanding (Payable) total,
+    # which only sums is_active loans — so force it back open in that case.
+    # The reverse isn't forced: a genuinely fully-paid loan may still be
+    # explicitly marked active or inactive by the user, either is harmless.
+    if not _is_fully_paid(loan):
+        loan.is_active = True
     db.commit()
     db.refresh(loan)
     return _to_out(loan)
