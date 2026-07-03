@@ -273,6 +273,7 @@ class SchoolLoan(Base):
     lender_name: Mapped[str] = mapped_column(String(200))
     loan_amount: Mapped[float] = mapped_column(Float)
     interest_rate: Mapped[float] = mapped_column(Float, default=0.0)  # annual %, reference/display only
+    total_interest_due: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # agreed total interest, not auto-computed from interest_rate
     collected_date: Mapped[date] = mapped_column(Date)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

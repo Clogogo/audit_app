@@ -18,6 +18,7 @@ const EMPTY_LOAN: SchoolLoanIn = {
   lender_name: '',
   loan_amount: 0,
   interest_rate: 0,
+  total_interest_due: 0,
   collected_date: '',
   notes: '',
   is_active: true,
@@ -114,6 +115,7 @@ export function SchoolLoans() {
       lender_name: loan.lender_name,
       loan_amount: loan.loan_amount,
       interest_rate: loan.interest_rate,
+      total_interest_due: loan.total_interest_due,
       collected_date: loan.collected_date,
       notes: loan.notes ?? '',
       is_active: loan.is_active,
@@ -265,8 +267,11 @@ export function SchoolLoans() {
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
-  const active = loans.filter((l) => l.is_active && l.outstanding_today > 0);
-  const repaid = loans.filter((l) => !l.is_active || l.outstanding_today === 0);
+  // is_active is now kept in sync server-side with true payment completeness
+  // (principal AND agreed interest both cleared), so it alone is authoritative —
+  // no need to separately re-derive "repaid" from outstanding_today here.
+  const active = loans.filter((l) => l.is_active);
+  const repaid = loans.filter((l) => !l.is_active);
   const totalOutstanding = active.reduce((s, l) => s + l.outstanding_today, 0);
   const totalCollected = loans.reduce((s, l) => s + l.loan_amount, 0);
 
@@ -376,7 +381,7 @@ export function SchoolLoans() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
                             <div>
                               <p className="text-muted-foreground">Loan Amount</p>
                               <p className="font-medium">{formatCurrency(loan.loan_amount)}</p>
@@ -390,8 +395,20 @@ export function SchoolLoans() {
                               <p className="font-medium text-expense">{formatCurrency(loan.total_interest_paid)}</p>
                             </div>
                             <div>
-                              <p className="text-muted-foreground">Balance</p>
+                              <p className="text-muted-foreground">Interest Outstanding</p>
+                              <p className={`font-medium ${loan.outstanding_interest > 0 ? 'text-expense' : ''}`}>
+                                {formatCurrency(loan.outstanding_interest)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Principal Balance</p>
                               <p className="font-semibold text-brand-accent">{formatCurrency(loan.outstanding_today)}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Total Remaining (Principal + Interest)</p>
+                              <p className="font-semibold text-brand-accent">
+                                {formatCurrency(loan.outstanding_today + loan.outstanding_interest)}
+                              </p>
                             </div>
                           </div>
 
@@ -404,7 +421,9 @@ export function SchoolLoans() {
                                 ref={(el) => { if (el) el.style.width = `${pct}%`; }}
                               />
                             </div>
-                            <p className="text-xs text-muted-foreground text-right">{pct}% repaid</p>
+                            <p className="text-xs text-muted-foreground text-right">
+                              {pct}% principal repaid{loan.outstanding_interest > 0 ? ' — interest still outstanding' : ''}
+                            </p>
                           </div>
 
                           {/* Toggle payments */}
@@ -600,6 +619,17 @@ export function SchoolLoans() {
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 <p className="text-xs text-muted-foreground mt-1">Reference only — enter the actual interest paid per installment below.</p>
+              </div>
+
+              <div>
+                <NumInput
+                  label="Total Interest Due (agreed with lender)"
+                  value={loanForm.total_interest_due || 0}
+                  onChange={(n) => setLoanForm((f) => ({ ...f, total_interest_due: n }))}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  The loan only counts as fully repaid once principal AND this amount are both paid off.
+                </p>
               </div>
 
               <div>

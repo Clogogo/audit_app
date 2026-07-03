@@ -794,10 +794,13 @@ export interface SchoolLoan {
   lender_name: string;
   loan_amount: number;
   interest_rate: number;
+  total_interest_due: number;
   collected_date: string;
   notes: string | null;
   is_active: boolean;
   outstanding_today: number;
+  outstanding_interest: number;
+  fully_paid: boolean;
   total_paid: number;
   total_interest_paid: number;
   total_misc_paid: number;
@@ -810,6 +813,7 @@ export interface SchoolLoanIn {
   lender_name: string;
   loan_amount: number;
   interest_rate: number;
+  total_interest_due: number;
   collected_date: string;
   notes?: string | null;
   is_active?: boolean;
