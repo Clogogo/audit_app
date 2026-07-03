@@ -17,6 +17,7 @@ export function UserManagement() {
 
   const load = () => {
     setLoading(true);
+    setError(null);
     listUsers()
       .then(setUsers)
       .catch(() => setError('Failed to load users'))
@@ -58,7 +59,7 @@ export function UserManagement() {
         <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
-          <button type="button" title="Dismiss error" className="ml-auto text-destructive/80 hover:text-destructive" onClick={() => setError(null)}>
+          <button type="button" title="Dismiss error" aria-label="Dismiss error" className="ml-auto text-destructive/80 hover:text-destructive" onClick={() => setError(null)}>
             <XCircle className="h-4 w-4" />
           </button>
         </div>

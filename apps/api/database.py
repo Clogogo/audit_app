@@ -174,14 +174,20 @@ def initialize_database() -> None:
         # anywhere, so it can never re-assert itself once the first admin
         # (this one, or any later promotion) exists — admins can freely
         # demote each other afterward without this migration fighting them.
-        admin_count = connection.execute(
-            text("SELECT COUNT(*) FROM users WHERE is_admin = :val"), {"val": True}
-        ).scalar()
-        if admin_count == 0:
-            connection.execute(
-                text("UPDATE users SET is_admin = :true_val WHERE email = :email"),
-                {"true_val": True, "email": "chigoziecigo@yahoo.com"},
-            )
+        # The email is deployment config (BOOTSTRAP_ADMIN_EMAIL), not a
+        # hardcoded literal — an unconfigured deployment (a fresh DB with no
+        # var set, e.g. local dev or CI) bootstraps no admin at all rather
+        # than silently trusting whoever registers a baked-in address first.
+        bootstrap_admin_email = os.getenv("BOOTSTRAP_ADMIN_EMAIL")
+        if bootstrap_admin_email:
+            admin_count = connection.execute(
+                text("SELECT COUNT(*) FROM users WHERE is_admin = :val"), {"val": True}
+            ).scalar()
+            if admin_count == 0:
+                connection.execute(
+                    text("UPDATE users SET is_admin = :true_val WHERE email = :email"),
+                    {"true_val": True, "email": bootstrap_admin_email},
+                )
         connection.commit()
 
         # Postgres only: columns that were created as INTEGER (back when the

@@ -147,14 +147,23 @@ def forgot_password(request: Request, data: ForgotPasswordRequest, db: Session =
     to enumerate which emails have accounts — the token is only generated
     and emailed if a matching user actually exists.
     """
+    # Every attempt is audited regardless of what happens next — including
+    # an unregistered email or a misconfigured mail provider — the same way
+    # login_failed logs an attempted_email with no matching user (entity_id=0).
+    user = db.query(User).filter(User.email == data.email).first()
+    AuditLogger.log_action(
+        db, "user", user.id if user else 0, "forgot_password_requested",
+        new_values={"attempted_email": data.email},
+    )
+    db.commit()
+
     # If email sending is unconfigured, there's no point creating a token
-    # that can never be delivered — short-circuit before touching the DB,
+    # that can never be delivered — short-circuit before creating one,
     # still returning the same generic response either way.
     if not os.getenv("MAILEROO_API_KEY") or not os.getenv("MAILEROO_FROM_EMAIL"):
         logger.error("MAILEROO_API_KEY/MAILEROO_FROM_EMAIL are not set — /auth/forgot-password cannot send reset emails")
         return {"message": "If that email is registered, a password reset link has been sent."}
 
-    user = db.query(User).filter(User.email == data.email).first()
     if user:
         raw_token = secrets.token_urlsafe(32)
         reset_token = PasswordResetToken(
@@ -163,7 +172,6 @@ def forgot_password(request: Request, data: ForgotPasswordRequest, db: Session =
             expires_at=datetime.utcnow() + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES),
         )
         db.add(reset_token)
-        AuditLogger.log_action(db, "user", user.id, "forgot_password_requested")
         db.commit()
 
         # `or` (not getenv's default arg) so an empty-string env var — set but

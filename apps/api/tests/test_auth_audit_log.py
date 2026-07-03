@@ -73,6 +73,30 @@ def test_forgot_password_request_writes_an_audit_log_entry(anon_client, db_sessi
     assert logs[0].entity_id == user.id
 
 
+def test_forgot_password_for_an_unregistered_email_still_writes_an_audit_log_entry(anon_client, db_session):
+    # Anti-enumeration means the HTTP response can't reveal this, but the
+    # attempt itself must still be audited (entity_id=0 sentinel, same
+    # pattern as login_failed).
+    resp = anon_client.post("/auth/forgot-password", json={"email": "unregistered-audited@example.com"})
+    assert resp.status_code == 200
+
+    logs = _logs_for(db_session, "forgot_password_requested")
+    assert len(logs) == 1
+    assert logs[0].entity_id == 0
+    assert "unregistered-audited@example.com" in logs[0].new_values
+
+
+def test_forgot_password_writes_an_audit_log_entry_even_when_mail_is_unconfigured(anon_client, db_session, monkeypatch):
+    monkeypatch.delenv("MAILEROO_API_KEY", raising=False)
+    monkeypatch.delenv("MAILEROO_FROM_EMAIL", raising=False)
+
+    resp = anon_client.post("/auth/forgot-password", json={"email": "mail-unconfigured@example.com"})
+    assert resp.status_code == 200
+
+    logs = _logs_for(db_session, "forgot_password_requested")
+    assert len(logs) == 1
+
+
 def test_reset_password_writes_an_audit_log_entry(anon_client, db_session):
     user = User(email="reset-audited@example.com", hashed_password=hash_password("oldpass123"), is_active=True)
     db_session.add(user)

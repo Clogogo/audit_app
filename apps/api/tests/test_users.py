@@ -82,3 +82,27 @@ def test_admin_cannot_demote_the_last_remaining_admin(admin_client, db_session):
 def test_update_unknown_user_returns_404(admin_client, db_session):
     resp = admin_client.patch("/users/999999", json={"is_active": False})
     assert resp.status_code == 404
+
+
+def test_explicit_null_in_patch_body_does_not_500_or_change_anything(admin_client, db_session):
+    # {"is_active": null} must be treated as "not provided", not as "set the
+    # column to NULL" — the latter would violate the NOT NULL constraint.
+    target = _create_user(db_session, "target@example.com", user_id=2)
+
+    resp = admin_client.patch(f"/users/{target.id}", json={"is_active": None, "is_admin": None})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_active"] is True
+    assert resp.json()["is_admin"] is False
+
+    logs = db_session.query(AuditLog).filter(AuditLog.entity_type == "user", AuditLog.entity_id == target.id).all()
+    assert logs == []
+
+
+def test_empty_patch_body_does_not_write_an_audit_entry(admin_client, db_session):
+    target = _create_user(db_session, "target@example.com", user_id=2)
+
+    resp = admin_client.patch(f"/users/{target.id}", json={})
+    assert resp.status_code == 200, resp.text
+
+    logs = db_session.query(AuditLog).filter(AuditLog.entity_type == "user", AuditLog.entity_id == target.id).all()
+    assert logs == []

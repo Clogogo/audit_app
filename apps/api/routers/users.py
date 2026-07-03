@@ -31,7 +31,13 @@ def update_user(
     if not user:
         raise HTTPException(404, "User not found")
 
-    updates = body.model_dump(exclude_unset=True)
+    # exclude_unset alone still lets a caller send an explicit `null` for a
+    # boolean field ({"is_active": null}), which would try to write None into
+    # a NOT NULL column (a 500) — drop any None values too, since there's no
+    # meaningful "set this flag to null" operation on this endpoint.
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        return user
 
     is_self = user_id == current_user.id
     demoting_self = is_self and updates.get("is_admin") is False
