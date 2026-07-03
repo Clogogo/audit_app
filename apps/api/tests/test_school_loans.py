@@ -1,6 +1,9 @@
 """Tests for School Loan payment handling — specifically that a loan only
 auto-closes (is_active -> False) once BOTH principal and the agreed
 total_interest_due are paid, not principal alone."""
+from sqlalchemy.orm import Session as OrmSession
+
+import models as models_module
 
 
 def _create_loan(client, total_interest_due: float = 0.0, loan_amount: float = 100000.0):
@@ -164,3 +167,47 @@ def test_explicit_is_active_is_respected_when_loan_is_genuinely_fully_paid(clien
     resp = _update_loan(client, loan, is_active=True)
     assert resp.status_code == 200, resp.text
     assert resp.json()["is_active"] is True
+
+
+def _simulate_missing_loan(monkeypatch, loan_id: int) -> None:
+    # A truly-dangling payment row (parent loan deleted) can't be constructed
+    # directly against Postgres — the FK constraint is enforced there (only
+    # SQLite lets it happen). Simulate the missing-loan lookup instead, so
+    # the 404-not-500 guard is tested the same way on both engines.
+    original_get = OrmSession.get
+
+    def fake_get(self, entity, ident, *args, **kwargs):
+        if entity is models_module.SchoolLoan and ident == loan_id:
+            return None
+        return original_get(self, entity, ident, *args, **kwargs)
+
+    monkeypatch.setattr(OrmSession, "get", fake_get)
+
+
+def test_updating_a_payment_with_a_missing_parent_loan_returns_404_not_500(client, db_session, monkeypatch):
+    loan = _create_loan(client, total_interest_due=0.0)
+    resp = client.post(f"/school-loans/{loan['id']}/payments", json={
+        "amount_paid": 1000.0, "interest_amount": 0.0, "misc_amount": 0.0,
+        "paid_date": "2026-01-01",
+    })
+    payment_id = resp.json()["id"]
+
+    _simulate_missing_loan(monkeypatch, loan["id"])
+    resp = client.put(f"/school-loans/{loan['id']}/payments/{payment_id}", json={
+        "amount_paid": 2000.0, "interest_amount": 0.0, "misc_amount": 0.0,
+        "paid_date": "2026-01-01",
+    })
+    assert resp.status_code == 404
+
+
+def test_deleting_a_payment_with_a_missing_parent_loan_returns_404_not_500(client, db_session, monkeypatch):
+    loan = _create_loan(client, total_interest_due=0.0)
+    resp = client.post(f"/school-loans/{loan['id']}/payments", json={
+        "amount_paid": 1000.0, "interest_amount": 0.0, "misc_amount": 0.0,
+        "paid_date": "2026-01-01",
+    })
+    payment_id = resp.json()["id"]
+
+    _simulate_missing_loan(monkeypatch, loan["id"])
+    resp = client.delete(f"/school-loans/{loan['id']}/payments/{payment_id}")
+    assert resp.status_code == 404
