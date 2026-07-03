@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { NotificationProvider } from '../hooks';
 import { AuthProvider } from '../contexts/AuthContext';
 import { ProtectedRoute } from '../components/ProtectedRoute';
+import { AdminRoute } from '../components/AdminRoute';
 import { Layout } from '../components/Layout';
 import { Login } from '../pages/Login';
 import { Register } from '../pages/Register';
@@ -25,6 +26,7 @@ import { StaffDirectory } from '../pages/StaffDirectory';
 import { Payroll } from '../pages/Payroll';
 import { Terms } from '../pages/Terms';
 import { SchoolLoans } from '../pages/SchoolLoans';
+import { UserManagement } from '../pages/UserManagement';
 
 export function App() {
   return (
@@ -63,6 +65,7 @@ export function App() {
                       <Route path="/staff/advances" element={<AdvancePayments />} />
                       <Route path="/staff/payroll" element={<Payroll />} />
                       <Route path="/staff/terms" element={<Terms />} />
+                      <Route path="/user-management" element={<AdminRoute><UserManagement /></AdminRoute>} />
                     </Routes>
                   </Layout>
                 </ProtectedRoute>

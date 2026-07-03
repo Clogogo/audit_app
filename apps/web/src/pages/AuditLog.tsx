@@ -45,6 +45,7 @@ export function AuditLog() {
             <SelectItem value="transaction">Transactions</SelectItem>
             <SelectItem value="bank_transaction">Bank Transactions</SelectItem>
             <SelectItem value="reconciliation">Reconciliation</SelectItem>
+            <SelectItem value="user">User / Auth</SelectItem>
           </SelectContent>
         </Select>
       </div>

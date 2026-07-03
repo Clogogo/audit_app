@@ -25,6 +25,7 @@ import {
   CalendarRange,
   HandCoins,
   Banknote,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
@@ -69,6 +70,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const visibleBottomNavItems = user?.is_admin
+    ? [...bottomNavItems, { to: '/user-management', icon: ShieldCheck, label: 'User Management' }]
+    : bottomNavItems;
 
   const isTaxActive = location.pathname.startsWith('/tax');
   const isStaffActive = location.pathname.startsWith('/staff');
@@ -265,7 +270,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           {/* Bottom standalone items */}
-          {bottomNavItems.map(({ to, icon: Icon, label }) => (
+          {visibleBottomNavItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
