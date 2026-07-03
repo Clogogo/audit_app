@@ -33,10 +33,10 @@ services:
       # to bootstrap no admin at all.
       - key: BOOTSTRAP_ADMIN_EMAIL
         sync: false
-      # Both of these must be set together — /auth/forgot-password checks
-      # both before touching the DB; if only one is set it still
-      # short-circuits (no token created), but better to never deploy with
-      # just one configured.
+      # Both of these must be set together — /auth/forgot-password always
+      # writes an audit log entry regardless, but short-circuits before
+      # creating a reset token or sending an email if only one (or neither)
+      # is set — better to never deploy with just one configured.
       - key: MAILEROO_API_KEY
         sync: false          # Required for POST /auth/forgot-password to actually send an email
       - key: MAILEROO_FROM_EMAIL

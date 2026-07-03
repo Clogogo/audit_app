@@ -133,6 +133,16 @@ def get_current_user(
             detail="User not found",
         )
 
+    # A deactivated account must lose access immediately, not just at their
+    # next login — otherwise an already-issued token keeps working until it
+    # expires (up to ACCESS_TOKEN_EXPIRE_MINUTES later), defeating the point
+    # of deactivating them from User Management.
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account is inactive",
+        )
+
     return user
 
 
