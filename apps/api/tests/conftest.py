@@ -93,12 +93,36 @@ def _fake_current_user() -> User:
         hashed_password=hash_password("test-password-123"),
         full_name="Test User",
         is_active=True,
+        is_admin=False,
+    )
+
+
+def _fake_admin_user() -> User:
+    """Stand-in for get_current_user, admin variant — get_current_admin_user
+    depends on get_current_user, so overriding get_current_user alone is
+    enough for both to see this identity."""
+    return User(
+        id=1,
+        email="admin@example.com",
+        hashed_password=hash_password("test-password-123"),
+        full_name="Test Admin",
+        is_active=True,
+        is_admin=True,
     )
 
 
 @pytest.fixture
 def client():
     app.dependency_overrides[get_current_user] = _fake_current_user
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.fixture
+def admin_client():
+    app.dependency_overrides[get_current_user] = _fake_admin_user
     try:
         yield TestClient(app)
     finally:
