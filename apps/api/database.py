@@ -95,6 +95,9 @@ def initialize_database() -> None:
         "advance_payments": [
             "remaining_amount REAL DEFAULT 0.0",
         ],
+        "school_loans": [
+            "total_interest_due REAL DEFAULT 0.0",
+        ],
     }
 
     inspector = inspect(engine)
