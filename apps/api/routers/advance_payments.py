@@ -13,9 +13,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
 from models import AdvancePayment, Staff, Transaction
-from utils.auth import get_current_user
+from utils.auth import require_permission
 
-router = APIRouter(prefix="/advance-payments", tags=["advance-payments"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/advance-payments", tags=["advance-payments"], dependencies=[Depends(require_permission("staff"))])
 
 
 # ── schemas ────────────────────────────────────────────────────────────────────

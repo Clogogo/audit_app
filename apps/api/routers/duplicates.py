@@ -6,7 +6,7 @@ Date, Amount, Type, Category, Description, Bank — exact match, no fuzzy logic.
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -14,7 +14,7 @@ from database import get_db
 from models import Transaction, AuditLog, BankTransaction
 from schemas import TransactionOut
 
-router = APIRouter(prefix="/duplicates", tags=["duplicates"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/duplicates", tags=["duplicates"], dependencies=[Depends(require_permission("transactions"))])
 
 
 # Amount tolerance to absorb floating-point rounding only (not a fuzzy window).

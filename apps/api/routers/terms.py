@@ -2,14 +2,14 @@
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Term
 
-router = APIRouter(prefix="/terms", tags=["terms"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/terms", tags=["terms"], dependencies=[Depends(require_permission("staff"))])
 
 
 class TermIn(BaseModel):

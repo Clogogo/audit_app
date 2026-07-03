@@ -27,9 +27,20 @@ from unittest.mock import patch
 
 from database import Base, SessionLocal, engine, initialize_database
 from main import app
-from models import User
+from models import Permission, Role, User
 from utils.auth import get_current_user, hash_password
 from utils.rate_limit import limiter
+
+ALL_PERMISSION_KEYS = ["transactions", "banking", "tax", "staff", "audit_log", "user_management"]
+
+
+def _make_role(name: str, permission_keys: list[str]) -> Role:
+    """A transient (never added to a session) Role/Permission graph — plain
+    attribute access works fine on detached ORM objects, no DB needed, so
+    this is enough for require_permission's in-memory permission check."""
+    role = Role(id=1, name=name, description=None, is_system=False)
+    role.permissions = [Permission(key=k, label=k) for k in permission_keys]
+    return role
 
 
 @pytest.fixture(autouse=True)
@@ -85,30 +96,36 @@ def db_session():
 
 def _fake_current_user() -> User:
     """Stand-in for get_current_user — every router except auth.py now
-    requires a logged-in user, so the `client` fixture authenticates as this
-    fake user by default rather than every existing test needing real login."""
-    return User(
+    requires a specific permission, so the `client` fixture authenticates as
+    this fake user (an "Accountant" — every permission except
+    user_management, matching the old is_admin=False baseline every
+    non-admin-specific test in this suite already assumes) rather than every
+    existing test needing real login."""
+    user = User(
         id=1,
         email="test@example.com",
         hashed_password=hash_password("test-password-123"),
         full_name="Test User",
         is_active=True,
-        is_admin=False,
     )
+    user.role = _make_role("Accountant", [k for k in ALL_PERMISSION_KEYS if k != "user_management"])
+    return user
 
 
 def _fake_admin_user() -> User:
-    """Stand-in for get_current_user, admin variant — get_current_admin_user
-    depends on get_current_user, so overriding get_current_user alone is
-    enough for both to see this identity."""
-    return User(
+    """Stand-in for get_current_user, admin variant (every permission,
+    including user_management) — require_permission depends on
+    get_current_user, so overriding get_current_user alone is enough for
+    both to see this identity."""
+    user = User(
         id=1,
         email="admin@example.com",
         hashed_password=hash_password("test-password-123"),
         full_name="Test Admin",
         is_active=True,
-        is_admin=True,
     )
+    user.role = _make_role("Admin", ALL_PERMISSION_KEYS)
+    return user
 
 
 @pytest.fixture

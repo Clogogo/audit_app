@@ -100,6 +100,7 @@ def initialize_database() -> None:
         ],
         "users": [
             "is_admin BOOLEAN NOT NULL DEFAULT FALSE",
+            "role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL",
         ],
     }
 
@@ -169,25 +170,6 @@ def initialize_database() -> None:
             "UPDATE advance_payments SET remaining_amount = amount "
             "WHERE remaining_amount = 0 AND is_recovered = :val"
         ), {"val": False})
-
-        # One-time admin bootstrap: only fires while zero admins exist
-        # anywhere, so it can never re-assert itself once the first admin
-        # (this one, or any later promotion) exists — admins can freely
-        # demote each other afterward without this migration fighting them.
-        # The email is deployment config (BOOTSTRAP_ADMIN_EMAIL), not a
-        # hardcoded literal — an unconfigured deployment (a fresh DB with no
-        # var set, e.g. local dev or CI) bootstraps no admin at all rather
-        # than silently trusting whoever registers a baked-in address first.
-        bootstrap_admin_email = os.getenv("BOOTSTRAP_ADMIN_EMAIL")
-        if bootstrap_admin_email:
-            admin_count = connection.execute(
-                text("SELECT COUNT(*) FROM users WHERE is_admin = :val"), {"val": True}
-            ).scalar()
-            if admin_count == 0:
-                connection.execute(
-                    text("UPDATE users SET is_admin = :true_val WHERE email = :email"),
-                    {"true_val": True, "email": bootstrap_admin_email},
-                )
         connection.commit()
 
         # Postgres only: columns that were created as INTEGER (back when the
@@ -220,3 +202,88 @@ def initialize_database() -> None:
                     f"TYPE boolean USING ({column_name} <> 0)"
                 ))
             connection.commit()
+
+    _seed_roles_and_permissions()
+
+
+# One (key, label) per app section — a fixed set defined by the app's own
+# nav structure, not admin-creatable, unlike Role which is fully editable.
+_PERMISSION_SEEDS = [
+    ("transactions", "Transactions"),
+    ("banking", "Banking"),
+    ("tax", "Tax & Compliance"),
+    ("staff", "Staff & Payroll"),
+    ("audit_log", "Audit Log"),
+    ("user_management", "User Management"),
+]
+
+
+def _seed_roles_and_permissions() -> None:
+    """Idempotent permission/role seed, plus a one-time migration of any
+    user that doesn't have a role yet. Uses the ORM (not raw connection.text)
+    since a role's permission set is a real object graph, not a flat
+    column — imported lazily, same reason as the `from models import Base`
+    import above: model registration must already be complete.
+    """
+    from models import Permission, Role, User
+
+    with SessionLocal() as session:
+        existing_perm_keys = {p.key for p in session.query(Permission).all()}
+        for key, label in _PERMISSION_SEEDS:
+            if key not in existing_perm_keys:
+                session.add(Permission(key=key, label=label))
+        session.commit()
+
+        permissions_by_key = {p.key: p for p in session.query(Permission).all()}
+
+        existing_role_names = {r.name for r in session.query(Role).all()}
+        # The Role table itself didn't exist before this feature — an empty
+        # table means this is the very first time this code has ever run
+        # against this database. Only THAT run is allowed to cut legacy
+        # is_admin users over automatically (see below); every later restart
+        # must leave a fresh registration's role_id alone.
+        is_first_ever_run = not existing_role_names
+
+        role_seeds = [
+            ("Admin", "Full access to every section, including User Management.", True, list(permissions_by_key)),
+            ("Accountant", "Full access to financial data; cannot manage users or roles.",
+             False, [k for k in permissions_by_key if k != "user_management"]),
+            ("Staff", "Dashboard only by default — grant sections as needed.", False, []),
+        ]
+        for name, description, is_system, perm_keys in role_seeds:
+            if name not in existing_role_names:
+                role = Role(name=name, description=description, is_system=is_system)
+                role.permissions = [permissions_by_key[k] for k in perm_keys]
+                session.add(role)
+        session.commit()
+
+        admin_role = session.query(Role).filter(Role.name == "Admin").first()
+        accountant_role = session.query(Role).filter(Role.name == "Accountant").first()
+
+        # One-time legacy cutover, first run only: any user that predates the
+        # Role table gets Admin (if is_admin was already set) or Accountant
+        # (everyone else — matches their current defacto full financial
+        # access, since is_admin was the only thing previously gating
+        # anything). A user who registers on any LATER run must keep
+        # role_id = NULL until an admin explicitly assigns one — they must
+        # never be silently upgraded to Accountant just because the server
+        # restarted.
+        if is_first_ever_run:
+            legacy_users = session.query(User).filter(User.role_id.is_(None)).all()
+            for user in legacy_users:
+                user.role_id = admin_role.id if user.is_admin else accountant_role.id
+            if legacy_users:
+                session.commit()
+
+        # BOOTSTRAP_ADMIN_EMAIL: only fires while nobody holds the Admin role
+        # yet — permanently inert afterward, admins can freely reassign
+        # roles (including their own) via the Role/User Management UI
+        # without this migration fighting them.
+        bootstrap_admin_email = os.getenv("BOOTSTRAP_ADMIN_EMAIL")
+        if bootstrap_admin_email:
+            admin_holder_count = session.query(User).filter(User.role_id == admin_role.id).count()
+            if admin_holder_count == 0:
+                target = session.query(User).filter(User.email == bootstrap_admin_email).first()
+                if target:
+                    target.role_id = admin_role.id
+                    session.commit()

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional, Any
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 # ── Authentication ────────────────────────────────────────────────────────────
@@ -42,13 +42,49 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class RoleOut(BaseModel):
+    """Schema for role information — includes just the permission keys the
+    frontend needs to check against, not the full Permission objects."""
+    id: int
+    name: str
+    description: Optional[str]
+    is_system: bool
+    permissions: list[str]
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("permissions", mode="before")
+    @classmethod
+    def _permission_keys(cls, value):
+        # `Role.permissions` (the ORM relationship) is a list of Permission
+        # objects, not strings — extract .key so response_model=UserOut/RoleOut
+        # can validate straight off the ORM object with no manual serializer.
+        return [p.key if hasattr(p, "key") else p for p in value]
+
+
+class RoleIn(BaseModel):
+    """Create/update body for POST/PUT /roles — admin-only."""
+    name: str
+    description: Optional[str] = None
+    permission_keys: list[str] = []
+
+
+class PermissionOut(BaseModel):
+    """One of the fixed, app-defined permission keys — not admin-creatable,
+    only assignable to roles."""
+    key: str
+    label: str
+
+    model_config = {"from_attributes": True}
+
+
 class UserOut(BaseModel):
     """Schema for user information response."""
     id: int
     email: str
     full_name: Optional[str]
     is_active: bool
-    is_admin: bool
+    role: Optional[RoleOut]
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -57,7 +93,7 @@ class UserOut(BaseModel):
 class UserAdminUpdate(BaseModel):
     """Partial-update body for PATCH /users/{user_id} — admin-only."""
     is_active: Optional[bool] = None
-    is_admin: Optional[bool] = None
+    role_id: Optional[int] = None
 
 
 # ── Transactions ──────────────────────────────────────────────────────────────

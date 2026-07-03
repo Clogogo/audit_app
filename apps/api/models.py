@@ -21,6 +21,47 @@ class MatchStatus(str, enum.Enum):
     discrepancy = "discrepancy"
 
 
+class Role(Base):
+    """A named, admin-editable set of permissions. Admin/Accountant/Staff are
+    seeded defaults, not hardcoded special cases — any role (other than the
+    is_system-protected Admin) can be renamed, re-permissioned, or deleted."""
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)  # Admin only — can't be deleted
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    permissions: Mapped[list["Permission"]] = relationship(
+        "Permission", secondary="role_permissions", back_populates="roles"
+    )
+    users: Mapped[list["User"]] = relationship("User", back_populates="role")
+
+
+class Permission(Base):
+    """One page/section of the app (e.g. "transactions", "staff"). Fixed set,
+    seeded at startup — not admin-creatable, since the sections are defined
+    by the app's own nav structure, not arbitrary data."""
+    __tablename__ = "permissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True)
+    label: Mapped[str] = mapped_column(String(200))
+
+    roles: Mapped[list["Role"]] = relationship(
+        "Role", secondary="role_permissions", back_populates="permissions"
+    )
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+
+    role_id: Mapped[int] = mapped_column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    permission_id: Mapped[int] = mapped_column(Integer, ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -29,9 +70,12 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # SQLite uses INTEGER for bool
-    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # vestigial — superseded by role; see Role/Permission above
+    role_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("roles.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    role: Mapped[Optional["Role"]] = relationship("Role", back_populates="users")
 
 
 class PasswordResetToken(Base):
