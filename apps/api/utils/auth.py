@@ -146,15 +146,20 @@ def get_current_user(
     return user
 
 
-def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    """Layers on top of get_current_user — 403 for any authenticated user
-    who isn't an admin. Use as the dependency for admin-only routes."""
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return current_user
+def require_permission(permission_key: str):
+    """Dependency factory layering on top of get_current_user — 403 for any
+    authenticated user whose role doesn't grant permission_key. Use as
+    dependencies=[Depends(require_permission("..."))] on a router, or as a
+    per-endpoint parameter when the endpoint also needs the resolved user."""
+    def _check(current_user: User = Depends(get_current_user)) -> User:
+        granted = {p.key for p in current_user.role.permissions} if current_user.role else set()
+        if permission_key not in granted:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing required permission: {permission_key}",
+            )
+        return current_user
+    return _check
 
 
 def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:

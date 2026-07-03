@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -18,7 +18,7 @@ from schemas import (
 import ai_worker
 from ai_worker import OpenRouterRateLimitError, AIProviderError
 
-router = APIRouter(prefix="/upload", tags=["upload"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/upload", tags=["upload"], dependencies=[Depends(require_permission("banking"))])
 
 
 import os as _os

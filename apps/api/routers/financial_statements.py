@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,7 +18,7 @@ from models import Transaction, Asset, StaffLoan
 from routers.assets import calc_accumulated, calc_period_dep
 from routers.staff_loans import _outstanding as _staff_loan_outstanding
 
-router = APIRouter(prefix="/financial-statements", tags=["financial-statements"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/financial-statements", tags=["financial-statements"], dependencies=[Depends(require_permission("tax"))])
 
 
 # ── Simple TTL cache for computed statements (avoids repeat DB work) ───────────

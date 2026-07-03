@@ -9,7 +9,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from pydantic import BaseModel
 from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import AdvancePayment, PayrollEntry, Staff, StaffLoan, StaffLoanPayment, Transaction
 
-router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(require_permission("staff"))])
 
 
 _NAME_TITLES = {"mr", "mrs", "miss", "ms", "mstr", "dr", "mister", "engr", "chief", "elder", "pastor"}

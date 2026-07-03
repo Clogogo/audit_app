@@ -5,7 +5,7 @@ from typing import Optional
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from utils.errors import get_or_404
 from sqlalchemy.orm import Session
 from sqlalchemy import func, select as sa_select
@@ -22,7 +22,7 @@ class _BatchCategoryUpdate(_BaseModel):
     ids: list[int]
     category: str
 
-router = APIRouter(prefix="/transactions", tags=["transactions"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/transactions", tags=["transactions"], dependencies=[Depends(require_permission("transactions"))])
 
 
 logger = logging.getLogger(__name__)

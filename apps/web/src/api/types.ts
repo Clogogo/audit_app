@@ -1,17 +1,36 @@
 // ── Authentication ────────────────────────────────────────────────────────────
 
+export interface Role {
+  id: number;
+  name: string;
+  description: string | null;
+  is_system: boolean;
+  permissions: string[];
+}
+
+export interface RoleIn {
+  name: string;
+  description?: string | null;
+  permission_keys: string[];
+}
+
+export interface Permission {
+  key: string;
+  label: string;
+}
+
 export interface User {
   id: number;
   email: string;
   full_name?: string;
   is_active: boolean;
-  is_admin: boolean;
+  role: Role | null;
   created_at: string;
 }
 
 export interface UserAdminUpdate {
   is_active?: boolean;
-  is_admin?: boolean;
+  role_id?: number | null;
 }
 
 // ── Transactions ──────────────────────────────────────────────────────────────
