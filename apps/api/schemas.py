@@ -94,6 +94,14 @@ class UserAdminUpdate(BaseModel):
     """Partial-update body for PATCH /users/{user_id} — admin-only."""
     is_active: Optional[bool] = None
     role_id: Optional[int] = None
+    full_name: Optional[str] = None
+
+    @field_validator("full_name")
+    @classmethod
+    def full_name_not_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("full_name cannot be blank")
+        return v.strip() if v is not None else v
 
 
 # ── Transactions ──────────────────────────────────────────────────────────────
