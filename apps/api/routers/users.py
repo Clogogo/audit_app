@@ -96,10 +96,10 @@ def update_user(
     if strands_user_management:
         raise HTTPException(400, "Cannot remove the last remaining user with User Management access")
 
-    old_values = {"is_active": user.is_active, "role_id": user.role_id}
+    old_values = {"is_active": user.is_active, "role_id": user.role_id, "full_name": user.full_name}
     for key, value in updates.items():
         setattr(user, key, value)
-    new_values = {"is_active": user.is_active, "role_id": user.role_id}
+    new_values = {"is_active": user.is_active, "role_id": user.role_id, "full_name": user.full_name}
 
     AuditLogger.log_action(db, "user", user.id, "admin_update", old_values=old_values, new_values=new_values)
     db.commit()
