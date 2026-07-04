@@ -5,14 +5,14 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Asset
 
-router = APIRouter(prefix="/assets", tags=["assets"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/assets", tags=["assets"], dependencies=[Depends(require_permission("tax"))])
 
 
 ASSET_CATEGORIES = [

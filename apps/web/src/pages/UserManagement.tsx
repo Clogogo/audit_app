@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
 import { ShieldCheck, AlertCircle, XCircle } from 'lucide-react';
-import { listUsers, updateUser } from '../api/client';
-import type { User } from '../api/types';
+import { listUsers, listRoles, updateUser } from '../api/client';
+import type { Role, User } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { formatDate } from '../lib/utils';
 
 export function UserManagement() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -18,19 +20,33 @@ export function UserManagement() {
   const load = () => {
     setLoading(true);
     setError(null);
-    listUsers()
-      .then(setUsers)
+    Promise.all([listUsers(), listRoles()])
+      .then(([u, r]) => { setUsers(u); setRoles(r); })
       .catch(() => setError('Failed to load users'))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
 
-  const toggle = async (target: User, field: 'is_active' | 'is_admin') => {
+  const toggleActive = async (target: User) => {
     setSavingId(target.id);
     setError(null);
     try {
-      await updateUser(target.id, { [field]: !target[field] });
+      await updateUser(target.id, { is_active: !target.is_active });
+      load();
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(detail || 'Failed to update user');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const changeRole = async (target: User, roleId: string) => {
+    setSavingId(target.id);
+    setError(null);
+    try {
+      await updateUser(target.id, { role_id: Number(roleId) });
       load();
     } catch (err) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -41,7 +57,7 @@ export function UserManagement() {
   };
 
   const activeCount = users.filter((u) => u.is_active).length;
-  const adminCount = users.filter((u) => u.is_admin).length;
+  const noRoleCount = users.filter((u) => !u.role).length;
 
   return (
     <div className="space-y-6">
@@ -51,7 +67,7 @@ export function UserManagement() {
           User Management
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Admin-only — activate, deactivate, and grant admin access to accounts
+          Activate, deactivate, and assign roles to accounts
         </p>
       </div>
 
@@ -80,8 +96,8 @@ export function UserManagement() {
         </Card>
         <Card>
           <CardContent className="pt-5">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide">Admins</p>
-            <p className="text-xl font-bold mt-1 text-brand-accent">{adminCount}</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">No Role Assigned</p>
+            <p className="text-xl font-bold mt-1 text-brand-accent">{noRoleCount}</p>
           </CardContent>
         </Card>
       </div>
@@ -119,9 +135,20 @@ export function UserManagement() {
                           </Badge>
                         </td>
                         <td className="py-2.5 pr-3">
-                          <Badge variant={u.is_admin ? 'default' : 'outline'}>
-                            {u.is_admin ? 'Admin' : 'Member'}
-                          </Badge>
+                          <Select
+                            value={u.role ? String(u.role.id) : undefined}
+                            onValueChange={(v) => changeRole(u, v)}
+                            disabled={isSelf || savingId === u.id}
+                          >
+                            <SelectTrigger className="w-40 h-8 text-xs" title={isSelf ? "You can't change your own role" : undefined}>
+                              <SelectValue placeholder="No role" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {roles.map((r) => (
+                                <SelectItem key={r.id} value={String(r.id)}>{r.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </td>
                         <td className="py-2.5 pr-3 text-muted-foreground">{formatDate(u.created_at)}</td>
                         <td className="py-2.5 pr-3">
@@ -131,18 +158,9 @@ export function UserManagement() {
                               variant="outline"
                               disabled={isSelf || savingId === u.id}
                               title={isSelf ? "You can't change your own status" : undefined}
-                              onClick={() => toggle(u, 'is_active')}
+                              onClick={() => toggleActive(u)}
                             >
                               {u.is_active ? 'Deactivate' : 'Activate'}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={isSelf || savingId === u.id}
-                              title={isSelf ? "You can't change your own role" : undefined}
-                              onClick={() => toggle(u, 'is_admin')}
-                            >
-                              {u.is_admin ? 'Remove Admin' : 'Make Admin'}
                             </Button>
                           </div>
                         </td>

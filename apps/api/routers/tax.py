@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import extract
@@ -20,7 +20,7 @@ from database import get_db
 from models import Transaction, Asset
 from routers.assets import calc_period_dep
 
-router = APIRouter(prefix="/tax", tags=["tax"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/tax", tags=["tax"], dependencies=[Depends(require_permission("tax"))])
 
 
 # ── Template path ──────────────────────────────────────────────────────────────

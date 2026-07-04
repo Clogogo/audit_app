@@ -2,6 +2,9 @@ import axios, { type AxiosResponse } from 'axios';
 import type {
   User,
   UserAdminUpdate,
+  Role,
+  RoleIn,
+  Permission,
   Transaction,
   TransactionCreate,
   TransactionSummary,
@@ -448,6 +451,23 @@ export const listUsers = () =>
 
 export const updateUser = (id: number, body: UserAdminUpdate) =>
   api.patch<User>(`/users/${id}`, body).then(unwrap);
+
+// ── Roles & Permissions (admin-only) ─────────────────────────────────────────
+
+export const listRoles = () =>
+  api.get<Role[]>('/roles').then(unwrap);
+
+export const listPermissions = () =>
+  api.get<Permission[]>('/roles/permissions').then(unwrap);
+
+export const createRole = (body: RoleIn) =>
+  api.post<Role>('/roles', body).then(unwrap);
+
+export const updateRole = (id: number, body: RoleIn) =>
+  api.put<Role>(`/roles/${id}`, body).then(unwrap);
+
+export const deleteRole = (id: number) =>
+  api.delete<void>(`/roles/${id}`).then(unwrap);
 
 // ── Staff Directory ───────────────────────────────────────────────────────────
 

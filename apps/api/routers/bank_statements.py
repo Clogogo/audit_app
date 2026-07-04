@@ -14,7 +14,7 @@ from typing import Optional
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from utils.auth import get_current_user
+from utils.auth import require_permission
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -42,7 +42,7 @@ from schemas import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/bank-statements", tags=["bank-statements"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/bank-statements", tags=["bank-statements"], dependencies=[Depends(require_permission("banking"))])
 
 
 import os

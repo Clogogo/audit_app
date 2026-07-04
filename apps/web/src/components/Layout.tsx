@@ -26,9 +26,11 @@ import {
   HandCoins,
   Banknote,
   ShieldCheck,
+  Shield,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
+import { hasPermission } from '../lib/permissions';
 import { Button } from './ui/button';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -71,9 +73,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const visibleBottomNavItems = user?.is_admin
-    ? [...bottomNavItems, { to: '/user-management', icon: ShieldCheck, label: 'User Management' }]
-    : bottomNavItems;
+  const visibleTopNavItems = topNavItems.filter(
+    ({ to }) => to === '/' || hasPermission(user, 'transactions')
+  );
+
+  const canManageUsers = hasPermission(user, 'user_management');
+  const visibleBottomNavItems = [
+    ...(hasPermission(user, 'audit_log') ? bottomNavItems : []),
+    ...(canManageUsers ? [{ to: '/user-management', icon: ShieldCheck, label: 'User Management' }] : []),
+    ...(canManageUsers ? [{ to: '/role-management', icon: Shield, label: 'Role Management' }] : []),
+  ];
 
   const isTaxActive = location.pathname.startsWith('/tax');
   const isStaffActive = location.pathname.startsWith('/staff');
@@ -119,7 +128,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <span className="font-bold text-lg">FinanceAudit</span>
         </div>
         <nav className="flex-1 p-4 space-y-1">
-          {topNavItems.map(({ to, icon: Icon, label }) => (
+          {visibleTopNavItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
@@ -140,6 +149,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           ))}
 
           {/* Banking section — collapsible */}
+          {hasPermission(user, 'banking') && (
           <div>
             <button
               type="button"
@@ -181,8 +191,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </div>
             )}
           </div>
+          )}
 
           {/* Tax section — collapsible parent */}
+          {hasPermission(user, 'tax') && (
           <div>
             <button
               type="button"
@@ -225,8 +237,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </div>
             )}
           </div>
+          )}
 
           {/* Staff section — collapsible parent */}
+          {hasPermission(user, 'staff') && (
           <div>
             <button
               type="button"
@@ -268,6 +282,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </div>
             )}
           </div>
+          )}
 
           {/* Bottom standalone items */}
           {visibleBottomNavItems.map(({ to, icon: Icon, label }) => (
