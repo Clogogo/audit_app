@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck, AlertCircle, XCircle } from 'lucide-react';
+import { ShieldCheck, AlertCircle, XCircle, Pencil, Check } from 'lucide-react';
 import { listUsers, listRoles, updateUser } from '../api/client';
 import type { Role, User } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
@@ -16,6 +16,8 @@ export function UserManagement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [editingNameId, setEditingNameId] = useState<number | null>(null);
+  const [nameDraft, setNameDraft] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -51,6 +53,40 @@ export function UserManagement() {
     } catch (err) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setError(detail || 'Failed to update user');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const startEditName = (target: User) => {
+    setEditingNameId(target.id);
+    setNameDraft(target.full_name || '');
+  };
+
+  const cancelEditName = () => {
+    setEditingNameId(null);
+    setNameDraft('');
+  };
+
+  const saveName = async (target: User) => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === target.full_name) {
+      cancelEditName();
+      return;
+    }
+    setSavingId(target.id);
+    setError(null);
+    try {
+      await updateUser(target.id, { full_name: trimmed });
+      cancelEditName();
+      load();
+    } catch (err) {
+      // Pydantic validation errors (e.g. the blank-name rejection) come back
+      // as detail: [{ msg, ... }], not a plain string — string-only parsing
+      // would silently fall through to the generic message here.
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      const message = Array.isArray(detail) ? detail[0]?.msg : detail;
+      setError(typeof message === 'string' && message ? message : 'Failed to update user');
     } finally {
       setSavingId(null);
     }
@@ -128,7 +164,57 @@ export function UserManagement() {
                     return (
                       <tr key={u.id}>
                         <td className="py-2.5 pr-3">{u.email}</td>
-                        <td className="py-2.5 pr-3">{u.full_name || '—'}</td>
+                        <td className="py-2.5 pr-3">
+                          {editingNameId === u.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                autoFocus
+                                type="text"
+                                aria-label="Full name"
+                                placeholder="Full name"
+                                value={nameDraft}
+                                disabled={savingId === u.id}
+                                onChange={(e) => setNameDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (savingId === u.id) return;
+                                  if (e.key === 'Enter') saveName(u);
+                                  if (e.key === 'Escape') cancelEditName();
+                                }}
+                                className="w-32 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                              />
+                              <button
+                                type="button"
+                                aria-label="Save name"
+                                disabled={savingId === u.id}
+                                onClick={() => saveName(u)}
+                                className="text-income hover:opacity-80"
+                              >
+                                <Check className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Cancel"
+                                disabled={savingId === u.id}
+                                onClick={cancelEditName}
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-40"
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 group">
+                              <span>{u.full_name || '—'}</span>
+                              <button
+                                type="button"
+                                aria-label="Edit name"
+                                onClick={() => startEditName(u)}
+                                className="text-muted-foreground/50 hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
                         <td className="py-2.5 pr-3">
                           <Badge variant={u.is_active ? 'income' : 'expense'}>
                             {u.is_active ? 'Active' : 'Inactive'}

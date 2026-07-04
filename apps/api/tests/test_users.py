@@ -166,3 +166,30 @@ def test_empty_patch_body_does_not_write_an_audit_entry(admin_client, db_session
 
     logs = db_session.query(AuditLog).filter(AuditLog.entity_type == "user", AuditLog.entity_id == target.id).all()
     assert logs == []
+
+
+def test_admin_can_edit_another_users_full_name(admin_client, db_session):
+    target = _create_user(db_session, "target@example.com", user_id=2)
+
+    resp = admin_client.patch(f"/users/{target.id}", json={"full_name": "Corrected Name"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["full_name"] == "Corrected Name"
+
+    log = db_session.query(AuditLog).filter(AuditLog.entity_type == "user", AuditLog.entity_id == target.id).first()
+    assert log is not None
+    assert log.action == "admin_update"
+
+
+def test_full_name_is_trimmed_before_saving(admin_client, db_session):
+    target = _create_user(db_session, "target@example.com", user_id=2)
+
+    resp = admin_client.patch(f"/users/{target.id}", json={"full_name": "  Padded Name  "})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["full_name"] == "Padded Name"
+
+
+def test_blank_full_name_is_rejected(admin_client, db_session):
+    target = _create_user(db_session, "target@example.com", user_id=2)
+
+    resp = admin_client.patch(f"/users/{target.id}", json={"full_name": "   "})
+    assert resp.status_code == 422

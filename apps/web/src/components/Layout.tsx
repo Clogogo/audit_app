@@ -27,6 +27,7 @@ import {
   Banknote,
   ShieldCheck,
   Shield,
+  Lock,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
@@ -67,6 +68,11 @@ const staffSubItems = [
   { to: '/staff/terms', icon: CalendarRange, label: 'Terms' },
 ];
 
+const accessSubItems = [
+  { to: '/user-management', icon: ShieldCheck, label: 'User Management' },
+  { to: '/role-management', icon: Shield, label: 'Role Management' },
+];
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -78,20 +84,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 
   const canManageUsers = hasPermission(user, 'user_management');
-  const visibleBottomNavItems = [
-    ...(hasPermission(user, 'audit_log') ? bottomNavItems : []),
-    ...(canManageUsers ? [{ to: '/user-management', icon: ShieldCheck, label: 'User Management' }] : []),
-    ...(canManageUsers ? [{ to: '/role-management', icon: Shield, label: 'Role Management' }] : []),
-  ];
+  const visibleBottomNavItems = hasPermission(user, 'audit_log') ? bottomNavItems : [];
 
   const isTaxActive = location.pathname.startsWith('/tax');
   const isStaffActive = location.pathname.startsWith('/staff');
   const isBankingActive = ['/banks', '/upload', '/reconciliation', '/reports', '/bank-reports'].some(
     (p) => location.pathname === p
   );
+  const isAccessActive = ['/user-management', '/role-management'].includes(location.pathname);
   const [taxOpen, setTaxOpen] = useState(isTaxActive);
   const [staffOpen, setStaffOpen] = useState(isStaffActive);
   const [bankingOpen, setBankingOpen] = useState(isBankingActive);
+  const [accessOpen, setAccessOpen] = useState(isAccessActive);
 
   // Auto-expand sections when on their routes
   useEffect(() => {
@@ -105,6 +109,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isBankingActive) setBankingOpen(true);
   }, [isBankingActive]);
+
+  useEffect(() => {
+    if (isAccessActive) setAccessOpen(true);
+  }, [isAccessActive]);
 
   const handleLogout = () => {
     logout();
@@ -262,6 +270,51 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {staffOpen && (
               <div className="ml-4 mt-1 space-y-0.5 border-l border-border/50 pl-3">
                 {staffSubItems.map(({ to, icon: Icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    onClick={() => setSidebarOpen(false)}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                      )
+                    }
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+          )}
+
+          {/* Access section — collapsible parent */}
+          {canManageUsers && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setAccessOpen((v) => !v)}
+              className={cn(
+                'w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isAccessActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              )}
+            >
+              <Lock className="h-4 w-4 shrink-0" />
+              <span className="flex-1 text-left">Access</span>
+              {accessOpen
+                ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+
+            {accessOpen && (
+              <div className="ml-4 mt-1 space-y-0.5 border-l border-border/50 pl-3">
+                {accessSubItems.map(({ to, icon: Icon, label }) => (
                   <NavLink
                     key={to}
                     to={to}

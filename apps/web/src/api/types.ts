@@ -31,6 +31,7 @@ export interface User {
 export interface UserAdminUpdate {
   is_active?: boolean;
   role_id?: number | null;
+  full_name?: string;
 }
 
 // ── Transactions ──────────────────────────────────────────────────────────────
