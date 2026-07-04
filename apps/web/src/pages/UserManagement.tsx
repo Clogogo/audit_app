@@ -81,8 +81,12 @@ export function UserManagement() {
       cancelEditName();
       load();
     } catch (err) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(detail || 'Failed to update user');
+      // Pydantic validation errors (e.g. the blank-name rejection) come back
+      // as detail: [{ msg, ... }], not a plain string — string-only parsing
+      // would silently fall through to the generic message here.
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      const message = Array.isArray(detail) ? detail[0]?.msg : detail;
+      setError(typeof message === 'string' && message ? message : 'Failed to update user');
     } finally {
       setSavingId(null);
     }
@@ -201,7 +205,7 @@ export function UserManagement() {
                                 type="button"
                                 aria-label="Edit name"
                                 onClick={() => startEditName(u)}
-                                className="text-muted-foreground/50 hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="text-muted-foreground/50 hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
