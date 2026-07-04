@@ -173,12 +173,14 @@ export function UserManagement() {
                                 aria-label="Full name"
                                 placeholder="Full name"
                                 value={nameDraft}
+                                disabled={savingId === u.id}
                                 onChange={(e) => setNameDraft(e.target.value)}
                                 onKeyDown={(e) => {
+                                  if (savingId === u.id) return;
                                   if (e.key === 'Enter') saveName(u);
                                   if (e.key === 'Escape') cancelEditName();
                                 }}
-                                className="w-32 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                                className="w-32 rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
                               />
                               <button
                                 type="button"
@@ -192,8 +194,9 @@ export function UserManagement() {
                               <button
                                 type="button"
                                 aria-label="Cancel"
+                                disabled={savingId === u.id}
                                 onClick={cancelEditName}
-                                className="text-muted-foreground hover:text-foreground"
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-40"
                               >
                                 <XCircle className="h-4 w-4" />
                               </button>
