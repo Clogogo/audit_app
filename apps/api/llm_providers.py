@@ -2,7 +2,7 @@
 OpenRouter LLM Client Factory
 
 Provider: OpenRouter (https://openrouter.ai/)
-Model: Liquid LFM 2.5 (default: liquid/lfm-2.5-1.2b-thinking:free, configurable)
+Model: Nvidia Nemotron 3 Ultra (default: nvidia/nemotron-3-ultra-550b-a55b:free, configurable)
 Cost: Free tier with rate limits, or pay-as-you-go
 
 This module provides a unified interface for accessing LLMs via OpenRouter.
@@ -23,12 +23,12 @@ class LLMConfig:
         Get the OpenRouter LLM model name.
 
         Environment variables:
-        - OPENROUTER_MODEL: (default: "liquid/lfm-2.5-1.2b-thinking:free")
+        - OPENROUTER_MODEL: (default: "nvidia/nemotron-3-ultra-550b-a55b:free")
 
         Returns:
             str: The model identifier
         """
-        model = os.getenv("OPENROUTER_MODEL", "liquid/lfm-2.5-1.2b-thinking:free")
+        model = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
         logger.info(f"Using OpenRouter model: {model}")
         return model
 
@@ -37,7 +37,7 @@ class LLMConfig:
 
 
 class OpenRouterLLMClient:
-    """Wrapper for OpenRouter API with Liquid LFM."""
+    """Wrapper for OpenRouter API."""
     
     def __init__(self):
         from openai import OpenAI
@@ -88,7 +88,7 @@ class LLMClientFactory:
         Get or create the OpenRouter LLM client.
 
         Returns:
-            OpenRouterLLMClient: Configured client for Liquid LFM model
+            OpenRouterLLMClient: Configured client for the configured model
         """
         if cls._instance is not None:
             return cls._instance

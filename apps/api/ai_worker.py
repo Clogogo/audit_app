@@ -1,6 +1,6 @@
 """
 AI Worker — OpenRouter LLM provider
-  Model: liquid/lfm-2.5-1.2b-thinking:free (OPENROUTER_MODEL env var to override)
+  Model: nvidia/nemotron-3-ultra-550b-a55b:free (OPENROUTER_MODEL env var to override)
   Requires: OPENROUTER_API_KEY environment variable
 
 Two extraction modes:

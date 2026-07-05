@@ -15,6 +15,21 @@ describe('AISummaryCard', () => {
 
   it('shows a loading placeholder while fetching', () => {
     render(<AISummaryCard narrative={null} available={false} loading={true} />);
-    expect(screen.getByText('AI Summary')).toBeInTheDocument();
+    expect(screen.getByText('AI Financial Analysis')).toBeInTheDocument();
+  });
+
+  it('renders **label** markers as <strong> elements, split into separate paragraphs', () => {
+    const narrative = '**Financial Position:** Balance is healthy.\n**Plan:** Cut fuel spend.';
+    const { container } = render(<AISummaryCard narrative={narrative} available={true} loading={false} />);
+
+    const financialLabel = screen.getByText('Financial Position:');
+    const planLabel = screen.getByText('Plan:');
+    expect(financialLabel.tagName).toBe('STRONG');
+    expect(planLabel.tagName).toBe('STRONG');
+
+    const paragraphs = container.querySelectorAll('p');
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0].textContent).toBe('Financial Position: Balance is healthy.');
+    expect(paragraphs[1].textContent).toBe('Plan: Cut fuel spend.');
   });
 });
