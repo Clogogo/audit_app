@@ -76,6 +76,30 @@ def test_ai_summary_cache_invalidates_when_totals_change(client, monkeypatch):
     assert mock_client.create_message.call_count == 2
 
 
+def test_ai_summary_retries_without_extra_body_on_older_openai_client(client, monkeypatch):
+    # An installed openai client too old to accept extra_body raises
+    # TypeError on the unexpected kwarg (rather than ignoring it) — the
+    # summary must still work, just without the reasoning-effort control.
+    transactions_module._AI_SUMMARY_CACHE.clear()
+    _create_expense(client, 1000.0, "Fuel Expenses")
+
+    mock_client = MagicMock()
+    mock_client.create_message.side_effect = [
+        TypeError("create_message() got an unexpected keyword argument 'extra_body'"),
+        "Fallback narrative without reasoning control.",
+    ]
+    monkeypatch.setattr(transactions_module, "get_llm_client", lambda: mock_client)
+
+    resp = client.get("/transactions/ai-summary")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is True
+    assert body["narrative"] == "Fallback narrative without reasoning control."
+    assert mock_client.create_message.call_count == 2
+    # The retry must not still pass extra_body, or it would hit the same TypeError.
+    assert "extra_body" not in mock_client.create_message.call_args.kwargs
+
+
 def test_ai_summary_unavailable_on_ai_failure(client, monkeypatch):
     transactions_module._AI_SUMMARY_CACHE.clear()
     _create_expense(client, 100.0, "Fuel Expenses")

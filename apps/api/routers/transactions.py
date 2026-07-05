@@ -352,9 +352,9 @@ def _build_ai_summary_prompt(summary: TransactionSummary, forecast: Optional[dic
     forecast_text = ""
     if forecast:
         forecast_instruction = (
-            " Also comment on whether the school's profit is on track to cover "
-            "the remaining staff payroll before the term ends, and whether a "
-            "surplus or shortfall is projected."
+            " In the Forecast section, state whether the school's profit is on "
+            "track to cover the remaining staff payroll before the term ends, "
+            "and whether a surplus or shortfall is projected."
         )
         forecast_text = (
             f"\n\nTerm: {forecast['term_name']} ({forecast['start_date']} to {forecast['end_date']}), "
@@ -374,13 +374,26 @@ def _build_ai_summary_prompt(summary: TransactionSummary, forecast: Optional[dic
         )
 
     return (
-        "You are a financial assistant summarizing transaction data for a small "
-        "organization in Nigeria. All amounts are in Nigerian Naira — always use "
-        "the ₦ symbol, never £, $, or any other currency. Write a concise 2-4 "
-        "sentence plain-English summary highlighting the overall financial "
-        "position, notable spending categories, and any trend over the recent "
-        "months. Do not just list raw numbers for every category — focus on "
-        f"what matters.{forecast_instruction}\n\n"
+        "You are advising the leadership of a small school organization in "
+        "Nigeria, wearing four hats at once: financial analyst, fund manager, "
+        "financial controller, and development manager. All amounts are in "
+        "Nigerian Naira — always use the ₦ symbol, never £, $, or any other "
+        "currency.\n\n"
+        "Answer exactly these questions, in this order, as four short "
+        "paragraphs (2-3 sentences each), plain prose with no bullet points "
+        "or numbered lists. Start each paragraph with its bold label exactly "
+        "as written below, followed by a colon, then a blank line between "
+        "paragraphs:\n\n"
+        "**Financial Position:** What is my financial statement right now — "
+        "overall position, notable spending categories, and any trend over "
+        "the recent months?\n"
+        "**Areas to Improve:** Given this data, what specifically should be "
+        "improved — overspending categories, inefficiencies, or missed "
+        "revenue opportunities?\n"
+        "**Plan:** What concrete actions should leadership prioritize over "
+        "the next period to act on that?\n"
+        "**Forecast:** Based on the recent trend, where is this heading "
+        f"next, and what should be planned for?{forecast_instruction}\n\n"
         f"Total income: ₦{summary.total_income:,.2f}\n"
         f"Total expenses: ₦{summary.total_expenses:,.2f}\n"
         f"Balance: ₦{summary.balance:,.2f}\n"
@@ -422,10 +435,24 @@ def get_ai_summary(
 
     try:
         client = get_llm_client()
-        narrative = client.create_message(
-            messages=[{"role": "user", "content": _build_ai_summary_prompt(summary, forecast)}],
-            max_tokens=300,
-        )
+        prompt_messages = [{"role": "user", "content": _build_ai_summary_prompt(summary, forecast)}]
+        try:
+            narrative = client.create_message(
+                messages=prompt_messages,
+                max_tokens=1500,
+                # The configured model may be a reasoning model whose internal
+                # chain-of-thought is billed against max_tokens too — on
+                # "medium"/default effort it can consume the whole budget
+                # before ever writing the four-section answer. Providers that
+                # don't support this field simply ignore it.
+                extra_body={"reasoning": {"effort": "low"}},
+            )
+        except TypeError:
+            # An older installed openai client may not accept extra_body at
+            # all (raises TypeError on the unexpected kwarg rather than
+            # ignoring it) — retry without it so the summary still works,
+            # just without the reasoning-effort control.
+            narrative = client.create_message(messages=prompt_messages, max_tokens=1500)
     except Exception as e:
         logger.warning(
             "AI summary generation failed, returning available=False: %s",
