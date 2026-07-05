@@ -15,6 +15,15 @@ describe('AISummaryCard', () => {
 
   it('shows a loading placeholder while fetching', () => {
     render(<AISummaryCard narrative={null} available={false} loading={true} />);
-    expect(screen.getByText('AI Summary')).toBeInTheDocument();
+    expect(screen.getByText('AI Financial Analysis')).toBeInTheDocument();
+  });
+
+  it('renders **label** markers as bold text, split into paragraphs', () => {
+    const narrative = '**Financial Position:** Balance is healthy.\n**Plan:** Cut fuel spend.';
+    render(<AISummaryCard narrative={narrative} available={true} loading={false} />);
+    expect(screen.getByText('Financial Position:')).toBeInTheDocument();
+    expect(screen.getByText('Plan:')).toBeInTheDocument();
+    expect(screen.getByText(/Balance is healthy\./)).toBeInTheDocument();
+    expect(screen.getByText(/Cut fuel spend\./)).toBeInTheDocument();
   });
 });
