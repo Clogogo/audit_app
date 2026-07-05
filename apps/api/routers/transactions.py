@@ -435,16 +435,24 @@ def get_ai_summary(
 
     try:
         client = get_llm_client()
-        narrative = client.create_message(
-            messages=[{"role": "user", "content": _build_ai_summary_prompt(summary, forecast)}],
-            max_tokens=1500,
-            # The configured model may be a reasoning model whose internal
-            # chain-of-thought is billed against max_tokens too — on "medium"/
-            # default effort it can consume the whole budget before ever
-            # writing the four-section answer. Providers that don't support
-            # this field simply ignore it.
-            extra_body={"reasoning": {"effort": "low"}},
-        )
+        prompt_messages = [{"role": "user", "content": _build_ai_summary_prompt(summary, forecast)}]
+        try:
+            narrative = client.create_message(
+                messages=prompt_messages,
+                max_tokens=1500,
+                # The configured model may be a reasoning model whose internal
+                # chain-of-thought is billed against max_tokens too — on
+                # "medium"/default effort it can consume the whole budget
+                # before ever writing the four-section answer. Providers that
+                # don't support this field simply ignore it.
+                extra_body={"reasoning": {"effort": "low"}},
+            )
+        except TypeError:
+            # An older installed openai client may not accept extra_body at
+            # all (raises TypeError on the unexpected kwarg rather than
+            # ignoring it) — retry without it so the summary still works,
+            # just without the reasoning-effort control.
+            narrative = client.create_message(messages=prompt_messages, max_tokens=1500)
     except Exception as e:
         logger.warning(
             "AI summary generation failed, returning available=False: %s",

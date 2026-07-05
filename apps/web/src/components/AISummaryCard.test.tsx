@@ -19,7 +19,10 @@ describe('AISummaryCard', () => {
   });
 
   it('renders **label** markers as <strong> elements, split into separate paragraphs', () => {
-    const narrative = '**Financial Position:** Balance is healthy.\n**Plan:** Cut fuel spend.';
+    // The prompt asks for a blank line between sections — matching that
+    // contract here, not a single \n, since the renderer only splits on
+    // blank lines (see the next test for why a single \n must NOT split).
+    const narrative = '**Financial Position:** Balance is healthy.\n\n**Plan:** Cut fuel spend.';
     const { container } = render(<AISummaryCard narrative={narrative} available={true} loading={false} />);
 
     const financialLabel = screen.getByText('Financial Position:');
@@ -31,5 +34,13 @@ describe('AISummaryCard', () => {
     expect(paragraphs).toHaveLength(2);
     expect(paragraphs[0].textContent).toBe('Financial Position: Balance is healthy.');
     expect(paragraphs[1].textContent).toBe('Plan: Cut fuel spend.');
+  });
+
+  it('does not split a single section on a soft-wrapped newline', () => {
+    const narrative = '**Financial Position:** Balance is healthy,\nwith income exceeding expenses.';
+    const { container } = render(<AISummaryCard narrative={narrative} available={true} loading={false} />);
+
+    const paragraphs = container.querySelectorAll('p');
+    expect(paragraphs).toHaveLength(1);
   });
 });

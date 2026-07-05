@@ -22,11 +22,16 @@ function AISummaryCardShell({ children }: { children: ReactNode }) {
   );
 }
 
-// The prompt asks the model for **Label:** paragraphs — render those bold
-// markers instead of showing the raw asterisks, without pulling in a full
-// markdown dependency for this one pattern.
+// The prompt asks the model for **Label:** paragraphs separated by a blank
+// line — render those bold markers instead of showing the raw asterisks,
+// without pulling in a full markdown dependency for this one pattern.
+// Splitting on blank lines (not every newline) keeps a section intact even
+// if the model soft-wraps a single paragraph across lines.
 function renderNarrative(narrative: string) {
-  const paragraphs = narrative.split(/\n+/).filter((line) => line.trim().length > 0);
+  const paragraphs = narrative
+    .split(/\r?\n\s*\r?\n+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
   return paragraphs.map((paragraph, i) => {
     const parts = paragraph.split('**');
     return (
