@@ -18,12 +18,18 @@ describe('AISummaryCard', () => {
     expect(screen.getByText('AI Financial Analysis')).toBeInTheDocument();
   });
 
-  it('renders **label** markers as bold text, split into paragraphs', () => {
+  it('renders **label** markers as <strong> elements, split into separate paragraphs', () => {
     const narrative = '**Financial Position:** Balance is healthy.\n**Plan:** Cut fuel spend.';
-    render(<AISummaryCard narrative={narrative} available={true} loading={false} />);
-    expect(screen.getByText('Financial Position:')).toBeInTheDocument();
-    expect(screen.getByText('Plan:')).toBeInTheDocument();
-    expect(screen.getByText(/Balance is healthy\./)).toBeInTheDocument();
-    expect(screen.getByText(/Cut fuel spend\./)).toBeInTheDocument();
+    const { container } = render(<AISummaryCard narrative={narrative} available={true} loading={false} />);
+
+    const financialLabel = screen.getByText('Financial Position:');
+    const planLabel = screen.getByText('Plan:');
+    expect(financialLabel.tagName).toBe('STRONG');
+    expect(planLabel.tagName).toBe('STRONG');
+
+    const paragraphs = container.querySelectorAll('p');
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0].textContent).toBe('Financial Position: Balance is healthy.');
+    expect(paragraphs[1].textContent).toBe('Plan: Cut fuel spend.');
   });
 });
