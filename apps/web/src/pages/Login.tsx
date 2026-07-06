@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogIn, Wallet } from 'lucide-react';
+import { LogIn } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../hooks';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { AuthLayout } from '../components/AuthLayout';
 
 export function Login() {
   const navigate = useNavigate();
@@ -54,69 +54,59 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-3">
-          <div className="flex items-center justify-center gap-2 text-primary mb-2">
-            <Wallet className="h-10 w-10" />
-            <h1 className="text-3xl font-bold">FinanceAudit</h1>
-          </div>
-          <CardTitle className="text-center">Welcome Back</CardTitle>
-          <CardDescription className="text-center">
-            Sign in to your account to continue
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={loading}
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
-                <Link to="/forgot-password" className="text-xs text-primary hover:underline">
-                  Forgot password?
-                </Link>
-              </div>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={loading}
-              />
-            </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? (
-                <>Signing in...</>
-              ) : (
-                <>
-                  <LogIn className="h-4 w-4 mr-2" />
-                  Sign In
-                </>
-              )}
-            </Button>
-          </form>
-
-          <p className="text-center text-sm text-muted-foreground mt-4">
-            Don't have an account?{' '}
-            <Link to="/register" className="text-primary hover:underline font-medium">
-              Register here
+    <AuthLayout
+      title="Welcome Back"
+      description="Sign in to your account to continue"
+      footer={
+        <>
+          Don't have an account?{' '}
+          <Link to="/register" className="text-primary hover:underline font-medium">
+            Register here
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            placeholder="your@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            disabled={loading}
+          />
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">Password</Label>
+            <Link to="/forgot-password" className="text-xs text-primary hover:underline">
+              Forgot password?
             </Link>
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+          </div>
+          <Input
+            id="password"
+            type="password"
+            placeholder="••••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            disabled={loading}
+          />
+        </div>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? (
+            <>Signing in...</>
+          ) : (
+            <>
+              <LogIn className="h-4 w-4 mr-2" />
+              Sign In
+            </>
+          )}
+        </Button>
+      </form>
+    </AuthLayout>
   );
 }
