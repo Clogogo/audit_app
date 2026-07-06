@@ -3,12 +3,12 @@ import { NotificationProvider } from '../hooks';
 import { AuthProvider } from '../contexts/AuthContext';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 import { PermissionRoute } from '../components/PermissionRoute';
+import { HomeRoute } from '../components/HomeRoute';
 import { Layout } from '../components/Layout';
 import { Login } from '../pages/Login';
 import { Register } from '../pages/Register';
 import { ForgotPassword } from '../pages/ForgotPassword';
 import { ResetPassword } from '../pages/ResetPassword';
-import { Dashboard } from '../pages/Dashboard';
 import { Transactions } from '../pages/Transactions';
 import { Upload } from '../pages/Upload';
 import { Reconciliation } from '../pages/Reconciliation';
@@ -41,6 +41,10 @@ export function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
 
+            {/* "/" shows the Landing page signed-out, or the Dashboard
+                (any active logged-in user, regardless of role) signed-in. */}
+            <Route path="/" element={<HomeRoute />} />
+
             {/* Protected routes */}
             <Route
               path="/*"
@@ -48,10 +52,6 @@ export function App() {
                 <ProtectedRoute>
                   <Layout>
                     <Routes>
-                      {/* Dashboard stays universal — any active logged-in user
-                          lands here regardless of role, even one with zero
-                          section permissions granted. */}
-                      <Route path="/" element={<Dashboard />} />
                       <Route path="/transactions" element={<PermissionRoute permission="transactions"><Transactions /></PermissionRoute>} />
                       <Route path="/upload" element={<PermissionRoute permission="banking"><Upload /></PermissionRoute>} />
                       <Route path="/reconciliation" element={<PermissionRoute permission="banking"><Reconciliation /></PermissionRoute>} />
