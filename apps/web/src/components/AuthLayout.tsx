@@ -9,7 +9,7 @@ interface AuthLayoutProps {
   footer?: ReactNode;
 }
 
-// Shared shell for Login/Register/ForgotPassword/ResetPassword — a single
+// Shared shell for Login/Register/ForgotPassword/ResetPassword: a single
 // on-brand background (teal wash from the app's own tokens, not a generic
 // slate gradient) instead of four copies that could drift apart.
 export function AuthLayout({ title, description, children, footer }: AuthLayoutProps) {
