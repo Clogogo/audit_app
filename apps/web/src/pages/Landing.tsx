@@ -137,7 +137,7 @@ export function Landing() {
                 >
                   <CardHeader className="flex flex-row items-center gap-3 space-y-0 pb-2">
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                      <Icon className="h-4.5 w-4.5" />
+                      <Icon className="h-5 w-5" />
                     </div>
                     <CardTitle className="text-base">{title}</CardTitle>
                   </CardHeader>
