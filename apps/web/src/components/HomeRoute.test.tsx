@@ -9,7 +9,7 @@ vi.mock('../contexts/AuthContext', () => ({
 }));
 
 // Dashboard renders live API-backed charts/data, and Layout independently
-// reads user/logout off useAuth() — both out of scope here, which only
+// reads user/logout off useAuth(); both out of scope here, which only
 // cares which branch HomeRoute picks.
 vi.mock('../pages/Dashboard', () => ({
   Dashboard: () => <div>dashboard-content</div>,
