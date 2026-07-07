@@ -249,12 +249,6 @@ export function Dashboard() {
         </div>
       </div>
 
-      <AISummaryCard
-        narrative={aiSummary.narrative}
-        available={aiSummary.available}
-        loading={aiSummary.loading}
-      />
-
       {/* Net balance (featured) + income/expense (compact list) — one composition, not 4 identical cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-2xl bg-primary text-primary-foreground p-6 flex flex-col justify-between">
@@ -416,6 +410,15 @@ export function Dashboard() {
 
         {/* Sidebar 1/3 */}
         <div className="flex flex-col gap-4">
+          {/* AI analysis */}
+          <AISummaryCard
+            narrative={aiSummary.narrative}
+            available={aiSummary.available}
+            loading={aiSummary.loading}
+            className="rounded-2xl"
+            compact
+          />
+
           {/* Savings gauge */}
           <div className="rounded-2xl border bg-card p-5">
             <div className="flex items-center gap-1.5">
