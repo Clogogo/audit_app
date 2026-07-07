@@ -258,12 +258,6 @@ export function Reports() {
         </CardContent>
       </Card>
 
-      <AISummaryCard
-        narrative={aiSummary.narrative}
-        available={aiSummary.available}
-        loading={aiSummary.loading}
-      />
-
       {loading ? (
         <div className="text-center py-16 text-muted-foreground">Loading...</div>
       ) : (
@@ -350,8 +344,9 @@ export function Reports() {
             </Card>
           </div>
 
-          {/* ── Monthly trend ── */}
-          <Card>
+          {/* ── Monthly trend + AI analysis ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card className="lg:col-span-2">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 Income vs Expenses Over Time
@@ -391,6 +386,15 @@ export function Reports() {
               )}
             </CardContent>
           </Card>
+
+            {/* AI analysis — right column */}
+            <AISummaryCard
+              narrative={aiSummary.narrative}
+              available={aiSummary.available}
+              loading={aiSummary.loading}
+              compact
+            />
+          </div>
 
           {/* ── Category breakdowns ── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

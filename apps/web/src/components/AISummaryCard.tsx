@@ -1,23 +1,38 @@
 import type { ReactNode } from 'react';
 import { Sparkles } from 'lucide-react';
+import { cn } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 interface AISummaryCardProps {
   narrative: string | null;
   available: boolean;
   loading: boolean;
+  // Extra classes for the outer Card — lets callers slot it into a column.
+  className?: string;
+  // Cap height and scroll instead of growing — for narrow sidebar columns.
+  compact?: boolean;
 }
 
-function AISummaryCardShell({ children }: { children: ReactNode }) {
+function AISummaryCardShell({
+  children,
+  className,
+  compact,
+}: {
+  children: ReactNode;
+  className?: string;
+  compact?: boolean;
+}) {
   return (
-    <Card className="border-secondary bg-secondary/40">
+    <Card className={cn('border-secondary bg-secondary/40', compact && 'h-full', className)}>
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
           AI Financial Analysis
         </CardTitle>
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className={cn(compact && 'max-h-[22rem] overflow-y-auto pr-1')}>
+        {children}
+      </CardContent>
     </Card>
   );
 }
@@ -44,10 +59,16 @@ function renderNarrative(narrative: string) {
   });
 }
 
-export function AISummaryCard({ narrative, available, loading }: AISummaryCardProps) {
+export function AISummaryCard({
+  narrative,
+  available,
+  loading,
+  className,
+  compact,
+}: AISummaryCardProps) {
   if (loading) {
     return (
-      <AISummaryCardShell>
+      <AISummaryCardShell className={className} compact={compact}>
         <div className="space-y-2 animate-pulse">
           <div className="h-3 bg-muted rounded w-full" />
           <div className="h-3 bg-muted rounded w-5/6" />
@@ -66,7 +87,7 @@ export function AISummaryCard({ narrative, available, loading }: AISummaryCardPr
   }
 
   return (
-    <AISummaryCardShell>
+    <AISummaryCardShell className={className} compact={compact}>
       <div className="space-y-3">{renderNarrative(narrative)}</div>
     </AISummaryCardShell>
   );
