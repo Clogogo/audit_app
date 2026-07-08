@@ -259,7 +259,17 @@ export function Reports() {
       </Card>
 
       {loading ? (
-        <div className="text-center py-16 text-muted-foreground">Loading...</div>
+        <div className="space-y-6">
+          <div className="text-center py-16 text-muted-foreground">Loading...</div>
+          {/* AI summary has its own independent fetch (useAISummary above) —
+              show it as soon as it's ready instead of waiting on report data. */}
+          <AISummaryCard
+            narrative={aiSummary.narrative}
+            available={aiSummary.available}
+            loading={aiSummary.loading}
+            compact
+          />
+        </div>
       ) : (
         <div className="space-y-6">
           {/* ── Stat cards ── */}
