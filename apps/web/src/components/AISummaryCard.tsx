@@ -23,7 +23,7 @@ function AISummaryCardShell({
   compact?: boolean;
 }) {
   return (
-    <Card className={cn('border-secondary bg-secondary/40', compact && 'h-full', className)}>
+    <Card className={cn('border-secondary bg-secondary/40', className)}>
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
