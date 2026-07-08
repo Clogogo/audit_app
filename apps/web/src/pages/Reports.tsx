@@ -345,7 +345,7 @@ export function Reports() {
           </div>
 
           {/* ── Monthly trend + AI analysis ── */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           <Card className="lg:col-span-2">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">

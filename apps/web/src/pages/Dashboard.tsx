@@ -312,7 +312,7 @@ export function Dashboard() {
       </div>
 
       {/* Main 3-col layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         {/* Chart 2/3 */}
         <div className="lg:col-span-2 rounded-2xl border bg-card overflow-hidden">
           {/* Header strip */}
