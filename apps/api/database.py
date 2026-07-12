@@ -102,6 +102,9 @@ def initialize_database() -> None:
             "is_admin BOOLEAN NOT NULL DEFAULT FALSE",
             "role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL",
         ],
+        "stock_movements": [
+            "unit_cost FLOAT",
+        ],
     }
 
     inspector = inspect(engine)

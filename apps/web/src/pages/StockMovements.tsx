@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { History, SlidersHorizontal, XCircle, AlertCircle } from 'lucide-react';
-import { listStockMovements, adjustStock, listInventoryItems } from '../api/client';
-import type { StockMovement, StockMovementType, StockAdjustmentIn, InventoryItem } from '../api/types';
+import { listStockMovements, adjustStock, listInventoryItems, getSalesSummary } from '../api/client';
+import type { StockMovement, StockMovementType, StockAdjustmentIn, InventoryItem, SalesSummary } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -61,6 +61,7 @@ function NumInput({ label, value, onChange }: {
 export function StockMovements() {
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [salesSummary, setSalesSummary] = useState<SalesSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,8 +77,9 @@ export function StockMovements() {
     Promise.all([
       listStockMovements(),
       listInventoryItems({ active_only: true }),
+      getSalesSummary(),
     ])
-      .then(([m, i]) => { setMovements(m); setItems(i); })
+      .then(([m, i, s]) => { setMovements(m); setItems(i); setSalesSummary(s); })
       .catch(() => setError('Failed to load stock movements'))
       .finally(() => setLoading(false));
   };
@@ -124,6 +126,35 @@ export function StockMovements() {
           Adjust Stock
         </Button>
       </div>
+
+      {salesSummary && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Total Sales Revenue</p>
+              <p className="text-xl font-bold mt-1 text-income">{formatCurrency(salesSummary.total_revenue)}</p>
+              <p className="text-xs text-muted-foreground mt-1">{salesSummary.total_sales_count} sale(s)</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Total Profit</p>
+              <p className="text-xl font-bold mt-1">{formatCurrency(salesSummary.total_profit)}</p>
+              {salesSummary.sales_missing_cost_count > 0 && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Excludes {salesSummary.sales_missing_cost_count} sale(s) with no recorded cost
+                </p>
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Profit Margin</p>
+              <p className="text-xl font-bold mt-1">{salesSummary.profit_margin_pct.toFixed(1)}%</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -176,6 +207,7 @@ export function StockMovements() {
                     <th className="text-left py-2 pr-3 font-medium">Type</th>
                     <th className="text-right py-2 pr-3 font-medium">Quantity</th>
                     <th className="text-right py-2 pr-3 font-medium">Unit Amount</th>
+                    <th className="text-right py-2 pr-3 font-medium">Profit</th>
                     <th className="text-left py-2 pr-3 font-medium">Source</th>
                     <th className="text-left py-2 font-medium">Notes</th>
                   </tr>
@@ -191,6 +223,11 @@ export function StockMovements() {
                       <td className="py-3 pr-3 text-right">{m.quantity}</td>
                       <td className="py-3 pr-3 text-right text-muted-foreground">
                         {m.unit_amount !== null ? formatCurrency(m.unit_amount) : '—'}
+                      </td>
+                      <td className="py-3 pr-3 text-right text-muted-foreground">
+                        {m.movement_type === 'sale_out' && m.unit_amount !== null && m.unit_cost !== null
+                          ? formatCurrency((m.unit_amount - m.unit_cost) * m.quantity)
+                          : '—'}
                       </td>
                       <td className="py-3 pr-3 text-muted-foreground">
                         {m.request_id ? `Request #${m.request_id}` : 'Manual adjustment'}

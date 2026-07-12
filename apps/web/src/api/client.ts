@@ -57,6 +57,7 @@ import type {
   StockRequestIn,
   StockMovement,
   StockAdjustmentIn,
+  SalesSummary,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -613,6 +614,9 @@ export const listStockMovements = (params?: {
   start_date?: string;
   end_date?: string;
 }) => api.get<StockMovement[]>('/inventory/movements', { params }).then(unwrap);
+
+export const getSalesSummary = (params?: { start_date?: string; end_date?: string }) =>
+  api.get<SalesSummary>('/inventory/sales-summary', { params }).then(unwrap);
 
 export const adjustStock = (body: StockAdjustmentIn) =>
   api.post<StockMovement>('/inventory/movements/adjust', body).then(unwrap);

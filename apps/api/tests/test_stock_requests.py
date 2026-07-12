@@ -101,6 +101,38 @@ def test_fulfilling_a_sale_decreases_quantity_on_hand(client):
     movements = client.get("/inventory/movements", params={"movement_type": "sale_out"}).json()
     assert len(movements) == 1
     assert movements[0]["quantity"] == 4
+    # Cost basis is snapshotted from the item's unit_cost (4000.0, set in
+    # _create_item) at fulfillment time, independent of the sale price.
+    assert movements[0]["unit_cost"] == 4000.0
+    assert movements[0]["unit_amount"] == 6000.0
+
+
+def test_fulfilling_a_purchase_does_not_snapshot_a_cost_basis(client):
+    # unit_cost is only meaningful for margin on a sale — a purchase_in
+    # movement's unit_amount already IS the cost, so unit_cost stays null.
+    item = _create_item(client, quantity_on_hand=5)
+    req = _create_request(client, item["id"], request_type="purchase", quantity=10)
+    client.post(f"/inventory/requests/{req['id']}/fulfill")
+
+    movements = client.get("/inventory/movements", params={"movement_type": "purchase_in"}).json()
+    assert movements[0]["unit_cost"] is None
+
+
+def test_fulfilling_a_sale_snapshots_cost_even_if_item_cost_changes_later(client):
+    item = _create_item(client, quantity_on_hand=10, unit_cost=4000.0)
+    req = _create_request(client, item["id"], request_type="sale", quantity=2, unit_amount=6000.0)
+    client.post(f"/inventory/requests/{req['id']}/fulfill")
+
+    # Editing the item's cost afterward must not retroactively change what
+    # was already recorded for this sale.
+    client.put(f"/inventory/items/{item['id']}", json={
+        "name": item["name"], "sku": item["sku"], "category": item["category"],
+        "unit": item["unit"], "unit_cost": 9999.0, "unit_price": item["unit_price"],
+        "reorder_level": item["reorder_level"],
+    })
+
+    movements = client.get("/inventory/movements", params={"movement_type": "sale_out"}).json()
+    assert movements[0]["unit_cost"] == 4000.0
 
 
 def test_fulfilling_a_sale_that_would_go_negative_is_rejected(client):

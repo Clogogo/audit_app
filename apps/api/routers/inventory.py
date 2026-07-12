@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -94,6 +95,7 @@ class StockMovementOut(BaseModel):
     movement_type: str
     quantity: int
     unit_amount: Optional[float]
+    unit_cost: Optional[float]     # cost basis at time of sale — only set on sale_out
     date: date
     request_id: Optional[int]
     transaction_id: Optional[int]
@@ -107,6 +109,18 @@ class StockAdjustmentIn(BaseModel):
     quantity: int
     date: date
     notes: Optional[str] = None
+
+
+class SalesSummaryOut(BaseModel):
+    total_sales_count: int
+    total_revenue: float
+    total_cost: float
+    total_profit: float
+    profit_margin_pct: float
+    # Sales fulfilled before cost-snapshotting existed (or where the item
+    # had no unit_cost set at the time) — counted in total_revenue but
+    # excluded from cost/profit so an unknown cost is never treated as zero.
+    sales_missing_cost_count: int
 
 
 # ── serialization ────────────────────────────────────────────────────────────
@@ -136,7 +150,7 @@ def _movement_to_out(m: StockMovement) -> StockMovementOut:
     return StockMovementOut(
         id=m.id, item_id=m.item_id, item_name=m.item.name if m.item else None,
         movement_type=m.movement_type, quantity=m.quantity, unit_amount=m.unit_amount,
-        date=m.date, request_id=m.request_id, transaction_id=m.transaction_id,
+        unit_cost=m.unit_cost, date=m.date, request_id=m.request_id, transaction_id=m.transaction_id,
         notes=m.notes, created_at=m.created_at,
     )
 
@@ -260,6 +274,7 @@ def fulfill_request(request_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, "Only pending requests can be fulfilled")
     item = req.item
 
+    movement_unit_cost = None
     if req.request_type == "purchase":
         item.quantity_on_hand += req.quantity
         movement_type = "purchase_in"
@@ -268,11 +283,15 @@ def fulfill_request(request_id: int, db: Session = Depends(get_db)):
             raise HTTPException(400, "Insufficient stock to fulfill this sale")
         item.quantity_on_hand -= req.quantity
         movement_type = "sale_out"
+        # Snapshot the item's cost now, at the moment stock actually leaves
+        # — profit for this sale stays correct even if unit_cost is edited
+        # on the item later.
+        movement_unit_cost = item.unit_cost
 
     today = date.today()
     movement = StockMovement(
         item_id=item.id, movement_type=movement_type, quantity=req.quantity,
-        unit_amount=req.unit_amount, date=today, request_id=req.id,
+        unit_amount=req.unit_amount, unit_cost=movement_unit_cost, date=today, request_id=req.id,
     )
     db.add(movement)
     req.status = "fulfilled"
@@ -315,6 +334,49 @@ def list_movements(
     if end_date:
         q = q.filter(StockMovement.date <= end_date)
     return [_movement_to_out(m) for m in q.all()]
+
+
+@router.get("/sales-summary", response_model=SalesSummaryOut)
+def get_sales_summary(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """Total revenue and profit across every fulfilled sale (sale_out
+    movements). Cost is only known for sales fulfilled after unit_cost
+    snapshotting existed, so cost/profit are computed only over the subset
+    where it's set — an unknown cost is never silently treated as zero."""
+    q = db.query(StockMovement).filter(StockMovement.movement_type == "sale_out")
+    if start_date:
+        q = q.filter(StockMovement.date >= start_date)
+    if end_date:
+        q = q.filter(StockMovement.date <= end_date)
+
+    total_sales_count = q.count()
+    total_revenue = q.with_entities(
+        func.coalesce(func.sum(StockMovement.quantity * StockMovement.unit_amount), 0.0)
+    ).scalar()
+
+    costed = q.filter(StockMovement.unit_cost.isnot(None))
+    costed_sales_count = costed.count()
+    costed_revenue = costed.with_entities(
+        func.coalesce(func.sum(StockMovement.quantity * StockMovement.unit_amount), 0.0)
+    ).scalar()
+    total_cost = costed.with_entities(
+        func.coalesce(func.sum(StockMovement.quantity * StockMovement.unit_cost), 0.0)
+    ).scalar()
+
+    total_profit = round(costed_revenue - total_cost, 2)
+    profit_margin_pct = round(total_profit / costed_revenue * 100, 2) if costed_revenue > 0 else 0.0
+
+    return SalesSummaryOut(
+        total_sales_count=total_sales_count,
+        total_revenue=round(total_revenue, 2),
+        total_cost=round(total_cost, 2),
+        total_profit=total_profit,
+        profit_margin_pct=profit_margin_pct,
+        sales_missing_cost_count=total_sales_count - costed_sales_count,
+    )
 
 
 @router.post("/movements/adjust", response_model=StockMovementOut, status_code=201)

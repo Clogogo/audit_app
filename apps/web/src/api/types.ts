@@ -1039,11 +1039,21 @@ export interface StockMovement {
   movement_type: StockMovementType;
   quantity: number;
   unit_amount: number | null;
+  unit_cost: number | null;
   date: string;
   request_id: number | null;
   transaction_id: number | null;
   notes: string | null;
   created_at: string;
+}
+
+export interface SalesSummary {
+  total_sales_count: number;
+  total_revenue: number;
+  total_cost: number;
+  total_profit: number;
+  profit_margin_pct: number;
+  sales_missing_cost_count: number;
 }
 
 export interface StockAdjustmentIn {
