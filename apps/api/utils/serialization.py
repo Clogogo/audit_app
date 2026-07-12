@@ -1,5 +1,5 @@
 """
-JSON Serialization Utilities
+JSON Parsing Utilities
 Safe JSON parsing with error handling
 """
 import json
