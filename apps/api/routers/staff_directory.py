@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth import require_permission
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
 from llm_providers import get_llm_client
@@ -145,7 +145,12 @@ def get_staff_ai_summary(db: Session = Depends(get_db)):
     inactive_count = len(all_staff) - len(active_staff)
     total_monthly_gross = round(sum(s.monthly_gross for s in active_staff), 2)
 
-    active_loans = db.query(StaffLoan).filter(StaffLoan.is_active == True).all()
+    active_loans = (
+        db.query(StaffLoan)
+        .options(selectinload(StaffLoan.payments))
+        .filter(StaffLoan.is_active == True)
+        .all()
+    )
     total_loan_outstanding = round(sum(_loan_outstanding(loan) for loan in active_loans), 2)
 
     open_advances = db.query(AdvancePayment).filter(AdvancePayment.is_recovered == False).all()
