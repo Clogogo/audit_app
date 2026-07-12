@@ -51,6 +51,12 @@ import type {
   SchoolLoanPaymentIn,
   AdvancePayment,
   AdvancePaymentIn,
+  InventoryItem,
+  InventoryItemIn,
+  StockRequest,
+  StockRequestIn,
+  StockMovement,
+  StockAdjustmentIn,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -565,3 +571,45 @@ export const getPayrollEntries = (year: number, month: number) =>
 
 export const resetPayroll = (year: number, month: number) =>
   api.post<{ reset: number }>('/payroll/reset', null, { params: { year, month } }).then(unwrap);
+
+// ── Inventory ────────────────────────────────────────────────────────────────
+
+export const listInventoryItems = (params?: { active_only?: boolean; low_stock_only?: boolean }) =>
+  api.get<InventoryItem[]>('/inventory/items', { params }).then(unwrap);
+
+export const createInventoryItem = (body: InventoryItemIn) =>
+  api.post<InventoryItem>('/inventory/items', body).then(unwrap);
+
+export const updateInventoryItem = (id: number, body: InventoryItemIn) =>
+  api.put<InventoryItem>(`/inventory/items/${id}`, body).then(unwrap);
+
+export const deleteInventoryItem = (id: number) =>
+  api.delete<void>(`/inventory/items/${id}`).then(unwrap);
+
+export const listStockRequests = (params?: { request_type?: string; status?: string; item_id?: number }) =>
+  api.get<StockRequest[]>('/inventory/requests', { params }).then(unwrap);
+
+export const createStockRequest = (body: StockRequestIn) =>
+  api.post<StockRequest>('/inventory/requests', body).then(unwrap);
+
+export const updateStockRequest = (id: number, body: StockRequestIn) =>
+  api.put<StockRequest>(`/inventory/requests/${id}`, body).then(unwrap);
+
+export const deleteStockRequest = (id: number) =>
+  api.delete<void>(`/inventory/requests/${id}`).then(unwrap);
+
+export const fulfillStockRequest = (id: number) =>
+  api.post<StockRequest>(`/inventory/requests/${id}/fulfill`).then(unwrap);
+
+export const cancelStockRequest = (id: number) =>
+  api.post<StockRequest>(`/inventory/requests/${id}/cancel`).then(unwrap);
+
+export const listStockMovements = (params?: {
+  item_id?: number;
+  movement_type?: string;
+  start_date?: string;
+  end_date?: string;
+}) => api.get<StockMovement[]>('/inventory/movements', { params }).then(unwrap);
+
+export const adjustStock = (body: StockAdjustmentIn) =>
+  api.post<StockMovement>('/inventory/movements/adjust', body).then(unwrap);
