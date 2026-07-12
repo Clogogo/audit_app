@@ -483,6 +483,9 @@ export const updateStaffMember = (id: number, body: StaffMemberIn) =>
 export const deleteStaffMember = (id: number) =>
   api.delete<void>(`/staff-directory/${id}`).then(unwrap);
 
+export const getStaffAISummary = () =>
+  api.get<TransactionAISummary>('/staff-directory/ai-summary').then(unwrap);
+
 // ── Staff Loans ───────────────────────────────────────────────────────────────
 
 export const listStaffLoans = () =>
