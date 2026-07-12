@@ -17,9 +17,7 @@ pdf2image==1.17.0
 pytesseract==0.3.13
 
 # AI & Utilities
-httpx==0.27.2
 rapidfuzz==3.10.0
-python-dateutil==2.9.0
 python-dotenv==1.0.1
 openai>=1.3.0
 
