@@ -12,8 +12,7 @@ def safe_json_loads(json_str: str | dict | None, default: Any = None) -> Any:
 
     Args:
         json_str: JSON string, dict, or None
-        default: Value to return when json_str is empty/None, or when
-            parsing fails and json_str is itself falsy
+        default: Value to return when json_str is empty/None
 
     Returns:
         The parsed JSON object; the original string unchanged if it isn't
@@ -31,4 +30,4 @@ def safe_json_loads(json_str: str | dict | None, default: Any = None) -> Any:
     try:
         return json.loads(json_str)
     except (json.JSONDecodeError, TypeError):
-        return json_str or default
+        return json_str
