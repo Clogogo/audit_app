@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Package, Plus, Pencil, Trash2, XCircle, AlertCircle, AlertTriangle } from 'lucide-react';
 import {
   listInventoryItems, createInventoryItem, updateInventoryItem, deleteInventoryItem,
-  getInventoryCategories,
+  getInventoryCategories, adjustStock,
 } from '../api/client';
 import type { InventoryItem, InventoryItemIn } from '../api/types';
 import { Button } from '../components/ui/button';
@@ -56,6 +56,11 @@ export function InventoryItems() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<InventoryItem | null>(null);
   const [form, setForm] = useState<InventoryItemIn>(EMPTY_FORM);
+  // Starting stock count, set only when adding a brand-new item — not part
+  // of InventoryItemIn since it isn't a column write, it becomes a real
+  // adjustment_in StockMovement after the item is created, so day-one stock
+  // is traceable in the ledger like every other quantity change.
+  const [initialQuantity, setInitialQuantity] = useState(0);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
@@ -69,7 +74,7 @@ export function InventoryItems() {
 
   useEffect(() => { load(); }, []);
 
-  const openAdd = () => { setEditing(null); setForm(EMPTY_FORM); setShowForm(true); };
+  const openAdd = () => { setEditing(null); setForm(EMPTY_FORM); setInitialQuantity(0); setShowForm(true); };
   const openEdit = (item: InventoryItem) => {
     setEditing(item);
     setForm({
@@ -94,7 +99,16 @@ export function InventoryItems() {
       if (editing) {
         await updateInventoryItem(editing.id, form);
       } else {
-        await createInventoryItem(form);
+        const created = await createInventoryItem(form);
+        if (initialQuantity > 0) {
+          await adjustStock({
+            item_id: created.id,
+            movement_type: 'adjustment_in',
+            quantity: initialQuantity,
+            date: new Date().toISOString().slice(0, 10),
+            notes: 'Initial stock on creation',
+          });
+        }
       }
       closeForm();
       load();
@@ -290,7 +304,7 @@ export function InventoryItems() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-foreground mb-1">Unit</label>
+                <label className="block text-xs font-medium text-foreground mb-1">Unit of Measure</label>
                 <input
                   type="text"
                   placeholder="piece"
@@ -298,7 +312,18 @@ export function InventoryItems() {
                   onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  How it's counted — e.g. piece, set, box. Not a quantity.
+                </p>
               </div>
+
+              {!editing && (
+                <NumInput
+                  label="Starting Quantity (how many you already have)"
+                  value={initialQuantity}
+                  onChange={setInitialQuantity}
+                />
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <NumInput label="Unit Cost" value={form.unit_cost ?? 0} onChange={(n) => setForm((f) => ({ ...f, unit_cost: n }))} />
@@ -310,6 +335,13 @@ export function InventoryItems() {
                 value={form.reorder_level ?? 0}
                 onChange={(n) => setForm((f) => ({ ...f, reorder_level: n }))}
               />
+
+              {editing && (
+                <p className="text-xs text-muted-foreground">
+                  Quantity on hand ({editing.quantity_on_hand} {editing.unit}) can only change via Stock
+                  Requests or the Adjust Stock action, so every change stays in the ledger.
+                </p>
+              )}
 
               <div>
                 <label className="block text-xs font-medium text-foreground mb-1">Notes</label>
