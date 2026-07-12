@@ -213,6 +213,7 @@ _PERMISSION_SEEDS = [
     ("banking", "Banking"),
     ("tax", "Tax & Compliance"),
     ("staff", "Staff & Payroll"),
+    ("inventory", "Inventory"),
     ("audit_log", "Audit Log"),
     ("user_management", "User Management"),
 ]
@@ -259,6 +260,22 @@ def _seed_roles_and_permissions() -> None:
 
         admin_role = session.query(Role).filter(Role.name == "Admin").first()
         accountant_role = session.query(Role).filter(Role.name == "Accountant").first()
+
+        # Reconcile permission grants for Admin/Accountant every startup —
+        # the role_seeds loop above only fires once per role name, so a
+        # permission key added to _PERMISSION_SEEDS after those roles
+        # already exist (e.g. "inventory") would otherwise never reach
+        # them. Additive-only and idempotent; Staff is deliberately left
+        # alone — it should not auto-gain new section access.
+        if admin_role:
+            for perm in permissions_by_key.values():
+                if perm not in admin_role.permissions:
+                    admin_role.permissions.append(perm)
+        if accountant_role:
+            for key, perm in permissions_by_key.items():
+                if key != "user_management" and perm not in accountant_role.permissions:
+                    accountant_role.permissions.append(perm)
+        session.commit()
 
         # One-time legacy cutover, first run only: any user that predates the
         # Role table gets Admin (if is_admin was already set) or Accountant

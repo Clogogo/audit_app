@@ -56,12 +56,25 @@ def test_role_with_transactions_permission_can_reach_transactions(scoped_client)
     assert resp.status_code == 200
 
 
+def test_role_without_inventory_permission_is_rejected_from_inventory(scoped_client):
+    client = scoped_client(["staff"])
+    resp = client.get("/inventory/items")
+    assert resp.status_code == 403
+
+
+def test_role_with_inventory_permission_can_reach_inventory(scoped_client):
+    client = scoped_client(["inventory"])
+    resp = client.get("/inventory/items")
+    assert resp.status_code == 200
+
+
 def test_role_with_no_permissions_at_all_is_rejected_everywhere(scoped_client):
     client = scoped_client([])
     assert client.get("/staff-directory").status_code == 403
     assert client.get("/transactions/summary").status_code == 403
     assert client.get("/audit-log").status_code == 403
     assert client.get("/users").status_code == 403
+    assert client.get("/inventory/items").status_code == 403
 
 
 def test_user_with_no_role_at_all_is_rejected_everywhere(scoped_client):
@@ -73,3 +86,4 @@ def test_user_with_no_role_at_all_is_rejected_everywhere(scoped_client):
     client = TestClient(app)
     assert client.get("/staff-directory").status_code == 403
     assert client.get("/transactions/summary").status_code == 403
+    assert client.get("/inventory/items").status_code == 403

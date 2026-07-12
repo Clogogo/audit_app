@@ -31,7 +31,7 @@ from models import Permission, Role, User
 from utils.auth import get_current_user, hash_password
 from utils.rate_limit import limiter
 
-ALL_PERMISSION_KEYS = ["transactions", "banking", "tax", "staff", "audit_log", "user_management"]
+ALL_PERMISSION_KEYS = ["transactions", "banking", "tax", "staff", "inventory", "audit_log", "user_management"]
 
 
 def _make_role(name: str, permission_keys: list[str]) -> Role:

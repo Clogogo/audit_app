@@ -28,6 +28,9 @@ import { Terms } from '../pages/Terms';
 import { SchoolLoans } from '../pages/SchoolLoans';
 import { UserManagement } from '../pages/UserManagement';
 import { RoleManagement } from '../pages/RoleManagement';
+import { InventoryItems } from '../pages/InventoryItems';
+import { StockRequests } from '../pages/StockRequests';
+import { StockMovements } from '../pages/StockMovements';
 
 export function App() {
   return (
@@ -69,6 +72,9 @@ export function App() {
                       <Route path="/staff/advances" element={<PermissionRoute permission="staff"><AdvancePayments /></PermissionRoute>} />
                       <Route path="/staff/payroll" element={<PermissionRoute permission="staff"><Payroll /></PermissionRoute>} />
                       <Route path="/staff/terms" element={<PermissionRoute permission="staff"><Terms /></PermissionRoute>} />
+                      <Route path="/inventory/items" element={<PermissionRoute permission="inventory"><InventoryItems /></PermissionRoute>} />
+                      <Route path="/inventory/requests" element={<PermissionRoute permission="inventory"><StockRequests /></PermissionRoute>} />
+                      <Route path="/inventory/movements" element={<PermissionRoute permission="inventory"><StockMovements /></PermissionRoute>} />
                       <Route path="/user-management" element={<PermissionRoute permission="user_management"><UserManagement /></PermissionRoute>} />
                       <Route path="/role-management" element={<PermissionRoute permission="user_management"><RoleManagement /></PermissionRoute>} />
                     </Routes>
