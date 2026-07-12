@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import AuditLog
 from schemas import AuditLogOut
-from utils import JSONHelper
+from utils import safe_json_loads
 
 router = APIRouter(prefix="/audit-log", tags=["audit-log"], dependencies=[Depends(require_permission("audit_log"))])
 
@@ -29,7 +29,7 @@ def get_audit_log(
     result = []
     for log in logs:
         out = AuditLogOut.model_validate(log)
-        out.old_values = JSONHelper.safe_loads(log.old_values)
-        out.new_values = JSONHelper.safe_loads(log.new_values)
+        out.old_values = safe_json_loads(log.old_values)
+        out.new_values = safe_json_loads(log.new_values)
         result.append(out)
     return result
