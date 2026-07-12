@@ -100,20 +100,30 @@ export function InventoryItems() {
         await updateInventoryItem(editing.id, form);
       } else {
         const created = await createInventoryItem(form);
+        // The item now exists regardless of what happens next — a failure
+        // here must not read as "save failed" (the caller would retry and
+        // create a duplicate item) or hide that only the stock step failed.
         if (initialQuantity > 0) {
-          await adjustStock({
-            item_id: created.id,
-            movement_type: 'adjustment_in',
-            quantity: initialQuantity,
-            date: new Date().toISOString().slice(0, 10),
-            notes: 'Initial stock on creation',
-          });
+          try {
+            await adjustStock({
+              item_id: created.id,
+              movement_type: 'adjustment_in',
+              quantity: initialQuantity,
+              date: new Date().toISOString().slice(0, 10),
+              notes: 'Initial stock on creation',
+            });
+          } catch (e: any) {
+            setError(
+              e?.response?.data?.detail ||
+              `"${created.name}" was created, but recording its starting quantity failed — add it via Adjust Stock.`
+            );
+          }
         }
       }
       closeForm();
       load();
-    } catch {
-      setError('Failed to save inventory item');
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Failed to save inventory item');
     } finally {
       setSaving(false);
     }
@@ -124,8 +134,8 @@ export function InventoryItems() {
       await deleteInventoryItem(id);
       setDeleteId(null);
       load();
-    } catch {
-      setError('Failed to delete inventory item');
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Failed to delete inventory item');
     }
   };
 
