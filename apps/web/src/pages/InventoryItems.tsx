@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Package, Plus, Pencil, Trash2, XCircle, AlertCircle, AlertTriangle } from 'lucide-react';
-import { listInventoryItems, createInventoryItem, updateInventoryItem, deleteInventoryItem } from '../api/client';
+import {
+  listInventoryItems, createInventoryItem, updateInventoryItem, deleteInventoryItem,
+  getInventoryCategories,
+} from '../api/client';
 import type { InventoryItem, InventoryItemIn } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { formatCurrency } from '../lib/utils';
 
-const CATEGORIES = ['Textbook', 'Uniform', 'Book', 'Stationery', 'Other'];
-
 const EMPTY_FORM: InventoryItemIn = {
   name: '',
   sku: '',
-  category: CATEGORIES[0],
+  category: '',
   unit: 'piece',
   unit_cost: 0,
   unit_price: 0,
@@ -48,6 +49,7 @@ function NumInput({ label, value, onChange }: {
 
 export function InventoryItems() {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,8 +61,8 @@ export function InventoryItems() {
 
   const load = () => {
     setLoading(true);
-    listInventoryItems()
-      .then(setItems)
+    Promise.all([listInventoryItems(), getInventoryCategories()])
+      .then(([i, c]) => { setItems(i); setCategories(c); })
       .catch(() => setError('Failed to load inventory items'))
       .finally(() => setLoading(false));
   };
@@ -271,7 +273,8 @@ export function InventoryItems() {
                     onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   >
-                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    <option value="">Select category…</option>
+                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
@@ -348,7 +351,8 @@ export function InventoryItems() {
             <h2 className="text-base font-semibold">Remove Item?</h2>
             <p className="text-sm text-muted-foreground">
               This removes the item from the catalog along with any pending or fulfilled stock requests
-              for it. Its stock movement ledger history is kept.
+              for it. Its stock movement ledger rows are kept, but will show without an item name once
+              it's gone. To keep the item's name in the ledger, uncheck "Active" via Edit instead.
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>

@@ -19,6 +19,21 @@ def _create_item(client, **overrides):
     return resp.json()
 
 
+def test_categories_endpoint_returns_the_suggested_list(client):
+    resp = client.get("/inventory/items/categories")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "Textbook" in body
+    assert "Uniform" in body
+
+
+def test_category_is_not_restricted_to_the_suggested_list(client):
+    # Advisory only, same as Transaction.category — matches assets.py's
+    # ASSET_CATEGORIES, which is also never enforced server-side.
+    item = _create_item(client, category="Sports Equipment")
+    assert item["category"] == "Sports Equipment"
+
+
 def test_create_and_list_item(client):
     item = _create_item(client)
     assert item["name"] == "Grade 5 Maths Textbook"

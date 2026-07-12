@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { History, SlidersHorizontal, XCircle, AlertCircle } from 'lucide-react';
 import { listStockMovements, adjustStock, listInventoryItems } from '../api/client';
-import type { StockMovement, StockAdjustmentIn, InventoryItem } from '../api/types';
+import type { StockMovement, StockMovementType, StockAdjustmentIn, InventoryItem } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -18,14 +18,14 @@ const emptyAdjustment = (): StockAdjustmentIn => ({
   notes: '',
 });
 
-const typeLabel: Record<string, string> = {
+const typeLabel: Record<StockMovementType, string> = {
   purchase_in: 'Purchase In',
   sale_out: 'Sale Out',
   adjustment_in: 'Adjustment In',
   adjustment_out: 'Adjustment Out',
 };
 
-const typeVariant: Record<string, 'income' | 'expense' | 'secondary'> = {
+const typeVariant: Record<StockMovementType, 'income' | 'expense' | 'secondary'> = {
   purchase_in: 'income',
   sale_out: 'expense',
   adjustment_in: 'income',

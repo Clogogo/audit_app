@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ClipboardList, Plus, Pencil, Trash2, XCircle, AlertCircle, CheckCircle2, Ban } from 'lucide-react';
 import {
   listStockRequests, createStockRequest, updateStockRequest, deleteStockRequest,
   fulfillStockRequest, cancelStockRequest, listInventoryItems,
 } from '../api/client';
-import type { StockRequest, StockRequestIn, StockRequestType, InventoryItem } from '../api/types';
+import type { StockRequest, StockRequestIn, StockRequestType, StockRequestStatus, InventoryItem } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -23,7 +24,7 @@ const emptyForm = (): StockRequestIn => ({
   notes: '',
 });
 
-const statusVariant: Record<string, 'secondary' | 'income' | 'destructive'> = {
+const statusVariant: Record<StockRequestStatus, 'secondary' | 'income' | 'destructive'> = {
   pending: 'secondary',
   fulfilled: 'income',
   cancelled: 'destructive',
@@ -123,12 +124,16 @@ export function StockRequests() {
   };
 
   const handleDelete = async (req: StockRequest) => {
+    setActing(true);
     try {
       await deleteStockRequest(req.id);
       setConfirmAction(null);
       load();
     } catch {
       setError('Failed to delete stock request');
+      setConfirmAction(null);
+    } finally {
+      setActing(false);
     }
   };
 
@@ -193,7 +198,7 @@ export function StockRequests() {
 
       {items.length === 0 && !loading && (
         <p className="text-xs text-amber-700">
-          No active items in the catalog yet. <a href="/inventory/items" className="underline">Add an item first.</a>
+          No active items in the catalog yet. <Link to="/inventory/items" className="underline">Add an item first.</Link>
         </p>
       )}
 

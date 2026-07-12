@@ -143,15 +143,22 @@ def _movement_to_out(m: StockMovement) -> StockMovementOut:
 
 # ── item CRUD ────────────────────────────────────────────────────────────────
 
+@router.get("/items/categories", response_model=list[str])
+def list_item_categories():
+    """Suggested categories for the item form's dropdown — category itself
+    stays free text (same as Transaction.category), so this is advisory
+    only, not a server-side allowlist. Matches assets.py's /categories."""
+    return INVENTORY_CATEGORIES
+
+
 @router.get("/items", response_model=list[InventoryItemOut])
 def list_items(active_only: bool = False, low_stock_only: bool = False, db: Session = Depends(get_db)):
     q = db.query(InventoryItem).order_by(InventoryItem.name)
     if active_only:
         q = q.filter(InventoryItem.is_active == True)
-    items = q.all()
     if low_stock_only:
-        items = [i for i in items if i.quantity_on_hand <= i.reorder_level]
-    return [_item_to_out(i) for i in items]
+        q = q.filter(InventoryItem.quantity_on_hand <= InventoryItem.reorder_level)
+    return [_item_to_out(i) for i in q.all()]
 
 
 @router.post("/items", response_model=InventoryItemOut, status_code=201)

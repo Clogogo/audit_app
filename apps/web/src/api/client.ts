@@ -574,6 +574,9 @@ export const resetPayroll = (year: number, month: number) =>
 
 // ── Inventory ────────────────────────────────────────────────────────────────
 
+export const getInventoryCategories = () =>
+  api.get<string[]>('/inventory/items/categories').then(unwrap);
+
 export const listInventoryItems = (params?: { active_only?: boolean; low_stock_only?: boolean }) =>
   api.get<InventoryItem[]>('/inventory/items', { params }).then(unwrap);
 
