@@ -31,6 +31,7 @@ import { RoleManagement } from '../pages/RoleManagement';
 import { InventoryItems } from '../pages/InventoryItems';
 import { StockRequests } from '../pages/StockRequests';
 import { StockMovements } from '../pages/StockMovements';
+import { InventoryReport } from '../pages/InventoryReport';
 
 export function App() {
   return (
@@ -75,6 +76,7 @@ export function App() {
                       <Route path="/inventory/items" element={<PermissionRoute permission="inventory"><InventoryItems /></PermissionRoute>} />
                       <Route path="/inventory/requests" element={<PermissionRoute permission="inventory"><StockRequests /></PermissionRoute>} />
                       <Route path="/inventory/movements" element={<PermissionRoute permission="inventory"><StockMovements /></PermissionRoute>} />
+                      <Route path="/inventory/reports" element={<PermissionRoute permission="inventory"><InventoryReport /></PermissionRoute>} />
                       <Route path="/user-management" element={<PermissionRoute permission="user_management"><UserManagement /></PermissionRoute>} />
                       <Route path="/role-management" element={<PermissionRoute permission="user_management"><RoleManagement /></PermissionRoute>} />
                     </Routes>

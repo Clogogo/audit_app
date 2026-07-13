@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { History, SlidersHorizontal, XCircle, AlertCircle } from 'lucide-react';
 import { listStockMovements, adjustStock, listInventoryItems, getSalesSummary } from '../api/client';
 import type { StockMovement, StockMovementType, StockAdjustmentIn, InventoryItem, SalesSummary } from '../api/types';
@@ -59,13 +60,16 @@ function NumInput({ label, value, onChange }: {
 }
 
 export function StockMovements() {
+  const [searchParams] = useSearchParams();
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [salesSummary, setSalesSummary] = useState<SalesSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [itemFilter, setItemFilter] = useState('all');
+  // Preset from a deep link (e.g. the Inventory Report's "View Ledger"),
+  // read once on mount — this filter is otherwise fully user-driven.
+  const [itemFilter, setItemFilter] = useState(() => searchParams.get('item') || 'all');
   const [typeFilter, setTypeFilter] = useState('all');
 
   const [showAdjustForm, setShowAdjustForm] = useState(false);

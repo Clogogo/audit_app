@@ -1056,6 +1056,22 @@ export interface SalesSummary {
   sales_missing_cost_count: number;
 }
 
+export interface ItemReport {
+  item_id: number;
+  item_name: string;
+  sku: string | null;
+  category: string;
+  quantity_on_hand: number;
+  total_purchased_quantity: number;
+  total_purchase_cost: number;
+  total_sold_quantity: number;
+  total_sale_revenue: number;
+  costed_revenue: number;
+  total_profit: number;
+  profit_margin_pct: number;
+  sales_missing_cost_count: number;
+}
+
 export interface StockAdjustmentIn {
   item_id: number;
   movement_type: 'adjustment_in' | 'adjustment_out';
