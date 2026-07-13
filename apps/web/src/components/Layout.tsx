@@ -31,6 +31,7 @@ import {
   Boxes,
   ClipboardList,
   History,
+  FileBarChart,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
@@ -75,6 +76,7 @@ const inventorySubItems = [
   { to: '/inventory/items', icon: Boxes, label: 'Items' },
   { to: '/inventory/requests', icon: ClipboardList, label: 'Stock Requests' },
   { to: '/inventory/movements', icon: History, label: 'Stock Movements' },
+  { to: '/inventory/reports', icon: FileBarChart, label: 'Report' },
 ];
 
 const accessSubItems = [

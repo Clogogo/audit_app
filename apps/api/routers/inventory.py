@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import case, func
+from sqlalchemy import and_, case, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -121,6 +121,21 @@ class SalesSummaryOut(BaseModel):
     # Sales fulfilled before cost-snapshotting existed (or where the item
     # had no unit_cost set at the time) — counted in total_revenue but
     # excluded from cost/profit so an unknown cost is never treated as zero.
+    sales_missing_cost_count: int
+
+
+class ItemReportOut(BaseModel):
+    item_id: int
+    item_name: str
+    sku: Optional[str]
+    category: str
+    quantity_on_hand: int
+    total_purchased_quantity: int
+    total_purchase_cost: float
+    total_sold_quantity: int
+    total_sale_revenue: float
+    total_profit: float
+    profit_margin_pct: float
     sales_missing_cost_count: int
 
 
@@ -403,6 +418,78 @@ def get_sales_summary(
         profit_margin_pct=profit_margin_pct,
         sales_missing_cost_count=row.total_sales_count - row.costed_sales_count,
     )
+
+
+@router.get("/reports/items", response_model=list[ItemReportOut])
+def get_items_report(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """Per-item purchase/sale totals and profit — "what was bought and
+    what was sold", broken out by item instead of one grand total. Joined
+    from InventoryItem (not StockMovement) so an item with no movements
+    yet still appears with all-zero figures rather than being omitted.
+    Date filters apply to the join itself (not a post-join WHERE), so an
+    item with movements outside the range still appears, just with zeros
+    for that range — the same LEFT JOIN semantics list_movements/
+    get_sales_summary rely on for a plain unfiltered list."""
+    join_conditions = [StockMovement.item_id == InventoryItem.id]
+    if start_date:
+        join_conditions.append(StockMovement.date >= start_date)
+    if end_date:
+        join_conditions.append(StockMovement.date <= end_date)
+
+    is_purchase = StockMovement.movement_type == "purchase_in"
+    is_sale = StockMovement.movement_type == "sale_out"
+    is_costed_sale = and_(is_sale, StockMovement.unit_cost.isnot(None))
+    line_total = StockMovement.quantity * StockMovement.unit_amount
+    cost_total = StockMovement.quantity * StockMovement.unit_cost
+
+    rows = (
+        db.query(
+            InventoryItem.id.label("item_id"),
+            InventoryItem.name.label("item_name"),
+            InventoryItem.sku.label("sku"),
+            InventoryItem.category.label("category"),
+            InventoryItem.quantity_on_hand.label("quantity_on_hand"),
+            func.coalesce(func.sum(case((is_purchase, StockMovement.quantity), else_=0)), 0)
+                .label("total_purchased_quantity"),
+            func.coalesce(func.sum(case((is_purchase, line_total), else_=0.0)), 0.0)
+                .label("total_purchase_cost"),
+            func.count(case((is_sale, 1))).label("total_sales_count"),
+            func.coalesce(func.sum(case((is_sale, StockMovement.quantity), else_=0)), 0)
+                .label("total_sold_quantity"),
+            func.coalesce(func.sum(case((is_sale, line_total), else_=0.0)), 0.0)
+                .label("total_sale_revenue"),
+            func.count(case((is_costed_sale, 1))).label("costed_sales_count"),
+            func.coalesce(func.sum(case((is_costed_sale, line_total), else_=0.0)), 0.0)
+                .label("costed_revenue"),
+            func.coalesce(func.sum(case((is_costed_sale, cost_total), else_=0.0)), 0.0)
+                .label("total_cost"),
+        )
+        .outerjoin(StockMovement, and_(*join_conditions))
+        .group_by(InventoryItem.id)
+        .order_by(InventoryItem.name)
+        .all()
+    )
+
+    results = []
+    for row in rows:
+        total_profit = round(row.costed_revenue - row.total_cost, 2)
+        profit_margin_pct = round(total_profit / row.costed_revenue * 100, 2) if row.costed_revenue > 0 else 0.0
+        results.append(ItemReportOut(
+            item_id=row.item_id, item_name=row.item_name, sku=row.sku, category=row.category,
+            quantity_on_hand=row.quantity_on_hand,
+            total_purchased_quantity=row.total_purchased_quantity,
+            total_purchase_cost=round(row.total_purchase_cost, 2),
+            total_sold_quantity=row.total_sold_quantity,
+            total_sale_revenue=round(row.total_sale_revenue, 2),
+            total_profit=total_profit,
+            profit_margin_pct=profit_margin_pct,
+            sales_missing_cost_count=row.total_sales_count - row.costed_sales_count,
+        ))
+    return results
 
 
 @router.post("/movements/adjust", response_model=StockMovementOut, status_code=201)
