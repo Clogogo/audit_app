@@ -1066,6 +1066,7 @@ export interface ItemReport {
   total_purchase_cost: number;
   total_sold_quantity: number;
   total_sale_revenue: number;
+  costed_revenue: number;
   total_profit: number;
   profit_margin_pct: number;
   sales_missing_cost_count: number;

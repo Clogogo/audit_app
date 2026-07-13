@@ -49,6 +49,7 @@ def test_item_with_no_movements_appears_with_all_zero_fields(client):
     assert row["total_purchase_cost"] == 0.0
     assert row["total_sold_quantity"] == 0
     assert row["total_sale_revenue"] == 0.0
+    assert row["costed_revenue"] == 0.0
     assert row["total_profit"] == 0.0
     assert row["profit_margin_pct"] == 0.0
     assert row["sales_missing_cost_count"] == 0
@@ -107,6 +108,9 @@ def test_report_excludes_zero_cost_sales_from_profit_but_counts_revenue(client):
     row = _report_row(client, item["id"])
     assert row["total_sold_quantity"] == 4
     assert row["total_sale_revenue"] == 10000.0
+    # No sale here has a known cost, so costed_revenue — the correct
+    # denominator for a blended margin — is 0, not 10000.
+    assert row["costed_revenue"] == 0.0
     assert row["total_profit"] == 0.0
     assert row["sales_missing_cost_count"] == 1
 

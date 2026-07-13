@@ -24,14 +24,18 @@ export function InventoryReport() {
       purchaseCost: acc.purchaseCost + r.total_purchase_cost,
       soldQty: acc.soldQty + r.total_sold_quantity,
       saleRevenue: acc.saleRevenue + r.total_sale_revenue,
+      costedRevenue: acc.costedRevenue + r.costed_revenue,
       profit: acc.profit + r.total_profit,
     }),
-    { purchasedQty: 0, purchaseCost: 0, soldQty: 0, saleRevenue: 0, profit: 0 }
+    { purchasedQty: 0, purchaseCost: 0, soldQty: 0, saleRevenue: 0, costedRevenue: 0, profit: 0 }
   );
-  // Blended margin across every item — total profit over total revenue,
-  // not an average of each row's own margin % (which would weight a
-  // low-volume item the same as a high-volume one).
-  const totalMarginPct = totals.saleRevenue > 0 ? (totals.profit / totals.saleRevenue) * 100 : 0;
+  // Blended margin across every item — total profit over costed revenue
+  // (not total_sale_revenue, which also includes sales with no recorded
+  // cost; total_profit never reflects those, so dividing by all revenue
+  // would understate margin), and not an average of each row's own
+  // margin % either, which would weight a low-volume item the same as a
+  // high-volume one.
+  const totalMarginPct = totals.costedRevenue > 0 ? (totals.profit / totals.costedRevenue) * 100 : 0;
 
   return (
     <div className="space-y-6">
@@ -54,7 +58,7 @@ export function InventoryReport() {
 
       {loading ? (
         <p className="text-muted-foreground text-sm">Loading…</p>
-      ) : rows.length === 0 ? (
+      ) : error ? null : rows.length === 0 ? (
         <Card>
           <CardContent className="pt-5">
             <p className="text-sm text-muted-foreground py-4 text-center">

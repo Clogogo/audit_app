@@ -134,6 +134,9 @@ class ItemReportOut(BaseModel):
     total_purchase_cost: float
     total_sold_quantity: int
     total_sale_revenue: float
+    costed_revenue: float          # subset of total_sale_revenue with a known cost — the
+                                    # correct denominator for a blended margin across items,
+                                    # since total_profit only ever reflects costed sales too
     total_profit: float
     profit_margin_pct: float
     sales_missing_cost_count: int
@@ -427,13 +430,14 @@ def get_items_report(
     db: Session = Depends(get_db),
 ):
     """Per-item purchase/sale totals and profit — "what was bought and
-    what was sold", broken out by item instead of one grand total. Joined
-    from InventoryItem (not StockMovement) so an item with no movements
-    yet still appears with all-zero figures rather than being omitted.
-    Date filters apply to the join itself (not a post-join WHERE), so an
-    item with movements outside the range still appears, just with zeros
-    for that range — the same LEFT JOIN semantics list_movements/
-    get_sales_summary rely on for a plain unfiltered list."""
+    what was sold", broken out by item instead of one grand total.
+    Queried from InventoryItem outer-joined to StockMovement (unlike
+    list_movements/get_sales_summary, which query StockMovement directly
+    with a WHERE filter) so an item with no movements yet — or none
+    within the given date range — still appears with all-zero figures
+    rather than being omitted. Date filters are applied inside the JOIN
+    condition rather than a post-join WHERE, which is what preserves that
+    "item still appears" guarantee for a LEFT JOIN."""
     join_conditions = [StockMovement.item_id == InventoryItem.id]
     if start_date:
         join_conditions.append(StockMovement.date >= start_date)
@@ -485,6 +489,7 @@ def get_items_report(
             total_purchase_cost=round(row.total_purchase_cost, 2),
             total_sold_quantity=row.total_sold_quantity,
             total_sale_revenue=round(row.total_sale_revenue, 2),
+            costed_revenue=round(row.costed_revenue, 2),
             total_profit=total_profit,
             profit_margin_pct=profit_margin_pct,
             sales_missing_cost_count=row.total_sales_count - row.costed_sales_count,
