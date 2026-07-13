@@ -8,7 +8,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import case, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -125,6 +126,16 @@ class SalesSummaryOut(BaseModel):
 
 # ── serialization ────────────────────────────────────────────────────────────
 
+def _normalize_item_data(data: dict) -> dict:
+    """An empty-string SKU is not exempt from the column's UNIQUE
+    constraint the way NULL is — a second item left without a SKU would
+    otherwise collide with the first and crash with an unhandled
+    IntegrityError. Blank SKU always means "no SKU", so treat it as NULL."""
+    if data.get("sku") == "":
+        data["sku"] = None
+    return data
+
+
 def _item_to_out(item: InventoryItem) -> InventoryItemOut:
     return InventoryItemOut(
         id=item.id, name=item.name, sku=item.sku, category=item.category,
@@ -177,9 +188,14 @@ def list_items(active_only: bool = False, low_stock_only: bool = False, db: Sess
 
 @router.post("/items", response_model=InventoryItemOut, status_code=201)
 def create_item(body: InventoryItemIn, db: Session = Depends(get_db)):
-    item = InventoryItem(**body.model_dump())
+    data = _normalize_item_data(body.model_dump())
+    item = InventoryItem(**data)
     db.add(item)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, f"SKU \"{data['sku']}\" is already in use by another item")
     db.refresh(item)
     return _item_to_out(item)
 
@@ -187,10 +203,15 @@ def create_item(body: InventoryItemIn, db: Session = Depends(get_db)):
 @router.put("/items/{item_id}", response_model=InventoryItemOut)
 def update_item(item_id: int, body: InventoryItemIn, db: Session = Depends(get_db)):
     item = get_or_404(db, InventoryItem, item_id, "Inventory item")
-    for k, v in body.model_dump().items():
+    data = _normalize_item_data(body.model_dump())
+    for k, v in data.items():
         setattr(item, k, v)
     item.updated_at = datetime.utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, f"SKU \"{data['sku']}\" is already in use by another item")
     db.refresh(item)
     return _item_to_out(item)
 
@@ -285,8 +306,13 @@ def fulfill_request(request_id: int, db: Session = Depends(get_db)):
         movement_type = "sale_out"
         # Snapshot the item's cost now, at the moment stock actually leaves
         # — profit for this sale stays correct even if unit_cost is edited
-        # on the item later.
-        movement_unit_cost = item.unit_cost
+        # on the item later. A cost of exactly 0 is treated the same as
+        # "never entered" (unit_cost defaults to 0.0, not None, so there's
+        # no schema-level way to tell a genuine free item apart from one
+        # nobody priced) — a real $0 acquisition cost isn't a realistic
+        # scenario for resold stock, so this avoids reporting 100% margin
+        # sales-summary results for items whose cost was simply left blank.
+        movement_unit_cost = item.unit_cost if item.unit_cost > 0 else None
 
     today = date.today()
     movement = StockMovement(
@@ -345,37 +371,37 @@ def get_sales_summary(
     """Total revenue and profit across every fulfilled sale (sale_out
     movements). Cost is only known for sales fulfilled after unit_cost
     snapshotting existed, so cost/profit are computed only over the subset
-    where it's set — an unknown cost is never silently treated as zero."""
-    q = db.query(StockMovement).filter(StockMovement.movement_type == "sale_out")
+    where it's set — an unknown cost is never silently treated as zero.
+    All aggregates computed in a single query via conditional SUM/COUNT
+    rather than one query per figure."""
+    has_cost = StockMovement.unit_cost.isnot(None)
+    revenue_expr = StockMovement.quantity * StockMovement.unit_amount
+
+    q = db.query(
+        func.count(StockMovement.id).label("total_sales_count"),
+        func.coalesce(func.sum(revenue_expr), 0.0).label("total_revenue"),
+        func.count(case((has_cost, 1))).label("costed_sales_count"),
+        func.coalesce(func.sum(case((has_cost, revenue_expr), else_=0.0)), 0.0).label("costed_revenue"),
+        func.coalesce(
+            func.sum(case((has_cost, StockMovement.quantity * StockMovement.unit_cost), else_=0.0)), 0.0
+        ).label("total_cost"),
+    ).filter(StockMovement.movement_type == "sale_out")
     if start_date:
         q = q.filter(StockMovement.date >= start_date)
     if end_date:
         q = q.filter(StockMovement.date <= end_date)
 
-    total_sales_count = q.count()
-    total_revenue = q.with_entities(
-        func.coalesce(func.sum(StockMovement.quantity * StockMovement.unit_amount), 0.0)
-    ).scalar()
-
-    costed = q.filter(StockMovement.unit_cost.isnot(None))
-    costed_sales_count = costed.count()
-    costed_revenue = costed.with_entities(
-        func.coalesce(func.sum(StockMovement.quantity * StockMovement.unit_amount), 0.0)
-    ).scalar()
-    total_cost = costed.with_entities(
-        func.coalesce(func.sum(StockMovement.quantity * StockMovement.unit_cost), 0.0)
-    ).scalar()
-
-    total_profit = round(costed_revenue - total_cost, 2)
-    profit_margin_pct = round(total_profit / costed_revenue * 100, 2) if costed_revenue > 0 else 0.0
+    row = q.one()
+    total_profit = round(row.costed_revenue - row.total_cost, 2)
+    profit_margin_pct = round(total_profit / row.costed_revenue * 100, 2) if row.costed_revenue > 0 else 0.0
 
     return SalesSummaryOut(
-        total_sales_count=total_sales_count,
-        total_revenue=round(total_revenue, 2),
-        total_cost=round(total_cost, 2),
+        total_sales_count=row.total_sales_count,
+        total_revenue=round(row.total_revenue, 2),
+        total_cost=round(row.total_cost, 2),
         total_profit=total_profit,
         profit_margin_pct=profit_margin_pct,
-        sales_missing_cost_count=total_sales_count - costed_sales_count,
+        sales_missing_cost_count=row.total_sales_count - row.costed_sales_count,
     )
 
 

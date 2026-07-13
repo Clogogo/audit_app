@@ -135,6 +135,19 @@ def test_fulfilling_a_sale_snapshots_cost_even_if_item_cost_changes_later(client
     assert movements[0]["unit_cost"] == 4000.0
 
 
+def test_fulfilling_a_sale_of_a_zero_cost_item_snapshots_no_cost(client):
+    # unit_cost defaults to 0.0 (not nullable at the model level), so 0.0
+    # is indistinguishable from "never entered". Treating it as a real
+    # zero cost would report every such sale at 100% margin — instead the
+    # movement gets unit_cost=None, the same as a genuinely unknown cost.
+    item = _create_item(client, quantity_on_hand=10, unit_cost=0.0)
+    req = _create_request(client, item["id"], request_type="sale", quantity=2, unit_amount=6000.0)
+    client.post(f"/inventory/requests/{req['id']}/fulfill")
+
+    movements = client.get("/inventory/movements", params={"movement_type": "sale_out"}).json()
+    assert movements[0]["unit_cost"] is None
+
+
 def test_fulfilling_a_sale_that_would_go_negative_is_rejected(client):
     item = _create_item(client, quantity_on_hand=2)
     req = _create_request(client, item["id"], request_type="sale", quantity=5, unit_amount=6000.0)

@@ -125,3 +125,22 @@ def test_summary_ignores_purchases_and_adjustments(client):
     body = resp.json()
     assert body["total_sales_count"] == 0
     assert body["total_revenue"] == 0.0
+
+
+def test_summary_excludes_zero_cost_items_from_cost_and_profit(client):
+    # unit_cost defaults to 0.0 (not nullable), so an item nobody ever
+    # priced looks identical to a genuine free item at the model level.
+    # Fulfillment treats 0.0 as "unknown" (see test_stock_requests.py) —
+    # this confirms the summary endpoint honors that: the sale still counts
+    # toward revenue, but is excluded from cost/profit like any other
+    # missing-cost sale, not counted as a 100%-margin sale.
+    item = _create_item(client, unit_cost=0.0, quantity_on_hand=10)
+    _sell(client, item["id"], quantity=3, unit_amount=2500.0)
+
+    resp = client.get("/inventory/sales-summary")
+    body = resp.json()
+    assert body["total_sales_count"] == 1
+    assert body["sales_missing_cost_count"] == 1
+    assert body["total_revenue"] == 7500.0
+    assert body["total_cost"] == 0.0
+    assert body["total_profit"] == 0.0

@@ -74,14 +74,14 @@ export function StockMovements() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([
-      listStockMovements(),
-      listInventoryItems({ active_only: true }),
-      getSalesSummary(),
-    ])
-      .then(([m, i, s]) => { setMovements(m); setItems(i); setSalesSummary(s); })
+    Promise.all([listStockMovements(), listInventoryItems({ active_only: true })])
+      .then(([m, i]) => { setMovements(m); setItems(i); })
       .catch(() => setError('Failed to load stock movements'))
       .finally(() => setLoading(false));
+
+    // Fetched independently — a failure here is a missing summary widget,
+    // not a reason to fail the whole ledger page.
+    getSalesSummary().then(setSalesSummary).catch(() => setSalesSummary(null));
   };
 
   useEffect(() => { load(); }, []);
