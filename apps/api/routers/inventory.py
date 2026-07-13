@@ -8,6 +8,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import case, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -94,6 +96,7 @@ class StockMovementOut(BaseModel):
     movement_type: str
     quantity: int
     unit_amount: Optional[float]
+    unit_cost: Optional[float]     # cost basis at time of sale — only set on sale_out
     date: date
     request_id: Optional[int]
     transaction_id: Optional[int]
@@ -109,7 +112,29 @@ class StockAdjustmentIn(BaseModel):
     notes: Optional[str] = None
 
 
+class SalesSummaryOut(BaseModel):
+    total_sales_count: int
+    total_revenue: float
+    total_cost: float
+    total_profit: float
+    profit_margin_pct: float
+    # Sales fulfilled before cost-snapshotting existed (or where the item
+    # had no unit_cost set at the time) — counted in total_revenue but
+    # excluded from cost/profit so an unknown cost is never treated as zero.
+    sales_missing_cost_count: int
+
+
 # ── serialization ────────────────────────────────────────────────────────────
+
+def _normalize_item_data(data: dict) -> dict:
+    """An empty-string SKU is not exempt from the column's UNIQUE
+    constraint the way NULL is — a second item left without a SKU would
+    otherwise collide with the first and crash with an unhandled
+    IntegrityError. Blank SKU always means "no SKU", so treat it as NULL."""
+    if data.get("sku") == "":
+        data["sku"] = None
+    return data
+
 
 def _item_to_out(item: InventoryItem) -> InventoryItemOut:
     return InventoryItemOut(
@@ -136,7 +161,7 @@ def _movement_to_out(m: StockMovement) -> StockMovementOut:
     return StockMovementOut(
         id=m.id, item_id=m.item_id, item_name=m.item.name if m.item else None,
         movement_type=m.movement_type, quantity=m.quantity, unit_amount=m.unit_amount,
-        date=m.date, request_id=m.request_id, transaction_id=m.transaction_id,
+        unit_cost=m.unit_cost, date=m.date, request_id=m.request_id, transaction_id=m.transaction_id,
         notes=m.notes, created_at=m.created_at,
     )
 
@@ -163,9 +188,14 @@ def list_items(active_only: bool = False, low_stock_only: bool = False, db: Sess
 
 @router.post("/items", response_model=InventoryItemOut, status_code=201)
 def create_item(body: InventoryItemIn, db: Session = Depends(get_db)):
-    item = InventoryItem(**body.model_dump())
+    data = _normalize_item_data(body.model_dump())
+    item = InventoryItem(**data)
     db.add(item)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, f"SKU \"{data['sku']}\" is already in use by another item")
     db.refresh(item)
     return _item_to_out(item)
 
@@ -173,10 +203,15 @@ def create_item(body: InventoryItemIn, db: Session = Depends(get_db)):
 @router.put("/items/{item_id}", response_model=InventoryItemOut)
 def update_item(item_id: int, body: InventoryItemIn, db: Session = Depends(get_db)):
     item = get_or_404(db, InventoryItem, item_id, "Inventory item")
-    for k, v in body.model_dump().items():
+    data = _normalize_item_data(body.model_dump())
+    for k, v in data.items():
         setattr(item, k, v)
     item.updated_at = datetime.utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, f"SKU \"{data['sku']}\" is already in use by another item")
     db.refresh(item)
     return _item_to_out(item)
 
@@ -260,6 +295,7 @@ def fulfill_request(request_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, "Only pending requests can be fulfilled")
     item = req.item
 
+    movement_unit_cost = None
     if req.request_type == "purchase":
         item.quantity_on_hand += req.quantity
         movement_type = "purchase_in"
@@ -268,11 +304,20 @@ def fulfill_request(request_id: int, db: Session = Depends(get_db)):
             raise HTTPException(400, "Insufficient stock to fulfill this sale")
         item.quantity_on_hand -= req.quantity
         movement_type = "sale_out"
+        # Snapshot the item's cost now, at the moment stock actually leaves
+        # — profit for this sale stays correct even if unit_cost is edited
+        # on the item later. A cost of exactly 0 is treated the same as
+        # "never entered" (unit_cost defaults to 0.0, not None, so there's
+        # no schema-level way to tell a genuine free item apart from one
+        # nobody priced) — a real $0 acquisition cost isn't a realistic
+        # scenario for resold stock, so this avoids reporting 100% margin
+        # sales-summary results for items whose cost was simply left blank.
+        movement_unit_cost = item.unit_cost if item.unit_cost > 0 else None
 
     today = date.today()
     movement = StockMovement(
         item_id=item.id, movement_type=movement_type, quantity=req.quantity,
-        unit_amount=req.unit_amount, date=today, request_id=req.id,
+        unit_amount=req.unit_amount, unit_cost=movement_unit_cost, date=today, request_id=req.id,
     )
     db.add(movement)
     req.status = "fulfilled"
@@ -315,6 +360,49 @@ def list_movements(
     if end_date:
         q = q.filter(StockMovement.date <= end_date)
     return [_movement_to_out(m) for m in q.all()]
+
+
+@router.get("/sales-summary", response_model=SalesSummaryOut)
+def get_sales_summary(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """Total revenue and profit across every fulfilled sale (sale_out
+    movements). Cost is only known for sales fulfilled after unit_cost
+    snapshotting existed, so cost/profit are computed only over the subset
+    where it's set — an unknown cost is never silently treated as zero.
+    All aggregates computed in a single query via conditional SUM/COUNT
+    rather than one query per figure."""
+    has_cost = StockMovement.unit_cost.isnot(None)
+    revenue_expr = StockMovement.quantity * StockMovement.unit_amount
+
+    q = db.query(
+        func.count(StockMovement.id).label("total_sales_count"),
+        func.coalesce(func.sum(revenue_expr), 0.0).label("total_revenue"),
+        func.count(case((has_cost, 1))).label("costed_sales_count"),
+        func.coalesce(func.sum(case((has_cost, revenue_expr), else_=0.0)), 0.0).label("costed_revenue"),
+        func.coalesce(
+            func.sum(case((has_cost, StockMovement.quantity * StockMovement.unit_cost), else_=0.0)), 0.0
+        ).label("total_cost"),
+    ).filter(StockMovement.movement_type == "sale_out")
+    if start_date:
+        q = q.filter(StockMovement.date >= start_date)
+    if end_date:
+        q = q.filter(StockMovement.date <= end_date)
+
+    row = q.one()
+    total_profit = round(row.costed_revenue - row.total_cost, 2)
+    profit_margin_pct = round(total_profit / row.costed_revenue * 100, 2) if row.costed_revenue > 0 else 0.0
+
+    return SalesSummaryOut(
+        total_sales_count=row.total_sales_count,
+        total_revenue=round(row.total_revenue, 2),
+        total_cost=round(row.total_cost, 2),
+        total_profit=total_profit,
+        profit_margin_pct=profit_margin_pct,
+        sales_missing_cost_count=row.total_sales_count - row.costed_sales_count,
+    )
 
 
 @router.post("/movements/adjust", response_model=StockMovementOut, status_code=201)

@@ -449,6 +449,12 @@ class StockMovement(Base):
     movement_type: Mapped[str] = mapped_column(String(20))    # purchase_in | sale_out | adjustment_in | adjustment_out
     quantity: Mapped[int] = mapped_column(Integer)             # always positive; direction implied by movement_type
     unit_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Cost basis snapshot, set only on sale_out — the item's unit_cost at
+    # the moment of sale, so profit (unit_amount - unit_cost) x quantity
+    # stays correct forever even if the item's cost is edited later. Same
+    # snapshot-at-event-time principle as PayrollEntry.gross_salary copying
+    # Staff.monthly_gross when a payroll run is processed.
+    unit_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     date: Mapped[date] = mapped_column(Date)
     request_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("stock_requests.id", ondelete="SET NULL"), nullable=True
