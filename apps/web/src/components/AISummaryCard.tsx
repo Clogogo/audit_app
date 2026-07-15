@@ -11,23 +11,28 @@ interface AISummaryCardProps {
   className?: string;
   // Cap height and scroll instead of growing — for narrow sidebar columns.
   compact?: boolean;
+  // Defaults to the financial-narrative heading — override for a domain
+  // where the underlying narrative isn't financial (e.g. staffing).
+  title?: string;
 }
 
 function AISummaryCardShell({
   children,
   className,
   compact,
+  title = 'AI Financial Analysis',
 }: {
   children: ReactNode;
   className?: string;
   compact?: boolean;
+  title?: string;
 }) {
   return (
     <Card className={cn('border-secondary bg-secondary/40', className)}>
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
-          AI Financial Analysis
+          {title}
         </CardTitle>
       </CardHeader>
       <CardContent className={cn(compact && 'max-h-[22rem] overflow-y-auto pr-1')}>
@@ -65,10 +70,11 @@ export function AISummaryCard({
   loading,
   className,
   compact,
+  title,
 }: AISummaryCardProps) {
   if (loading) {
     return (
-      <AISummaryCardShell className={className} compact={compact}>
+      <AISummaryCardShell className={className} compact={compact} title={title}>
         <div className="space-y-2 animate-pulse">
           <div className="h-3 bg-muted rounded w-full" />
           <div className="h-3 bg-muted rounded w-5/6" />
@@ -87,7 +93,7 @@ export function AISummaryCard({
   }
 
   return (
-    <AISummaryCardShell className={className} compact={compact}>
+    <AISummaryCardShell className={className} compact={compact} title={title}>
       <div className="space-y-3">{renderNarrative(narrative)}</div>
     </AISummaryCardShell>
   );
