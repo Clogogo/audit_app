@@ -44,6 +44,14 @@ describe('AISummaryCard', () => {
     expect(paragraphs).toHaveLength(1);
   });
 
+  it('uses a custom title when provided, instead of the financial default', () => {
+    render(
+      <AISummaryCard narrative="Staffing is stable." available={true} loading={false} title="AI Staffing Analysis" />
+    );
+    expect(screen.getByText('AI Staffing Analysis')).toBeInTheDocument();
+    expect(screen.queryByText('AI Financial Analysis')).not.toBeInTheDocument();
+  });
+
   it('applies className to the root Card', () => {
     const { container } = render(
       <AISummaryCard narrative="Expenses rose." available={true} loading={false} className="lg:col-span-2" />

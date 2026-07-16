@@ -98,6 +98,7 @@ export function StaffDirectory() {
       }
       closeForm();
       load();
+      aiSummary.refetch();
     } catch {
       setError('Failed to save staff member');
     } finally {
@@ -110,6 +111,7 @@ export function StaffDirectory() {
       await deleteStaffMember(id);
       setDeleteId(null);
       load();
+      aiSummary.refetch();
     } catch {
       setError('Failed to delete staff member');
     }
@@ -169,6 +171,7 @@ export function StaffDirectory() {
         narrative={aiSummary.narrative}
         available={aiSummary.available}
         loading={aiSummary.loading}
+        title="AI Staffing Analysis"
       />
 
       {loading ? (

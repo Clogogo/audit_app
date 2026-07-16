@@ -27,8 +27,8 @@ const typeLabel: Record<StockMovementType, string> = {
 };
 
 const typeVariant: Record<StockMovementType, 'income' | 'expense' | 'secondary'> = {
-  purchase_in: 'income',
-  sale_out: 'expense',
+  purchase_in: 'expense',    // money spent restocking
+  sale_out: 'income',        // money earned from a sale
   adjustment_in: 'income',
   adjustment_out: 'expense',
 };

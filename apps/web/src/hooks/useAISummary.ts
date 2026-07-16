@@ -23,12 +23,14 @@ export function useAISummary(startDate?: string, endDate?: string, termId?: numb
 
 /** AI narrative over staff directory, staff loans, IOUs, payroll status,
  * and the current term (see GET /staff-directory/ai-summary). No filters —
- * always summarizes current staffing state. */
+ * always summarizes current staffing state. Exposes refetch so callers can
+ * refresh the narrative after a staff create/update/delete, since it isn't
+ * driven by any dependency that would otherwise trigger a re-fetch. */
 export function useStaffAISummary() {
-  const { data, loading } = useAsync<TransactionAISummary>(() => getStaffAISummary(), []);
+  const { data, loading, refetch } = useAsync<TransactionAISummary>(() => getStaffAISummary(), []);
 
   if (!data) {
-    return { narrative: null, available: false, loading };
+    return { narrative: null, available: false, loading, refetch };
   }
-  return { narrative: data.narrative, available: data.available, loading };
+  return { narrative: data.narrative, available: data.available, loading, refetch };
 }

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import and_, case, func
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
 from models import InventoryItem, StockMovement, StockRequest
@@ -250,7 +250,11 @@ def list_requests(
     item_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
-    q = db.query(StockRequest).order_by(StockRequest.request_date.desc(), StockRequest.created_at.desc())
+    q = (
+        db.query(StockRequest)
+        .options(selectinload(StockRequest.item))
+        .order_by(StockRequest.request_date.desc(), StockRequest.created_at.desc())
+    )
     if request_type:
         q = q.filter(StockRequest.request_type == request_type)
     if status:
@@ -368,7 +372,11 @@ def list_movements(
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
-    q = db.query(StockMovement).order_by(StockMovement.date.desc(), StockMovement.created_at.desc())
+    q = (
+        db.query(StockMovement)
+        .options(selectinload(StockMovement.item))
+        .order_by(StockMovement.date.desc(), StockMovement.created_at.desc())
+    )
     if item_id:
         q = q.filter(StockMovement.item_id == item_id)
     if movement_type:
