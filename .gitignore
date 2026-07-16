@@ -55,6 +55,7 @@ Thumbs.db
 .claude/
 .codex/
 .opencode/
+.specify/
 
 # ── Local agent/tooling scratch dirs (installed skills, session logs, not app code) ──
 .agents/

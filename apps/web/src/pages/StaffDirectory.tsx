@@ -4,6 +4,8 @@ import { listStaffMembers, createStaffMember, updateStaffMember, deleteStaffMemb
 import type { StaffMember, StaffMemberIn } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { AISummaryCard } from '../components/AISummaryCard';
+import { useStaffAISummary } from '../hooks';
 import { formatCurrency } from '../lib/utils';
 
 const EMPTY_FORM: StaffMemberIn = {
@@ -65,6 +67,8 @@ export function StaffDirectory() {
 
   useEffect(() => { load(); }, []);
 
+  const aiSummary = useStaffAISummary();
+
   const openAdd = () => { setEditing(null); setForm(EMPTY_FORM); setShowForm(true); };
   const openEdit = (s: StaffMember) => {
     setEditing(s);
@@ -94,6 +98,7 @@ export function StaffDirectory() {
       }
       closeForm();
       load();
+      aiSummary.refetch();
     } catch {
       setError('Failed to save staff member');
     } finally {
@@ -106,6 +111,7 @@ export function StaffDirectory() {
       await deleteStaffMember(id);
       setDeleteId(null);
       load();
+      aiSummary.refetch();
     } catch {
       setError('Failed to delete staff member');
     }
@@ -160,6 +166,13 @@ export function StaffDirectory() {
           </CardContent>
         </Card>
       </div>
+
+      <AISummaryCard
+        narrative={aiSummary.narrative}
+        available={aiSummary.available}
+        loading={aiSummary.loading}
+        title="AI Staffing Analysis"
+      />
 
       {loading ? (
         <p className="text-muted-foreground text-sm">Loading…</p>

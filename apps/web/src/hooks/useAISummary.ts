@@ -1,5 +1,5 @@
 import { useAsync } from './useAsync';
-import { getAISummary } from '../api/client';
+import { getAISummary, getStaffAISummary } from '../api/client';
 import type { TransactionAISummary } from '../api/types';
 
 /** AI narrative for a date range, normalized so callers never need optional
@@ -19,4 +19,18 @@ export function useAISummary(startDate?: string, endDate?: string, termId?: numb
     return { narrative: null, available: false, loading };
   }
   return { narrative: data.narrative, available: data.available, loading };
+}
+
+/** AI narrative over staff directory, staff loans, IOUs, payroll status,
+ * and the current term (see GET /staff-directory/ai-summary). No filters —
+ * always summarizes current staffing state. Exposes refetch so callers can
+ * refresh the narrative after a staff create/update/delete, since it isn't
+ * driven by any dependency that would otherwise trigger a re-fetch. */
+export function useStaffAISummary() {
+  const { data, loading, refetch } = useAsync<TransactionAISummary>(() => getStaffAISummary(), []);
+
+  if (!data) {
+    return { narrative: null, available: false, loading, refetch };
+  }
+  return { narrative: data.narrative, available: data.available, loading, refetch };
 }

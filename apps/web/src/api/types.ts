@@ -968,3 +968,114 @@ export interface TaxSummary {
   transaction_count: number;
   flagged_categories: Array<{ category: string; amount: number; reason: string }>;
 }
+
+// ── Inventory ────────────────────────────────────────────────────────────────
+
+export interface InventoryItem {
+  id: number;
+  name: string;
+  sku: string | null;
+  category: string;
+  unit: string;
+  unit_cost: number;
+  unit_price: number;
+  quantity_on_hand: number;
+  reorder_level: number;
+  is_low_stock: boolean;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryItemIn {
+  name: string;
+  sku?: string | null;
+  category: string;
+  unit?: string;
+  unit_cost?: number;
+  unit_price?: number;
+  reorder_level?: number;
+  is_active?: boolean;
+  notes?: string | null;
+}
+
+export type StockRequestType = 'purchase' | 'sale';
+export type StockRequestStatus = 'pending' | 'fulfilled' | 'cancelled';
+
+export interface StockRequest {
+  id: number;
+  item_id: number;
+  item_name: string;
+  item_sku: string | null;
+  request_type: StockRequestType;
+  quantity: number;
+  unit_amount: number;
+  counterparty: string | null;
+  status: StockRequestStatus;
+  request_date: string;
+  fulfilled_date: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StockRequestIn {
+  item_id: number;
+  request_type: StockRequestType;
+  quantity: number;
+  unit_amount: number;
+  counterparty?: string | null;
+  request_date: string;
+  notes?: string | null;
+}
+
+export type StockMovementType = 'purchase_in' | 'sale_out' | 'adjustment_in' | 'adjustment_out';
+
+export interface StockMovement {
+  id: number;
+  item_id: number | null;
+  item_name: string | null;
+  movement_type: StockMovementType;
+  quantity: number;
+  unit_amount: number | null;
+  unit_cost: number | null;
+  date: string;
+  request_id: number | null;
+  transaction_id: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface SalesSummary {
+  total_sales_count: number;
+  total_revenue: number;
+  total_cost: number;
+  total_profit: number;
+  profit_margin_pct: number;
+  sales_missing_cost_count: number;
+}
+
+export interface ItemReport {
+  item_id: number;
+  item_name: string;
+  sku: string | null;
+  category: string;
+  quantity_on_hand: number;
+  total_purchased_quantity: number;
+  total_purchase_cost: number;
+  total_sold_quantity: number;
+  total_sale_revenue: number;
+  costed_revenue: number;
+  total_profit: number;
+  profit_margin_pct: number;
+  sales_missing_cost_count: number;
+}
+
+export interface StockAdjustmentIn {
+  item_id: number;
+  movement_type: 'adjustment_in' | 'adjustment_out';
+  quantity: number;
+  date: string;
+  notes?: string | null;
+}

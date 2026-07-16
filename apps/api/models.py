@@ -382,6 +382,94 @@ class Term(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class InventoryItem(Base):
+    """A catalog entry for something the school buys and sells — books,
+    uniforms, textbooks. quantity_on_hand is a denormalized running balance
+    mutated directly by StockRequest fulfillment and manual adjustments
+    (same pattern as AdvancePayment.remaining_amount), not derived by
+    summing StockMovement rows on every read."""
+    __tablename__ = "inventory_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    sku: Mapped[Optional[str]] = mapped_column(String(50), unique=True, nullable=True)
+    category: Mapped[str] = mapped_column(String(100))
+    unit: Mapped[str] = mapped_column(String(20), default="piece")
+    unit_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    unit_price: Mapped[float] = mapped_column(Float, default=0.0)
+    quantity_on_hand: Mapped[int] = mapped_column(Integer, default=0)
+    reorder_level: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    movements: Mapped[list["StockMovement"]] = relationship("StockMovement", back_populates="item")
+    requests: Mapped[list["StockRequest"]] = relationship(
+        "StockRequest", back_populates="item", cascade="all, delete-orphan"
+    )
+
+
+class StockRequest(Base):
+    """A purchase (restock) or sale (issue/sell) intent. Fulfilling one
+    creates exactly one StockMovement and updates the item's
+    quantity_on_hand; it never auto-creates a financial Transaction —
+    that's linked manually later, same as StaffLoanPayment/AdvancePayment."""
+    __tablename__ = "stock_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    item_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventory_items.id", ondelete="CASCADE"))
+    request_type: Mapped[str] = mapped_column(String(10))     # purchase | sale
+    quantity: Mapped[int] = mapped_column(Integer)
+    unit_amount: Mapped[float] = mapped_column(Float)         # cost/unit if purchase, price/unit if sale
+    counterparty: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # supplier or buyer name
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | fulfilled | cancelled
+    request_date: Mapped[date] = mapped_column(Date)
+    fulfilled_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    item: Mapped["InventoryItem"] = relationship("InventoryItem", back_populates="requests")
+    movement: Mapped[Optional["StockMovement"]] = relationship(
+        "StockMovement", back_populates="request", uselist=False
+    )
+
+
+class StockMovement(Base):
+    """Append-only ledger of every quantity change — every fulfilled
+    StockRequest and every manual adjustment writes exactly one row here,
+    and rows are never edited or deleted."""
+    __tablename__ = "stock_movements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    item_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True
+    )
+    movement_type: Mapped[str] = mapped_column(String(20))    # purchase_in | sale_out | adjustment_in | adjustment_out
+    quantity: Mapped[int] = mapped_column(Integer)             # always positive; direction implied by movement_type
+    unit_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Cost basis snapshot, set only on sale_out — the item's unit_cost at
+    # the moment of sale, so profit (unit_amount - unit_cost) x quantity
+    # stays correct forever even if the item's cost is edited later. Same
+    # snapshot-at-event-time principle as PayrollEntry.gross_salary copying
+    # Staff.monthly_gross when a payroll run is processed.
+    unit_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    date: Mapped[date] = mapped_column(Date)
+    request_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("stock_requests.id", ondelete="SET NULL"), nullable=True
+    )
+    transaction_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True
+    )
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    item: Mapped[Optional["InventoryItem"]] = relationship("InventoryItem", back_populates="movements")
+    request: Mapped[Optional["StockRequest"]] = relationship("StockRequest", back_populates="movement")
+    transaction: Mapped[Optional["Transaction"]] = relationship("Transaction")
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     __table_args__ = (

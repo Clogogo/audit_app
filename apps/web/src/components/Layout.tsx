@@ -28,6 +28,10 @@ import {
   ShieldCheck,
   Shield,
   Lock,
+  Boxes,
+  ClipboardList,
+  History,
+  FileBarChart,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
@@ -68,6 +72,13 @@ const staffSubItems = [
   { to: '/staff/terms', icon: CalendarRange, label: 'Terms' },
 ];
 
+const inventorySubItems = [
+  { to: '/inventory/items', icon: Boxes, label: 'Items' },
+  { to: '/inventory/requests', icon: ClipboardList, label: 'Stock Requests' },
+  { to: '/inventory/movements', icon: History, label: 'Stock Movements' },
+  { to: '/inventory/reports', icon: FileBarChart, label: 'Report' },
+];
+
 const accessSubItems = [
   { to: '/user-management', icon: ShieldCheck, label: 'User Management' },
   { to: '/role-management', icon: Shield, label: 'Role Management' },
@@ -92,10 +103,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
     (p) => location.pathname === p
   );
   const isAccessActive = ['/user-management', '/role-management'].includes(location.pathname);
+  const isInventoryActive = location.pathname.startsWith('/inventory');
   const [taxOpen, setTaxOpen] = useState(isTaxActive);
   const [staffOpen, setStaffOpen] = useState(isStaffActive);
   const [bankingOpen, setBankingOpen] = useState(isBankingActive);
   const [accessOpen, setAccessOpen] = useState(isAccessActive);
+  const [inventoryOpen, setInventoryOpen] = useState(isInventoryActive);
 
   // Auto-expand sections when on their routes
   useEffect(() => {
@@ -113,6 +126,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isAccessActive) setAccessOpen(true);
   }, [isAccessActive]);
+
+  useEffect(() => {
+    if (isInventoryActive) setInventoryOpen(true);
+  }, [isInventoryActive]);
 
   const handleLogout = () => {
     logout();
@@ -270,6 +287,51 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {staffOpen && (
               <div className="ml-4 mt-1 space-y-0.5 border-l border-border/50 pl-3">
                 {staffSubItems.map(({ to, icon: Icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    onClick={() => setSidebarOpen(false)}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                      )
+                    }
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+          )}
+
+          {/* Inventory section — collapsible parent */}
+          {hasPermission(user, 'inventory') && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setInventoryOpen((v) => !v)}
+              className={cn(
+                'w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                isInventoryActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              )}
+            >
+              <Package className="h-4 w-4 shrink-0" />
+              <span className="flex-1 text-left">Inventory</span>
+              {inventoryOpen
+                ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+            </button>
+
+            {inventoryOpen && (
+              <div className="ml-4 mt-1 space-y-0.5 border-l border-border/50 pl-3">
+                {inventorySubItems.map(({ to, icon: Icon, label }) => (
                   <NavLink
                     key={to}
                     to={to}

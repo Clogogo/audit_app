@@ -1,7 +1,9 @@
 """Tests for the one-time is_admin -> role_id migration in
 database.py's _seed_roles_and_permissions(): existing users without a role
 yet must land on Admin (if is_admin was set) or Accountant (everyone else),
-matching their prior defacto access level."""
+matching their prior defacto access level. Also covers the permission
+reconciliation added alongside it — backfilling a newly-added permission
+key onto Admin/Accountant roles that already existed before it was added."""
 from database import _seed_roles_and_permissions
 from models import Role, User
 from utils.auth import hash_password
@@ -83,3 +85,52 @@ def test_a_user_registered_after_the_first_run_is_never_auto_assigned_a_role(db_
 
     db_session.refresh(new_user)
     assert new_user.role is None
+
+
+def test_reconciliation_backfills_new_permission_onto_existing_admin_and_accountant_roles(db_session):
+    # Simulates the real upgrade scenario: Admin/Accountant already existed
+    # before "inventory" was added to _PERMISSION_SEEDS. The role-creation
+    # loop only fires once per role name (`if name not in existing_role_names`),
+    # so without a reconciliation step, a role created before this feature
+    # shipped would never gain the new permission just because the app restarted.
+    _seed_roles_and_permissions()  # normal seed — inventory included from the start here
+
+    admin_role = db_session.query(Role).filter(Role.name == "Admin").first()
+    accountant_role = db_session.query(Role).filter(Role.name == "Accountant").first()
+
+    # Simulate the pre-upgrade state: strip "inventory" off both roles, as
+    # if they were seeded before this permission existed.
+    admin_role.permissions = [p for p in admin_role.permissions if p.key != "inventory"]
+    accountant_role.permissions = [p for p in accountant_role.permissions if p.key != "inventory"]
+    db_session.commit()
+    assert "inventory" not in {p.key for p in admin_role.permissions}
+    assert "inventory" not in {p.key for p in accountant_role.permissions}
+
+    _seed_roles_and_permissions()  # re-run: reconciliation should backfill it
+
+    db_session.refresh(admin_role)
+    db_session.refresh(accountant_role)
+    assert "inventory" in {p.key for p in admin_role.permissions}
+    assert "inventory" in {p.key for p in accountant_role.permissions}
+
+
+def test_reconciliation_never_grants_user_management_to_accountant(db_session):
+    _seed_roles_and_permissions()
+    accountant_role = db_session.query(Role).filter(Role.name == "Accountant").first()
+    assert "user_management" not in {p.key for p in accountant_role.permissions}
+
+    _seed_roles_and_permissions()  # re-run must not change this
+
+    db_session.refresh(accountant_role)
+    assert "user_management" not in {p.key for p in accountant_role.permissions}
+
+
+def test_reconciliation_does_not_touch_staff_role(db_session):
+    _seed_roles_and_permissions()
+    staff_role = db_session.query(Role).filter(Role.name == "Staff").first()
+    assert staff_role.permissions == []
+
+    _seed_roles_and_permissions()  # re-run must not grant Staff anything new
+
+    db_session.refresh(staff_role)
+    assert staff_role.permissions == []
