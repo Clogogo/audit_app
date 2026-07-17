@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { useNotification } from '../hooks';
+import { broadcastSchoolProfileUpdated, useNotification } from '../hooks';
 
 const MAX_LOGO_BYTES = 500 * 1024;
 
@@ -91,7 +91,7 @@ export function SchoolProfile() {
     try {
       const updated = await uploadSchoolLogo(file);
       setLogo(updated.logo ?? null);
-      window.dispatchEvent(new Event('school-profile-updated'));
+      broadcastSchoolProfileUpdated();
       success('Logo updated');
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -121,7 +121,7 @@ export function SchoolProfile() {
         website: form.website?.trim() || null,
         address: form.address?.trim() || null,
       });
-      window.dispatchEvent(new Event('school-profile-updated'));
+      broadcastSchoolProfileUpdated();
       success('School profile updated');
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;

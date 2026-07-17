@@ -36,8 +36,7 @@ import {
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { hasPermission } from '../lib/permissions';
-import { getSchoolProfile } from '../api/client';
-import type { SchoolProfile } from '../api/types';
+import { useSchoolProfile } from '../hooks';
 import { Button } from './ui/button';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -92,23 +91,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [schoolProfile, setSchoolProfile] = useState<SchoolProfile | null>(null);
 
-  // School branding (name + logo) for the sidebar/top-bar headers.
-  // Re-fetched when the School Profile page broadcasts an update.
-  useEffect(() => {
-    let cancelled = false;
-    const load = () =>
-      getSchoolProfile()
-        .then((p) => { if (!cancelled) setSchoolProfile(p); })
-        .catch(() => { /* branding is optional — fall back to app name */ });
-    load();
-    window.addEventListener('school-profile-updated', load);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('school-profile-updated', load);
-    };
-  }, []);
+  // School branding (name + logo) for the sidebar/top-bar headers — cached
+  // across Layout remounts so navigation never flashes stale branding.
+  const schoolProfile = useSchoolProfile();
 
   const schoolName = schoolProfile?.name?.trim() || 'FinanceAudit';
   const schoolLogo = schoolProfile?.logo ?? null;
