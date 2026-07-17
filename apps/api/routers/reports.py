@@ -141,7 +141,9 @@ def export_audit_report(
     from reportlab.lib.units import cm
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_JUSTIFY
 
-    SCHOOL = "Marvellous Lite Schools Ltd"
+    from routers.school_profile import get_branding
+    school_name, logo_bytes = get_branding(db)
+    SCHOOL = school_name or "Marvellous Lite Schools Ltd"
     NAVY   = colors.HexColor("#1e3a5f")
     LIGHT  = colors.HexColor("#f0f4ff")
     GREEN  = colors.HexColor("#16a34a")
@@ -248,8 +250,19 @@ def export_audit_report(
     E = []
 
     # PAGE 1 — Cover
+    E.append(Spacer(1, 2 * cm if logo_bytes else 3 * cm))
+    if logo_bytes:
+        from reportlab.platypus import Image as RLImage
+        from reportlab.lib.utils import ImageReader
+        iw, ih = ImageReader(io.BytesIO(logo_bytes)).getSize()
+        logo_h = 2.8 * cm
+        logo_w = logo_h * (iw / ih)
+        if logo_w > 6 * cm:  # cap wide logos so they don't dominate the cover
+            logo_w, logo_h = 6 * cm, 6 * cm * (ih / iw)
+        logo_img = RLImage(io.BytesIO(logo_bytes), width=logo_w, height=logo_h)
+        logo_img.hAlign = "CENTER"
+        E += [logo_img, Spacer(1, 0.6 * cm)]
     E += [
-        Spacer(1, 3 * cm),
         Paragraph(SCHOOL, S["cover_school"]),
         HRFlowable(width="60%", thickness=2, color=NAVY, spaceBefore=4, spaceAfter=20),
         Paragraph("INDEPENDENT AUDITOR'S REPORT", S["cover_title"]),

@@ -59,6 +59,8 @@ import type {
   StockAdjustmentIn,
   SalesSummary,
   ItemReport,
+  SchoolProfile,
+  SchoolProfileIn,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -624,3 +626,20 @@ export const getItemsReport = (params?: { start_date?: string; end_date?: string
 
 export const adjustStock = (body: StockAdjustmentIn) =>
   api.post<StockMovement>('/inventory/movements/adjust', body).then(unwrap);
+
+// School Profile — singleton school identity (name, contacts, logo)
+export const getSchoolProfile = () =>
+  api.get<SchoolProfile>('/school-profile').then(unwrap);
+
+export const updateSchoolProfile = (body: SchoolProfileIn) =>
+  api.put<SchoolProfile>('/school-profile', body).then(unwrap);
+
+export const uploadSchoolLogo = (file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api
+    .post<SchoolProfile>('/school-profile/logo', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    .then(unwrap);
+};
