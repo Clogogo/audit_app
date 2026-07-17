@@ -10,7 +10,7 @@ import {
   Pencil,
 } from 'lucide-react';
 import { computePayroll, processPayroll, resetPayroll } from '../api/client';
-import type { PayrollLine, PayrollLineIn } from '../api/types';
+import type { PayrollEntryOut, PayrollLine, PayrollLineIn } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { TransactionPickerModal } from '../components/TransactionPickerModal';
@@ -58,6 +58,9 @@ export function Payroll() {
   const [error, setError] = useState<string | null>(null);
   const [missingTx, setMissingTx] = useState<string[]>([]);
   const [success, setSuccess] = useState<string | null>(null);
+  // Notices about real paid amounts (excess folded into bonus / underpayment)
+  // — survives the post-process reload, cleared when the month changes.
+  const [payNotices, setPayNotices] = useState<string[]>([]);
 
   // Per-row overrides for gross, bonus, and other_deductions
   const [overrides, setOverrides] = useState<Record<number, { gross: number; bonus: number; other: number }>>({});
@@ -101,8 +104,30 @@ export function Payroll() {
   useEffect(() => {
     const stored = localStorage.getItem(`payroll_skip_${year}_${month}`);
     setSkipped(stored ? (JSON.parse(stored) as Record<number, boolean>) : {});
+    setPayNotices([]);
     load();
   }, [year, month]);
+
+  // Notify how each entry's real bank amount compared to the computed net:
+  // excess payments were captured into Bonus; underpayments are flagged only.
+  const buildPayNotices = (entries: PayrollEntryOut[]) => {
+    const notices: string[] = [];
+    for (const e of entries) {
+      const excess = e.bonus_excess ?? 0;
+      if (excess > 0.009) {
+        notices.push(
+          `${e.full_name}: bank paid ${formatCurrency(e.paid_amount ?? 0)} — ` +
+          `${formatCurrency(excess)} above the computed net was added to Bonus.`
+        );
+      } else if (e.paid_amount != null && e.paid_amount < e.net_salary - 0.009) {
+        notices.push(
+          `${e.full_name}: bank paid ${formatCurrency(e.paid_amount)}, which is ` +
+          `${formatCurrency(e.net_salary - e.paid_amount)} less than the computed net of ${formatCurrency(e.net_salary)}.`
+        );
+      }
+    }
+    setPayNotices(notices);
+  };
 
   const isSkipped = (l: PayrollLine) => !l.is_paid && !!skipped[l.staff_id];
 
@@ -143,7 +168,8 @@ export function Payroll() {
 
     setProcessing(true);
     try {
-      await processPayroll(year, month, payload);
+      const entries = await processPayroll(year, month, payload);
+      buildPayNotices(entries);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
       setManualLink({});
       load(true); // preserve overrides and skipped state
@@ -195,7 +221,8 @@ export function Payroll() {
         other_deductions: getOther(l),
         transaction_id: manualLink[l.staff_id]?.transactionId,
       }));
-      await processPayroll(year, month, payload);
+      const entries = await processPayroll(year, month, payload);
+      buildPayNotices(entries);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
       setManualLink({});
       load(true); // preserve overrides and skipped state
@@ -295,7 +322,7 @@ export function Payroll() {
                       <span>{name}</span>
                       {linked ? (
                         <span className="inline-flex items-center gap-1.5">
-                          <span className="text-green-700">✓ linked to {linked.vendor}</span>
+                          <span className="text-green-700 dark:text-green-400">✓ linked to {linked.vendor}</span>
                           <button
                             type="button"
                             onClick={() => staffLine && setManualLink((m) => {
@@ -372,9 +399,21 @@ export function Payroll() {
       })()}
 
       {success && (
-        <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 dark:border-green-900/50 dark:bg-green-950/20 px-4 py-3 text-sm text-green-700 dark:text-green-300">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           {success}
+        </div>
+      )}
+
+      {payNotices.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          <div className="flex items-center gap-2 font-medium mb-1">
+            <Info className="h-4 w-4 shrink-0" />
+            Real paid amounts differed from the computed net pay:
+          </div>
+          <ul className="list-disc list-inside space-y-0.5 text-xs">
+            {payNotices.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
         </div>
       )}
 
@@ -470,6 +509,7 @@ export function Payroll() {
                     <th className="text-right py-2 pr-3 font-medium">Advance Deduction</th>
                     <th className="text-right py-2 pr-3 font-medium">Other Deductions</th>
                     <th className="text-right py-2 pr-3 font-medium">Net Pay</th>
+                    <th className="text-right py-2 pr-3 font-medium">Amount Paid</th>
                     <th className="text-center py-2 font-medium">Status</th>
                   </tr>
                 </thead>
@@ -481,7 +521,7 @@ export function Payroll() {
                       <tr
                         key={l.staff_id}
                         className={
-                          l.is_paid ? 'bg-green-50/30' :
+                          l.is_paid ? 'bg-green-50/30 dark:bg-green-950/10' :
                           skippedRow ? 'opacity-40 bg-muted/10' : ''
                         }
                       >
@@ -533,9 +573,26 @@ export function Payroll() {
                         <td className={`py-3 pr-3 text-right font-semibold ${skippedRow ? 'line-through text-muted-foreground' : 'text-primary'}`}>
                           {formatCurrency(getNet(l))}
                         </td>
+                        <td className="py-3 pr-3 text-right">
+                          {l.is_paid && l.paid_amount != null ? (
+                            Math.abs(l.paid_amount - l.net_salary) > 0.009 ? (
+                              <span
+                                className="inline-flex items-center gap-1 font-semibold text-amber-600 dark:text-amber-400"
+                                title={`Bank transaction amount differs from computed net pay (${formatCurrency(l.net_salary)})`}
+                              >
+                                <AlertCircle className="h-3.5 w-3.5" />
+                                {formatCurrency(l.paid_amount)}
+                              </span>
+                            ) : (
+                              <span className="font-semibold">{formatCurrency(l.paid_amount)}</span>
+                            )
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
                         <td className="py-3 text-center">
                           {l.is_paid ? (
-                            <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                            <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-950/40 px-2 py-0.5 rounded-full">
                               <CheckCircle2 className="h-3 w-3" />
                               Paid
                             </span>
