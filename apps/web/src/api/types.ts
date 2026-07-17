@@ -860,6 +860,9 @@ export interface PayrollLine {
   is_paid: boolean;
   paid_date: string | null;
   entry_id: number | null;
+  transaction_id?: number | null;
+  /** Actual amount of the linked bank transaction (paid rows) */
+  paid_amount?: number | null;
 }
 
 export interface PayrollLineIn {
@@ -889,6 +892,10 @@ export interface PayrollEntryOut {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  /** Actual amount of the linked bank transaction */
+  paid_amount?: number | null;
+  /** Amount added to bonus because the bank paid more than computed net */
+  bonus_excess?: number;
 }
 
 // ── School Assets ─────────────────────────────────────────────────────────────
