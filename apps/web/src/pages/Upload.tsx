@@ -236,8 +236,8 @@ export function Upload() {
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="w-full max-w-lg space-y-6 text-center">
           {/* Success icon */}
-          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-100 ring-8 ring-green-50">
-            <CheckCircle className="h-10 w-10 text-green-600" />
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-100 ring-8 ring-green-50 dark:bg-green-950/40 dark:ring-green-950/20">
+            <CheckCircle className="h-10 w-10 text-green-600 dark:text-green-400" />
           </div>
 
           <div>
@@ -245,21 +245,21 @@ export function Upload() {
             {importResult ? (
               <div className="mt-3 flex flex-wrap justify-center gap-3">
                 {importResult.saved > 0 && (
-                  <div className="rounded-xl bg-green-50 border border-green-200 px-4 py-3 text-center">
-                    <p className="text-2xl font-bold text-green-700">{importResult.saved}</p>
-                    <p className="text-xs text-green-600 font-medium mt-0.5">Transaction{importResult.saved !== 1 ? 's' : ''} Saved</p>
+                  <div className="rounded-xl bg-green-50 border border-green-200 dark:bg-green-950/20 dark:border-green-900/50 px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-green-700 dark:text-green-300">{importResult.saved}</p>
+                    <p className="text-xs text-green-600 dark:text-green-400 font-medium mt-0.5">Transaction{importResult.saved !== 1 ? 's' : ''} Saved</p>
                   </div>
                 )}
                 {importResult.reconciled > 0 && (
-                  <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-center">
-                    <p className="text-2xl font-bold text-amber-700">{importResult.reconciled}</p>
-                    <p className="text-xs text-amber-600 font-medium mt-0.5">Reconciled</p>
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/50 px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{importResult.reconciled}</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400 font-medium mt-0.5">Reconciled</p>
                   </div>
                 )}
                 {importResult.duplicates_flagged > 0 && (
-                  <div className="rounded-xl bg-yellow-50 border border-yellow-200 px-4 py-3 text-center">
-                    <p className="text-2xl font-bold text-yellow-700">{importResult.duplicates_flagged}</p>
-                    <p className="text-xs text-yellow-600 font-medium mt-0.5">Duplicate{importResult.duplicates_flagged !== 1 ? 's' : ''} Flagged</p>
+                  <div className="rounded-xl bg-yellow-50 border border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-900/50 px-4 py-3 text-center">
+                    <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300">{importResult.duplicates_flagged}</p>
+                    <p className="text-xs text-yellow-600 dark:text-yellow-400 font-medium mt-0.5">Duplicate{importResult.duplicates_flagged !== 1 ? 's' : ''} Flagged</p>
                   </div>
                 )}
                 {importResult.duplicates_resolved > 0 && (
@@ -373,10 +373,10 @@ export function Upload() {
               </CardContent>
             </Card>
 
-            <Card className="border-0 bg-amber-50 border-amber-100">
+            <Card className="border-0 bg-amber-50 border-amber-100 dark:bg-amber-950/20 dark:border-amber-900/50">
               <CardContent className="py-4 px-5">
-                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1.5">Tips</p>
-                <ul className="text-xs text-amber-800 space-y-1.5 list-disc list-inside">
+                <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wide mb-1.5">Tips</p>
+                <ul className="text-xs text-amber-800 dark:text-amber-200/90 space-y-1.5 list-disc list-inside">
                   <li>Bank account selection is <strong>required</strong> before scanning</li>
                   <li>File needs <strong>Date</strong>, <strong>Description</strong> and <strong>Amount</strong> (or Debit/Credit) columns</li>
                   <li>You can edit any field before saving</li>
@@ -513,10 +513,10 @@ export function Upload() {
             <div className={`rounded-xl border px-4 py-3 space-y-2.5 ${
               validationReport
                 ? validationReport.error_count > 0
-                  ? 'border-red-200 bg-red-50/60'
+                  ? 'border-red-200 bg-red-50/60 dark:border-red-900/50 dark:bg-red-950/20'
                   : validationReport.warning_count > 0
-                    ? 'border-amber-200 bg-amber-50/60'
-                    : 'border-green-200 bg-green-50/60'
+                    ? 'border-amber-200 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20'
+                    : 'border-green-200 bg-green-50/60 dark:border-green-900/50 dark:bg-green-950/20'
                 : 'border-muted bg-muted/30'
             }`}>
               <div className="flex items-center gap-2">
@@ -539,17 +539,17 @@ export function Upload() {
                 {validationReport && (
                   <div className="ml-auto flex gap-1.5">
                     {validationReport.error_count > 0 && (
-                      <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 border border-red-200 text-xs px-2 py-0.5 font-medium">
+                      <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 border border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900/50 text-xs px-2 py-0.5 font-medium">
                         {validationReport.error_count} error{validationReport.error_count !== 1 ? 's' : ''}
                       </span>
                     )}
                     {validationReport.warning_count > 0 && (
-                      <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-xs px-2 py-0.5 font-medium">
+                      <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900/50 text-xs px-2 py-0.5 font-medium">
                         {validationReport.warning_count} warning{validationReport.warning_count !== 1 ? 's' : ''}
                       </span>
                     )}
                     {validationReport.error_count === 0 && validationReport.warning_count === 0 && (
-                      <span className="inline-flex items-center rounded-full bg-green-100 text-green-700 border border-green-200 text-xs px-2 py-0.5 font-medium">
+                      <span className="inline-flex items-center rounded-full bg-green-100 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-900/50 text-xs px-2 py-0.5 font-medium">
                         All clear
                       </span>
                     )}
@@ -569,19 +569,19 @@ export function Upload() {
                       }
                       <div className="flex-1 min-w-0">
                         <span className={`font-medium ${
-                          check.status === 'pass' ? 'text-green-700' :
-                          check.status === 'warn' ? 'text-amber-700' : 'text-red-700'
+                          check.status === 'pass' ? 'text-green-700 dark:text-green-300' :
+                          check.status === 'warn' ? 'text-amber-700 dark:text-amber-300' : 'text-red-700 dark:text-red-300'
                         }`}>{check.name}</span>
                         <span className={`ml-1.5 text-xs ${
-                          check.status === 'pass' ? 'text-green-600' :
-                          check.status === 'warn' ? 'text-amber-600' : 'text-red-600'
+                          check.status === 'pass' ? 'text-green-600 dark:text-green-400/90' :
+                          check.status === 'warn' ? 'text-amber-600 dark:text-amber-400/90' : 'text-red-600 dark:text-red-400/90'
                         }`}>— {check.message}</span>
                       </div>
                       {check.count > 0 && (
                         <span className={`shrink-0 inline-flex items-center rounded-full border text-xs px-2 py-0.5 font-medium ${
                           check.status === 'warn'
-                            ? 'bg-amber-50 text-amber-700 border-amber-300'
-                            : 'bg-red-50 text-red-700 border-red-300'
+                            ? 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                            : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
                         }`}>
                           {check.count} affected
                         </span>
@@ -592,7 +592,7 @@ export function Upload() {
               )}
 
               {validationReport && !validationReport.can_import && (
-                <p className="text-xs text-red-600 font-medium mt-1">
+                <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-1">
                   Resolve the errors above before importing. Warnings can be reviewed but won't block import.
                 </p>
               )}
@@ -633,14 +633,14 @@ export function Upload() {
                       return (
                         <tr key={row._key} className={`border-b last:border-0 transition-colors ${
                           locked
-                            ? 'bg-green-50/60 opacity-70'
+                            ? 'bg-green-50/60 dark:bg-green-950/20 opacity-70'
                             : row._selected
-                              ? 'bg-white hover:bg-primary/5'
+                              ? 'bg-card hover:bg-primary/5'
                               : 'bg-muted/20 opacity-50'
                         }`}>
                           <td className="p-2.5 text-center">
                             {locked
-                              ? <span title="Already reconciled" className="text-green-600 text-xs font-bold">✓</span>
+                              ? <span title="Already reconciled" className="text-green-600 dark:text-green-400 text-xs font-bold">✓</span>
                               : <input type="checkbox" aria-label="Select row" checked={row._selected} onChange={() => toggle(row._key)} className="rounded" />}
                           </td>
                           <td className="p-1.5">
@@ -664,7 +664,7 @@ export function Upload() {
                           </td>
                           <td className="p-1.5">
                             {locked
-                              ? <Badge variant="outline" className="text-green-600 border-green-300 text-xs">reconciled</Badge>
+                              ? <Badge variant="outline" className="text-green-600 border-green-300 dark:text-green-400 dark:border-green-800 text-xs">reconciled</Badge>
                               : (
                               <select title="Category" value={row.category}
                                 onChange={(e) => update(row._key, 'category', e.target.value)}

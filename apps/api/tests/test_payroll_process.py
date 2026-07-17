@@ -43,9 +43,12 @@ def test_fallback_matches_different_first_name_when_category_and_amount_agree(cl
     entry = resp.json()[0]
     assert entry["net_salary"] == 15020.0
     assert entry["transaction_id"] == tx.id
+    # Exact payment — real amount captured, nothing folded into bonus
+    assert entry["paid_amount"] == 15020.0
+    assert entry["bonus_excess"] == 0.0
 
 
-def test_fallback_accepts_amount_above_net_pay_for_bundled_iou(client, db_session):
+def test_fallback_accepts_amount_above_net_pay_and_folds_excess_into_bonus(client, db_session):
     staff = _create_staff(db_session, "Mrs Daniel Eze", monthly_gross=63000.0)
     tx = _create_salary_transaction(db_session, "CHIOMA UGOCHI EZE", amount=63000.0, day="2026-01-30")
 
@@ -55,9 +58,14 @@ def test_fallback_accepts_amount_above_net_pay_for_bundled_iou(client, db_sessio
     })
     assert resp.status_code == 200, resp.text
     entry = resp.json()[0]
-    # net pay (50000) <= transaction amount (63000, salary + bundled IOU) -> matched
-    assert entry["net_salary"] == 50000.0
+    # net pay (50000) <= transaction amount (63000) -> matched, and the
+    # 13000 the bank actually paid on top is captured as bonus so the
+    # payroll entry reflects the real amount paid.
     assert entry["transaction_id"] == tx.id
+    assert entry["paid_amount"] == 63000.0
+    assert entry["bonus"] == 13000.0
+    assert entry["bonus_excess"] == 13000.0
+    assert entry["net_salary"] == 63000.0
 
 
 @pytest.mark.parametrize(
@@ -98,6 +106,48 @@ def test_manual_transaction_id_overrides_automatic_matching(client, db_session):
     assert resp.status_code == 200, resp.text
     entry = resp.json()[0]
     assert entry["transaction_id"] == tx.id
+    # Underpayment is captured but never auto-adjusted — we can't guess
+    # which deduction explains the gap, so the figures stay as computed.
+    assert entry["paid_amount"] == 500.0
+    assert entry["bonus"] == 0.0
+    assert entry["bonus_excess"] == 0.0
+    assert entry["net_salary"] == 15020.0
+
+
+def test_manual_link_with_higher_amount_folds_excess_into_bonus(client, db_session):
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    tx = _create_salary_transaction(db_session, "SOMEONE UNRELATED", amount=20000.0, day="2026-01-30")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "bonus": 1000.0, "transaction_id": tx.id}],
+    })
+    assert resp.status_code == 200, resp.text
+    entry = resp.json()[0]
+    # computed net = 15020 + 1000 = 16020; paid 20000 → excess 3980 → bonus
+    assert entry["paid_amount"] == 20000.0
+    assert entry["bonus_excess"] == 3980.0
+    assert entry["bonus"] == 4980.0
+    assert entry["net_salary"] == 20000.0
+
+
+def test_compute_returns_real_paid_amount_for_processed_entries(client, db_session):
+    staff = _create_staff(db_session, "Mrs Daniel Eze", monthly_gross=63000.0)
+    tx = _create_salary_transaction(db_session, "CHIOMA UGOCHI EZE", amount=63000.0, day="2026-01-30")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 50000.0, "bonus": 0.0}],
+    })
+    assert resp.status_code == 200, resp.text
+
+    resp = client.get("/payroll/compute", params={"year": 2026, "month": 1})
+    assert resp.status_code == 200
+    line = next(l for l in resp.json() if l["staff_id"] == staff.id)
+    assert line["is_paid"] is True
+    assert line["transaction_id"] == tx.id
+    assert line["paid_amount"] == 63000.0
+    assert line["net_salary"] == 63000.0  # frozen record includes the excess
 
 
 def test_manual_transaction_id_rejects_when_claimed_by_another_staff(client, db_session):

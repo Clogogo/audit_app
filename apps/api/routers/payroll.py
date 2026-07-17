@@ -218,6 +218,8 @@ class PayrollLineOut(BaseModel):
     is_paid: bool
     paid_date: Optional[date]
     entry_id: Optional[int]  # None if not yet processed
+    transaction_id: Optional[int] = None  # linked bank transaction (paid rows)
+    paid_amount: Optional[float] = None   # actual amount of the linked transaction
 
 
 class ProcessRequest(BaseModel):
@@ -244,6 +246,10 @@ class PayrollEntryOut(BaseModel):
     notes: Optional[str]
     created_at: datetime
     updated_at: datetime
+    paid_amount: Optional[float] = None  # actual amount of the linked transaction
+    # Amount added to bonus because the linked transaction paid more than the
+    # computed net — transient per-process info so the UI can notify the user.
+    bonus_excess: float = 0.0
 
     class Config:
         from_attributes = True
@@ -303,6 +309,7 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 is_paid=bool(existing.is_paid),
                 paid_date=existing.paid_date,
                 entry_id=existing.id,
+                transaction_id=existing.transaction_id,
             ))
         elif existing:
             # Not yet paid (e.g. skipped, or reset via "Edit Payroll") — the
@@ -352,6 +359,18 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 paid_date=None,
                 entry_id=None,
             ))
+
+    # Attach the real paid amount from each linked bank transaction in one
+    # batched query — the "amount actually paid" the payroll table displays.
+    linked_ids = [l.transaction_id for l in result if l.transaction_id]
+    if linked_ids:
+        amounts = {
+            t.id: round(t.amount, 2)
+            for t in db.query(Transaction).filter(Transaction.id.in_(linked_ids)).all()
+        }
+        for l in result:
+            if l.transaction_id:
+                l.paid_amount = amounts.get(l.transaction_id)
 
     return result
 
@@ -508,12 +527,35 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     # ── Phase 2: all transactions verified — upsert payroll entries ───────────
     saved: list[PayrollEntry] = []
 
+    excess_by_staff: dict[int, float] = {}
+    paid_amount_by_staff: dict[int, float] = {}
+
     for line in req.lines:
         staff = db.get(Staff, line.staff_id)
         loan_ded = loan_ded_by_staff[line.staff_id]
         advance_ded = advance_ded_by_staff[line.staff_id]
         net = net_by_staff[line.staff_id]
         pay_date = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
+
+        # Capture the REAL amount paid from the linked bank transaction. When
+        # the bank paid more than the computed net (extra allowance, rounding,
+        # or a hand-picked transaction), fold the excess into bonus so the
+        # payroll entry reflects what actually left the account — net then
+        # equals the transaction amount. Underpayments are never auto-adjusted
+        # (we can't guess which deduction explains the gap); the UI surfaces
+        # them via paid_amount instead.
+        linked_tx = db.get(Transaction, tx_map[line.staff_id])
+        paid_amount = round(linked_tx.amount, 2) if linked_tx else None
+        bonus = line.bonus
+        excess = 0.0
+        if paid_amount is not None:
+            paid_amount_by_staff[line.staff_id] = paid_amount
+            diff = round(paid_amount - net, 2)
+            if diff > 0.01:
+                excess = diff
+                bonus = round(line.bonus + diff, 2)
+                net = round(net + diff, 2)
+        excess_by_staff[line.staff_id] = excess
 
         entry: Optional[PayrollEntry] = (
             db.query(PayrollEntry)
@@ -533,7 +575,7 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
             db.add(entry)
 
         entry.gross_salary   = line.gross_salary
-        entry.bonus          = line.bonus
+        entry.bonus          = bonus
         entry.loan_deduction = loan_ded
         entry.advance_deduction = advance_ded
         entry.other_deductions = line.other_deductions
@@ -574,6 +616,8 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
             notes=e.notes,
             created_at=e.created_at,
             updated_at=e.updated_at,
+            paid_amount=paid_amount_by_staff.get(e.staff_id),
+            bonus_excess=excess_by_staff.get(e.staff_id, 0.0),
         ))
     return result
 
@@ -609,6 +653,11 @@ def get_payroll_entries(year: int, month: int, db: Session = Depends(get_db)):
         .filter(PayrollEntry.period_year == year, PayrollEntry.period_month == month)
         .all()
     )
+    linked_ids = [e.transaction_id for e in entries if e.transaction_id]
+    amounts = {
+        t.id: round(t.amount, 2)
+        for t in db.query(Transaction).filter(Transaction.id.in_(linked_ids)).all()
+    } if linked_ids else {}
     result = []
     for e in entries:
         s = db.get(Staff, e.staff_id)
@@ -630,5 +679,6 @@ def get_payroll_entries(year: int, month: int, db: Session = Depends(get_db)):
             notes=e.notes,
             created_at=e.created_at,
             updated_at=e.updated_at,
+            paid_amount=amounts.get(e.transaction_id) if e.transaction_id else None,
         ))
     return result
