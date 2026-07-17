@@ -478,3 +478,36 @@ class BankAccountReport(BaseModel):
     first_transaction_date: Optional[date]
     last_transaction_date: Optional[date]
     currency: str
+
+
+# ── School Profile ────────────────────────────────────────────────────────────
+
+class SchoolProfileIn(BaseModel):
+    """Editable text fields of the school profile (logo uploads separately)."""
+    name: str
+    tagline: Optional[str] = None
+    phone: Optional[str] = None
+    website: Optional[str] = None
+    address: Optional[str] = None
+    country: str = "Nigeria"
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Name of institute is required")
+        return v
+
+
+class SchoolProfileOut(BaseModel):
+    """Profile as served to the app. `logo` is a ready-to-render data URI
+    (data:<mime>;base64,<data>) or None when no logo has been uploaded."""
+    name: str
+    tagline: Optional[str] = None
+    phone: Optional[str] = None
+    website: Optional[str] = None
+    address: Optional[str] = None
+    country: str = "Nigeria"
+    logo: Optional[str] = None
+    updated_at: Optional[datetime] = None

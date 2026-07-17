@@ -36,6 +36,7 @@ import {
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { hasPermission } from '../lib/permissions';
+import { useSchoolProfile } from '../hooks';
 import { Button } from './ui/button';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -80,6 +81,7 @@ const inventorySubItems = [
 ];
 
 const accessSubItems = [
+  { to: '/school-profile', icon: Building, label: 'School Profile' },
   { to: '/user-management', icon: ShieldCheck, label: 'User Management' },
   { to: '/role-management', icon: Shield, label: 'Role Management' },
 ];
@@ -89,6 +91,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // School branding (name + logo) for the sidebar/top-bar headers — cached
+  // across Layout remounts so navigation never flashes stale branding.
+  const schoolProfile = useSchoolProfile();
+
+  const schoolName = schoolProfile?.name?.trim() || 'FinanceAudit';
+  const schoolLogo = schoolProfile?.logo ?? null;
 
   const visibleTopNavItems = topNavItems.filter(
     ({ to }) => to === '/' || hasPermission(user, 'transactions')
@@ -102,7 +111,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isBankingActive = ['/banks', '/upload', '/reconciliation', '/reports', '/bank-reports'].some(
     (p) => location.pathname === p
   );
-  const isAccessActive = ['/user-management', '/role-management'].includes(location.pathname);
+  const isAccessActive = ['/school-profile', '/user-management', '/role-management'].includes(location.pathname);
   const isInventoryActive = location.pathname.startsWith('/inventory');
   const [taxOpen, setTaxOpen] = useState(isTaxActive);
   const [staffOpen, setStaffOpen] = useState(isStaffActive);
@@ -149,8 +158,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
     return (
       <>
         <div className="flex items-center gap-2 px-6 py-5 border-b">
-          <Wallet className="h-6 w-6 text-primary" />
-          <span className="font-bold text-lg">FinanceAudit</span>
+          {schoolLogo ? (
+            <img src={schoolLogo} alt="School logo" className="h-8 w-8 shrink-0 rounded-full object-contain" />
+          ) : (
+            <Wallet className="h-6 w-6 text-primary" />
+          )}
+          <div className="min-w-0">
+            <span className="block truncate font-bold text-lg">{schoolName}</span>
+            {schoolProfile?.tagline && (
+              <span className="block truncate text-[10px] uppercase tracking-wide text-muted-foreground">
+                {schoolProfile.tagline}
+              </span>
+            )}
+          </div>
         </div>
         <nav className="flex-1 p-4 space-y-1">
           {visibleTopNavItems.map(({ to, icon: Icon, label }) => (
@@ -491,9 +511,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <div className="flex items-center gap-2 flex-1">
-            <Wallet className="h-5 w-5 text-primary" />
-            <span className="font-bold">FinanceAudit</span>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            {schoolLogo ? (
+              <img src={schoolLogo} alt="School logo" className="h-6 w-6 shrink-0 rounded-full object-contain" />
+            ) : (
+              <Wallet className="h-5 w-5 text-primary" />
+            )}
+            <span className="truncate font-bold">{schoolName}</span>
           </div>
           <ThemeToggle />
         </header>
