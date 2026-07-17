@@ -470,6 +470,27 @@ class StockMovement(Base):
     transaction: Mapped[Optional["Transaction"]] = relationship("Transaction")
 
 
+class SchoolProfile(Base):
+    """Singleton (id=1) holding the school's identity — name, tagline,
+    contact details, and logo. The logo is stored in the database as base64
+    (not on disk) because the production filesystem is ephemeral; the 500KB
+    upload cap keeps the row small. Consumed by the app header and PDF
+    report covers."""
+    __tablename__ = "school_profile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    tagline: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    website: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    country: Mapped[str] = mapped_column(String(100), default="Nigeria")
+    logo_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # base64, no data: prefix
+    logo_mime: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     __table_args__ = (

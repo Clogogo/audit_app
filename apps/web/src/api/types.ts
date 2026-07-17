@@ -1079,3 +1079,25 @@ export interface StockAdjustmentIn {
   date: string;
   notes?: string | null;
 }
+// ── School Profile ────────────────────────────────────────────────────────────
+
+export interface SchoolProfile {
+  name: string;
+  tagline?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  address?: string | null;
+  country: string;
+  /** Ready-to-render data URI (data:image/png;base64,...) or null */
+  logo?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SchoolProfileIn {
+  name: string;
+  tagline?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  address?: string | null;
+  country: string;
+}

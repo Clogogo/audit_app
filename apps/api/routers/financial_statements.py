@@ -809,11 +809,13 @@ def _run_computation(db: Session, start_date: str, end_date: str, company: str) 
 def get_computed_statements(
     start_date: str = Query(..., description="Start date YYYY-MM-DD"),
     end_date: str = Query(..., description="End date YYYY-MM-DD"),
-    company: Optional[str] = Query("School Financial Statements", description="Entity name"),
+    company: Optional[str] = Query(None, description="Entity name (defaults to the school profile name)"),
     db: Session = Depends(get_db),
 ):
     """Compute P&L and balance sheet from transactions + asset register for a custom period."""
-    co = company or "School Financial Statements"
+    from routers.school_profile import get_branding
+    profile_name, _ = get_branding(db)
+    co = company or profile_name or "School Financial Statements"
     cache_key = f"{start_date}:{end_date}:{co}"
     if cached := _cache_get(cache_key):
         return JSONResponse(content=cached, headers={"Cache-Control": "max-age=10, stale-while-revalidate=20"})
@@ -826,11 +828,13 @@ def get_computed_statements(
 def download_computed_statements(
     start_date: str = Query(..., description="Start date YYYY-MM-DD"),
     end_date: str = Query(..., description="End date YYYY-MM-DD"),
-    company: Optional[str] = Query("School Financial Statements"),
+    company: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     """Download the computed financial statements as a formatted Excel workbook."""
-    data = _run_computation(db, start_date, end_date, company or "School Financial Statements")
+    from routers.school_profile import get_branding
+    profile_name, _ = get_branding(db)
+    data = _run_computation(db, start_date, end_date, company or profile_name or "School Financial Statements")
     buf = _generate_excel(data)
     filename = f"Financial_Statements_{start_date}_to_{end_date}.xlsx"
     return StreamingResponse(
