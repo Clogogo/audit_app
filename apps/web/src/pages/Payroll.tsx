@@ -201,6 +201,14 @@ export function Payroll() {
   const totalOther   = activeLines.reduce((s, l) => s + getOther(l), 0);
   const totalNet     = activeLines.reduce((s, l) => s + getNet(l), 0);
 
+  // Actual bank total — sum of linked transaction amounts over paid rows.
+  // This is the accurate "money that left the account" figure; Total Net Pay
+  // is the computed one and can differ (underpayments, pre-feature months).
+  const paidRows = activeLines.filter((l) => l.is_paid && l.paid_amount != null);
+  const totalPaid = paidRows.reduce((s, l) => s + (l.paid_amount ?? 0), 0);
+  const totalNetOfPaidRows = paidRows.reduce((s, l) => s + l.net_salary, 0);
+  const paidTotalDiffers = paidRows.length > 0 && Math.abs(totalPaid - totalNetOfPaidRows) > 0.009;
+
   const skippedCount = lines.filter((l) => isSkipped(l)).length;
   // Payroll is "fully processed" when every non-skipped row is paid
   const isProcessed = activeLines.length > 0 && activeLines.every((l) => l.is_paid);
@@ -425,7 +433,7 @@ export function Payroll() {
       )}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">Total Gross</p>
@@ -461,6 +469,22 @@ export function Payroll() {
           <CardContent className="pt-4 pb-4">
             <p className="text-xs text-primary-foreground/70 uppercase tracking-wide">Total Net Pay</p>
             <p className="text-lg font-bold mt-0.5 font-display">{formatCurrency(totalNet)}</p>
+          </CardContent>
+        </Card>
+        {/* Total Amount Paid — the accurate figure: sum of linked bank
+            transaction amounts across processed rows */}
+        <Card>
+          <CardContent className="pt-4 pb-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Total Amount Paid</p>
+            <p className="text-lg font-bold mt-0.5 text-income">
+              {paidRows.length > 0 ? formatCurrency(totalPaid) : '—'}
+            </p>
+            {paidTotalDiffers && (
+              <p className="text-[11px] mt-0.5 text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3 shrink-0" />
+                {formatCurrency(Math.abs(totalPaid - totalNetOfPaidRows))} {totalPaid > totalNetOfPaidRows ? 'above' : 'below'} computed net
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
