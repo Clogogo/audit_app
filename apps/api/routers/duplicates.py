@@ -20,10 +20,13 @@ router = APIRouter(prefix="/duplicates", tags=["duplicates"], dependencies=[Depe
 # Amount tolerance to absorb floating-point rounding only (not a fuzzy window).
 _AMOUNT_EPSILON = 0.01
 
-# Recurring per-transaction fees / system entries that carry no unique reference
-# in their description. Two of these on the same day at the same amount are
-# legitimately two separate charges (e.g. ₦50 stamp duty on each of several
-# transfers that day), not a re-imported duplicate — never flag them.
+# Recurring per-transaction fees / system entries whose description alone
+# never proves duplication. Two of these on the same day at the same amount
+# are usually legitimately two separate charges (e.g. ₦50 stamp duty on each
+# of several transfers that day) — but a re-imported statement produces the
+# exact same pattern. Description/amount/date can't tell the two cases
+# apart; only the bank's own reference code can, so these are flagged as
+# duplicates only when a reference is shared (see detect_duplicates_for_transaction).
 _RECURRING_FEE_KEYWORDS = (
     "stamp duty",
     "stamp duties",
@@ -71,14 +74,21 @@ def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tupl
         - Bank
 
     Text fields are compared case-insensitively after trimming whitespace.
-    Matching is fully deterministic — no references, fuzzy scoring, vendor
-    heuristics, or date windows.
+    Matching is fully deterministic — no fuzzy scoring, vendor heuristics, or
+    date windows. Bank statement references are used only to disambiguate
+    field-identical candidates, never as the primary match key.
 
     Returns a list of (transaction, 1.0) tuples. Confidence is always 1.0
     because every reported match is exact. The signature and return shape are
     unchanged so all existing callers keep working.
     """
-    if _is_recurring_fee(tx.description):
+    is_recurring = _is_recurring_fee(tx.description)
+    tx_refs = _references_for(db, tx)
+
+    # A recurring fee with no bank reference at all can never be proven a
+    # duplicate (see the reference-required branch below) — skip the query
+    # entirely rather than building candidates that can't ever match.
+    if is_recurring and not tx_refs:
         return []
 
     # Narrow candidates in SQL on the cheap exact keys (date + type + bank),
@@ -99,8 +109,6 @@ def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tupl
         .all()
     )
 
-    tx_refs = _references_for(db, tx)
-
     matches: list[tuple[Transaction, float]] = []
     for candidate in candidates:
         if abs(candidate.amount - tx.amount) > _AMOUNT_EPSILON:
@@ -114,11 +122,22 @@ def detect_duplicates_for_transaction(db: Session, tx: Transaction) -> list[tupl
         if _norm(candidate.bank) != _norm(tx.bank):
             continue
 
-        # Both sides carry a bank statement reference and they disagree →
-        # two distinct real transfers that happen to look identical (e.g. the
-        # same sender paying twice in one day), never a duplicate.
-        if tx_refs and tx_refs.isdisjoint(_references_for(db, candidate)):
-            continue
+        candidate_refs = _references_for(db, candidate)
+
+        if is_recurring:
+            # A recurring fee looks identical whether it's 10 separate real
+            # charges today or the same charge re-imported twice — only a
+            # shared reference proves the latter, so require one instead of
+            # flagging on appearance alone (the false-positive risk this
+            # keyword list exists to avoid).
+            if tx_refs.isdisjoint(candidate_refs):
+                continue
+        else:
+            # Both sides carry a bank statement reference and they disagree →
+            # two distinct real transfers that happen to look identical (e.g. the
+            # same sender paying twice in one day), never a duplicate.
+            if tx_refs and tx_refs.isdisjoint(candidate_refs):
+                continue
 
         # All fields matched exactly → definite duplicate.
         matches.append((candidate, 1.0))
