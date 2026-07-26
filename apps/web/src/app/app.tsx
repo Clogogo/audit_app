@@ -22,6 +22,7 @@ import { Assets } from '../pages/Assets';
 import { TaxCalendar } from '../pages/TaxCalendar';
 import { StaffLoans } from '../pages/StaffLoans';
 import { AdvancePayments } from '../pages/AdvancePayments';
+import { TeacherBonuses } from '../pages/TeacherBonuses';
 import { StaffDirectory } from '../pages/StaffDirectory';
 import { Payroll } from '../pages/Payroll';
 import { Terms } from '../pages/Terms';
@@ -72,6 +73,7 @@ export function App() {
                       <Route path="/staff/directory" element={<PermissionRoute permission="staff"><StaffDirectory /></PermissionRoute>} />
                       <Route path="/staff/loans" element={<PermissionRoute permission="staff"><StaffLoans /></PermissionRoute>} />
                       <Route path="/staff/advances" element={<PermissionRoute permission="staff"><AdvancePayments /></PermissionRoute>} />
+                      <Route path="/staff/bonuses" element={<PermissionRoute permission="staff"><TeacherBonuses /></PermissionRoute>} />
                       <Route path="/staff/payroll" element={<PermissionRoute permission="staff"><Payroll /></PermissionRoute>} />
                       <Route path="/staff/terms" element={<PermissionRoute permission="staff"><Terms /></PermissionRoute>} />
                       <Route path="/inventory/items" element={<PermissionRoute permission="inventory"><InventoryItems /></PermissionRoute>} />

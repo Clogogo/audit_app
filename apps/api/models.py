@@ -372,6 +372,33 @@ class PayrollEntry(Base):
     staff_member: Mapped["Staff"] = relationship("Staff", back_populates="payroll_entries")
 
 
+class TeacherBonus(Base):
+    """A bonus award for a staff member, feeding automatically into a
+    specific payroll month. The qualifying judgment (class average,
+    punctuality rating, "the referred teacher stayed", etc.) happens
+    outside this app — recording it here already is the approval, same
+    as StaffLoan/AdvancePayment. amount is computed and stored at
+    create/update time so a later salary change never retroactively
+    changes a historical bonus."""
+    __tablename__ = "teacher_bonuses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    staff_id: Mapped[int] = mapped_column(Integer, ForeignKey("staff.id", ondelete="CASCADE"))
+    bonus_type: Mapped[str] = mapped_column(String(50))    # performance | punctuality | student_referral | teacher_referral | loyalty | annual_high_performance | ...
+    percentage: Mapped[float] = mapped_column(Float)        # e.g. 10.0, 5.0, 20.0 — editable per record, not locked to type
+    basis_amount: Mapped[float] = mapped_column(Float)      # what the percentage applies to — usually the staff member's own salary, but the referred student's fee for student_referral
+    amount: Mapped[float] = mapped_column(Float)            # computed: round(percentage / 100 * basis_amount, 2)
+    period_year: Mapped[int] = mapped_column(Integer)       # which payroll month this bonus feeds into
+    period_month: Mapped[int] = mapped_column(Integer)
+    term_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("terms.id", ondelete="SET NULL"), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    staff: Mapped["Staff"] = relationship("Staff")
+    term: Mapped[Optional["Term"]] = relationship("Term")
+
+
 class Term(Base):
     __tablename__ = "terms"
 

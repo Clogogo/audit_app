@@ -15,7 +15,7 @@ from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import AdvancePayment, PayrollEntry, Staff, StaffLoan, StaffLoanPayment, Transaction
+from models import AdvancePayment, PayrollEntry, Staff, StaffLoan, StaffLoanPayment, TeacherBonus, Transaction
 
 router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(require_permission("staff"))])
 
@@ -343,14 +343,30 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
                 entry_id=existing.id,
             ))
         else:
-            loan_ded, advance_ded = _capped_deductions(s, year, month, s.monthly_gross, 0.0, 0.0, db)
-            net = round(s.monthly_gross - loan_ded - advance_ded, 2)
+            # Sum any TeacherBonus records earmarked for this staff member
+            # and this exact payroll month (see routers/teacher_bonuses.py)
+            # — this is the "automatic" part: a bonus recorded before this
+            # month's payroll is first computed shows up here without a
+            # separate manual entry. loan/advance are capped against
+            # gross+bonus together, so the real total must be passed in,
+            # not the 0.0 this used to hardcode before bonuses existed.
+            bonus_total = round(
+                sum(
+                    b.amount for b in db.query(TeacherBonus).filter(
+                        TeacherBonus.staff_id == s.id,
+                        TeacherBonus.period_year == year,
+                        TeacherBonus.period_month == month,
+                    ).all()
+                ), 2,
+            )
+            loan_ded, advance_ded = _capped_deductions(s, year, month, s.monthly_gross, bonus_total, 0.0, db)
+            net = round(s.monthly_gross + bonus_total - loan_ded - advance_ded, 2)
             result.append(PayrollLineOut(
                 staff_id=s.id,
                 full_name=s.full_name,
                 role=s.role,
                 gross_salary=s.monthly_gross,
-                bonus=0.0,
+                bonus=bonus_total,
                 loan_deduction=loan_ded,
                 advance_deduction=advance_ded,
                 other_deductions=0.0,

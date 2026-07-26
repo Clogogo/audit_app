@@ -1108,3 +1108,40 @@ export interface SchoolProfileIn {
   address?: string | null;
   country: string;
 }
+
+// ── Teacher/Staff Bonuses ────────────────────────────────────────────────────
+
+export interface BonusType {
+  key: string;
+  label: string;
+  default_percentage: number;
+  description: string;
+}
+
+export interface TeacherBonus {
+  id: number;
+  staff_id: number;
+  staff_name: string;
+  bonus_type: string;
+  percentage: number;
+  basis_amount: number;
+  amount: number;
+  period_year: number;
+  period_month: number;
+  term_id: number | null;
+  term_name: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TeacherBonusIn {
+  staff_id: number;
+  bonus_type: string;
+  percentage: number;
+  basis_amount: number;
+  period_year: number;
+  period_month: number;
+  term_id?: number | null;
+  notes?: string | null;
+}
