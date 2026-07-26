@@ -61,6 +61,9 @@ import type {
   ItemReport,
   SchoolProfile,
   SchoolProfileIn,
+  BonusType,
+  TeacherBonus,
+  TeacherBonusIn,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -643,3 +646,24 @@ export const uploadSchoolLogo = (file: File) => {
     })
     .then(unwrap);
 };
+
+// ── Teacher/Staff Bonuses ────────────────────────────────────────────────────
+
+export const getBonusTypes = () =>
+  api.get<BonusType[]>('/teacher-bonuses/types').then(unwrap);
+
+export const listTeacherBonuses = (params?: {
+  staff_id?: number;
+  bonus_type?: string;
+  period_year?: number;
+  period_month?: number;
+}) => api.get<TeacherBonus[]>('/teacher-bonuses/', { params }).then(unwrap);
+
+export const createTeacherBonus = (body: TeacherBonusIn) =>
+  api.post<TeacherBonus>('/teacher-bonuses/', body).then(unwrap);
+
+export const updateTeacherBonus = (id: number, body: TeacherBonusIn) =>
+  api.put<TeacherBonus>(`/teacher-bonuses/${id}`, body).then(unwrap);
+
+export const deleteTeacherBonus = (id: number) =>
+  api.delete<void>(`/teacher-bonuses/${id}`).then(unwrap);
