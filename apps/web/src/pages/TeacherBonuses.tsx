@@ -117,15 +117,28 @@ export function TeacherBonuses() {
   };
   const closeForm = () => { setShowForm(false); setEditing(null); };
 
+  // What basis_amount actually means for a type — carrying a number across
+  // a category change would silently reinterpret it (e.g. a typed-in flat
+  // amount becoming a percentage basis, or an auto-filled salary becoming
+  // a flat amount), so a switch only keeps the old value within the same
+  // category.
+  const basisCategory = (t?: BonusType): 'flat' | 'salary' | 'manual' | undefined => {
+    if (!t) return undefined;
+    if (t.calculation_method === 'flat_amount') return 'flat';
+    return t.basis_is_salary ? 'salary' : 'manual';
+  };
+
   const applyType = (typeKey: string) => {
     const type = bonusTypes.find((t) => t.key === typeKey);
     if (!type) return;
     setForm((f) => {
       const staff = staffList.find((s) => s.id === f.staff_id);
+      const prevType = bonusTypes.find((t) => t.key === f.bonus_type);
+      const carried = basisCategory(prevType) === basisCategory(type) ? f.basis_amount : 0;
       if (type.calculation_method === 'flat_amount') {
-        return { ...f, bonus_type: typeKey, percentage: 100, basis_amount: f.basis_amount };
+        return { ...f, bonus_type: typeKey, percentage: 100, basis_amount: carried };
       }
-      const basis = type.basis_is_salary ? (staff?.monthly_gross ?? f.basis_amount) : f.basis_amount;
+      const basis = type.basis_is_salary ? (staff?.monthly_gross ?? carried) : carried;
       return { ...f, bonus_type: typeKey, percentage: type.default_percentage, basis_amount: basis };
     });
   };
