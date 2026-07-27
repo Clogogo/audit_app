@@ -25,7 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
-from database import Base, SessionLocal, engine, initialize_database
+from database import Base, SessionLocal, engine, initialize_database, _seed_bonus_types
 from main import app
 from models import Permission, Role, User
 from utils.auth import get_current_user, hash_password
@@ -78,11 +78,18 @@ def _setup_database():
 
 @pytest.fixture(autouse=True)
 def _clean_tables():
-    """Truncate every table between tests so they don't see each other's data."""
+    """Truncate every table between tests so they don't see each other's data.
+    bonus_types is reseeded right after — unlike Role/Permission (which
+    tests never actually query, since the `client` fixture fakes the
+    current user's permissions in-memory), teacher_bonuses' _validate()
+    does a real DB lookup against it, so every test needs the six default
+    types present the same way _setup_database's session-scoped seed
+    guaranteed before this table started being wiped per-test."""
     yield
     with engine.begin() as connection:
         for table in reversed(Base.metadata.sorted_tables):
             connection.execute(table.delete())
+    _seed_bonus_types()
 
 
 @pytest.fixture

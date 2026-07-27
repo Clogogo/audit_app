@@ -399,6 +399,26 @@ class TeacherBonus(Base):
     term: Mapped[Optional["Term"]] = relationship("Term")
 
 
+class BonusType(Base):
+    """Admin-managed bonus type definitions — replaces a fixed, code-only
+    list so new bonus schemes can be added from the UI. TeacherBonus.bonus_type
+    references this table's key by convention only (free text, like
+    Transaction.category), not a real FK — so retiring a type (is_active=False,
+    never a hard delete) can't ever break a historical TeacherBonus row."""
+    __tablename__ = "bonus_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True)  # slugified from label at creation, immutable after
+    label: Mapped[str] = mapped_column(String(200))
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    calculation_method: Mapped[str] = mapped_column(String(20), default="percentage")  # "percentage" | "flat_amount"
+    basis_is_salary: Mapped[bool] = mapped_column(Boolean, default=True)  # only meaningful for "percentage": True auto-fills basis_amount from staff.monthly_gross, False leaves it a manual entry
+    default_percentage: Mapped[float] = mapped_column(Float, default=0.0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Term(Base):
     __tablename__ = "terms"
 
