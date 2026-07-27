@@ -320,6 +320,7 @@ class SchoolLoan(Base):
     interest_rate: Mapped[float] = mapped_column(Float, default=0.0)  # annual %, reference/display only
     total_interest_due: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # agreed total interest, not auto-computed from interest_rate
     collected_date: Mapped[date] = mapped_column(Date)
+    transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True)  # the income transaction recording the cash actually received from the lender
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -328,6 +329,7 @@ class SchoolLoan(Base):
     payments: Mapped[list["SchoolLoanPayment"]] = relationship(
         "SchoolLoanPayment", back_populates="loan", cascade="all, delete-orphan", order_by="SchoolLoanPayment.paid_date"
     )
+    transaction: Mapped[Optional["Transaction"]] = relationship("Transaction")
 
 
 class SchoolLoanPayment(Base):

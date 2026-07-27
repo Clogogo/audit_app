@@ -71,6 +71,7 @@ class SchoolLoanIn(BaseModel):
     interest_rate: float = 0.0   # annual %, kept for reference / display only
     total_interest_due: float = 0.0  # agreed total interest owed on this loan
     collected_date: date
+    transaction_id: Optional[int] = None
     notes: Optional[str] = None
     is_active: bool = True
 
@@ -119,6 +120,9 @@ class SchoolLoanOut(BaseModel):
     interest_rate: float
     total_interest_due: float
     collected_date: date
+    transaction_id: Optional[int]
+    verified: bool           # True when linked to a transaction
+    matched_tx: Optional[MatchedTransaction]
     notes: Optional[str]
     is_active: bool
     outstanding_today: float          # principal only — the Loans Payable liability figure
@@ -162,6 +166,7 @@ def _serialize_payment(p: SchoolLoanPayment) -> LoanPaymentOut:
 
 
 def _to_out(loan: SchoolLoan) -> SchoolLoanOut:
+    tx = loan.transaction
     return SchoolLoanOut(
         id=loan.id,
         lender_name=loan.lender_name,
@@ -169,6 +174,12 @@ def _to_out(loan: SchoolLoan) -> SchoolLoanOut:
         interest_rate=loan.interest_rate,
         total_interest_due=loan.total_interest_due or 0.0,  # defensive: legacy rows predating this column
         collected_date=loan.collected_date,
+        transaction_id=loan.transaction_id,
+        verified=loan.transaction_id is not None,
+        matched_tx=MatchedTransaction(
+            id=tx.id, date=tx.date, amount=tx.amount,
+            description=tx.description, vendor=tx.vendor, category=tx.category,
+        ) if tx else None,
         notes=loan.notes,
         is_active=bool(loan.is_active),
         outstanding_today=_outstanding(loan),
@@ -240,10 +251,13 @@ def match_transactions(
     loan_id: int,
     year: int,
     month: int,
+    tx_type: str = "expense",
     db: Session = Depends(get_db),
 ):
-    """Return expense transactions mentioning this lender in the given month
-    so the user can verify and link them to a loan payment."""
+    """Return transactions of the given type mentioning this lender in the
+    given month, so the user can verify and link them — expense for a loan
+    payment (cash going out), income for the loan's own collection (cash
+    coming in from the lender)."""
     from sqlalchemy import or_
     import calendar as cal
 
@@ -258,7 +272,7 @@ def match_transactions(
     txs = (
         db.query(Transaction)
         .filter(
-            Transaction.type == "expense",
+            Transaction.type == tx_type,
             Transaction.date >= month_start,
             Transaction.date <= month_end,
             or_(

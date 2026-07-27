@@ -563,8 +563,8 @@ export const updateSchoolLoanPayment = (loanId: number, paymentId: number, body:
 export const deleteSchoolLoanPayment = (loanId: number, paymentId: number) =>
   api.delete<void>(`/school-loans/${loanId}/payments/${paymentId}`).then(unwrap);
 
-export const matchSchoolLoanTransactions = (loanId: number, year: number, month: number) =>
-  api.get<MatchedTransaction[]>(`/school-loans/${loanId}/match-transactions`, { params: { year, month } }).then(unwrap);
+export const matchSchoolLoanTransactions = (loanId: number, year: number, month: number, txType: 'income' | 'expense' = 'expense') =>
+  api.get<MatchedTransaction[]>(`/school-loans/${loanId}/match-transactions`, { params: { year, month, tx_type: txType } }).then(unwrap);
 
 // ── Payroll ───────────────────────────────────────────────────────────────────
 
