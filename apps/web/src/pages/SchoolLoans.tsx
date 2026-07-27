@@ -615,10 +615,13 @@ export function SchoolLoans() {
                   min="0"
                   placeholder="0"
                   value={loanForm.interest_rate || ''}
-                  onChange={(e) => setLoanForm((f) => ({ ...f, interest_rate: parseFloat(e.target.value) || 0 }))}
+                  onChange={(e) => {
+                    const rate = parseFloat(e.target.value) || 0;
+                    setLoanForm((f) => ({ ...f, interest_rate: rate, total_interest_due: round2(f.loan_amount * rate / 100) }));
+                  }}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
-                <p className="text-xs text-muted-foreground mt-1">Reference only — enter the actual interest paid per installment below.</p>
+                <p className="text-xs text-muted-foreground mt-1">Auto-fills Total Interest Due below (loan amount × this rate) — still freely editable if the actual agreed figure differs.</p>
               </div>
 
               <div>
@@ -866,4 +869,8 @@ export function SchoolLoans() {
       )}
     </div>
   );
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
