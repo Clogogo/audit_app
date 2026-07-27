@@ -62,6 +62,7 @@ import type {
   SchoolProfile,
   SchoolProfileIn,
   BonusType,
+  BonusTypeIn,
   TeacherBonus,
   TeacherBonusIn,
 } from './types';
@@ -649,8 +650,17 @@ export const uploadSchoolLogo = (file: File) => {
 
 // ── Teacher/Staff Bonuses ────────────────────────────────────────────────────
 
-export const getBonusTypes = () =>
-  api.get<BonusType[]>('/teacher-bonuses/types').then(unwrap);
+export const getBonusTypes = (activeOnly = false) =>
+  api.get<BonusType[]>('/teacher-bonuses/types', { params: { active_only: activeOnly } }).then(unwrap);
+
+export const createBonusType = (body: BonusTypeIn) =>
+  api.post<BonusType>('/teacher-bonuses/types', body).then(unwrap);
+
+export const updateBonusType = (id: number, body: BonusTypeIn) =>
+  api.put<BonusType>(`/teacher-bonuses/types/${id}`, body).then(unwrap);
+
+export const deleteBonusType = (id: number) =>
+  api.delete<void>(`/teacher-bonuses/types/${id}`).then(unwrap);
 
 export const listTeacherBonuses = (params?: {
   staff_id?: number;

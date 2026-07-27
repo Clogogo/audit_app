@@ -207,6 +207,7 @@ def initialize_database() -> None:
             connection.commit()
 
     _seed_roles_and_permissions()
+    _seed_bonus_types()
 
 
 # One (key, label) per app section — a fixed set defined by the app's own
@@ -307,3 +308,43 @@ def _seed_roles_and_permissions() -> None:
                 if target:
                     target.role_id = admin_role.id
                     session.commit()
+
+
+# The original six bonus schemes, now seeded as real admin-editable rows
+# instead of a hardcoded list (see routers/teacher_bonuses.py) — key,
+# label, basis_is_salary, default_percentage. All use calculation_method
+# "percentage"; a brand new "flat_amount" type is only ever created
+# through the UI, never seeded.
+_BONUS_TYPE_SEEDS = [
+    ("performance", "Performance Bonus", True, 10.0,
+     "Class average 80%+ — reviewed termly"),
+    ("punctuality", "Punctuality & Classroom Management Bonus", True, 5.0,
+     "Rated EXCELLENT for punctuality and classroom conduct"),
+    ("student_referral", "Student Referral Bonus", False, 10.0,
+     "% of the referred student's fee — paid after their first full term"),
+    ("teacher_referral", "Teacher Referral Bonus", True, 20.0,
+     "One-time — the referred teacher was hired and stayed"),
+    ("loyalty", "Loyalty Bonus", True, 10.0,
+     "End of session — full attendance and consistent performance, any staff member"),
+    ("annual_high_performance", "Annual High Performance Bonus", True, 0.0,
+     "Dynamic 0-100%, set by management at end of session"),
+]
+
+
+def _seed_bonus_types() -> None:
+    """Idempotent — only inserts keys that don't exist yet, same shape as
+    _seed_roles_and_permissions(). Safe to run on every startup; never
+    touches a row an admin has since edited or retired."""
+    from models import BonusType
+
+    with SessionLocal() as session:
+        existing_keys = {b.key for b in session.query(BonusType).all()}
+        for key, label, basis_is_salary, default_percentage, description in _BONUS_TYPE_SEEDS:
+            if key not in existing_keys:
+                session.add(BonusType(
+                    key=key, label=label, description=description,
+                    calculation_method="percentage",
+                    basis_is_salary=basis_is_salary,
+                    default_percentage=default_percentage,
+                ))
+        session.commit()

@@ -6,6 +6,7 @@ average, punctuality rating, "the referred teacher stayed") happens
 outside this app; recording a bonus here already is the approval, same as
 StaffLoan/AdvancePayment — no separate pending/approved workflow.
 """
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -14,29 +15,18 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Staff, TeacherBonus, Term
+from models import BonusType, Staff, TeacherBonus, Term
 from utils.auth import require_permission
 from utils.errors import get_or_404
 
 router = APIRouter(prefix="/teacher-bonuses", tags=["teacher-bonuses"], dependencies=[Depends(require_permission("staff"))])
 
-# Suggested types — advisory only (bonus_type is free text under the hood,
-# same as Transaction.category), so adding a 7th bonus type later is just
-# one more entry here, no schema change.
-BONUS_TYPES = [
-    {"key": "performance", "label": "Performance Bonus", "default_percentage": 10.0,
-     "description": "Class average 80%+ — reviewed termly"},
-    {"key": "punctuality", "label": "Punctuality & Classroom Management Bonus", "default_percentage": 5.0,
-     "description": "Rated EXCELLENT for punctuality and classroom conduct"},
-    {"key": "student_referral", "label": "Student Referral Bonus", "default_percentage": 10.0,
-     "description": "% of the referred student's fee — paid after their first full term"},
-    {"key": "teacher_referral", "label": "Teacher Referral Bonus", "default_percentage": 20.0,
-     "description": "One-time — the referred teacher was hired and stayed"},
-    {"key": "loyalty", "label": "Loyalty Bonus", "default_percentage": 10.0,
-     "description": "End of session — full attendance and consistent performance, any staff member"},
-    {"key": "annual_high_performance", "label": "Annual High Performance Bonus", "default_percentage": 0.0,
-     "description": "Dynamic 0-100%, set by management at end of session"},
-]
+_CALCULATION_METHODS = {"percentage", "flat_amount"}
+
+
+def _slugify(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
+    return slug or "type"
 
 
 # ── schemas ──────────────────────────────────────────────────────────────────
@@ -69,6 +59,31 @@ class TeacherBonusOut(BaseModel):
     updated_at: datetime
 
 
+class BonusTypeIn(BaseModel):
+    label: str
+    description: Optional[str] = None
+    calculation_method: str = "percentage"
+    basis_is_salary: bool = True
+    default_percentage: float = 0.0
+    is_active: bool = True
+
+
+class BonusTypeOut(BaseModel):
+    id: int
+    key: str
+    label: str
+    description: Optional[str]
+    calculation_method: str
+    basis_is_salary: bool
+    default_percentage: float
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # ── serialization ────────────────────────────────────────────────────────────
 
 def _to_out(b: TeacherBonus) -> TeacherBonusOut:
@@ -85,6 +100,8 @@ def _validate(body: TeacherBonusIn, db: Session) -> None:
     get_or_404(db, Staff, body.staff_id, "Staff member")
     if body.term_id is not None:
         get_or_404(db, Term, body.term_id, "Term")
+    if not db.query(BonusType).filter(BonusType.key == body.bonus_type).first():
+        raise HTTPException(400, "Unknown bonus type")
     if body.percentage < 0:
         raise HTTPException(400, "percentage cannot be negative")
     if body.basis_amount < 0:
@@ -93,11 +110,72 @@ def _validate(body: TeacherBonusIn, db: Session) -> None:
         raise HTTPException(400, "period_month must be between 1 and 12")
 
 
-# ── endpoints ────────────────────────────────────────────────────────────────
+def _validate_bonus_type(body: BonusTypeIn) -> None:
+    if not body.label.strip():
+        raise HTTPException(400, "label is required")
+    if body.calculation_method not in _CALCULATION_METHODS:
+        raise HTTPException(400, f"calculation_method must be one of {sorted(_CALCULATION_METHODS)}")
+    if body.default_percentage < 0:
+        raise HTTPException(400, "default_percentage cannot be negative")
 
-@router.get("/types")
-def list_bonus_types():
-    return BONUS_TYPES
+
+# ── bonus type endpoints (admin-managed, replaces the old hardcoded list) ────
+
+@router.get("/types", response_model=list[BonusTypeOut])
+def list_bonus_types(active_only: bool = False, db: Session = Depends(get_db)):
+    q = db.query(BonusType).order_by(BonusType.label)
+    if active_only:
+        q = q.filter(BonusType.is_active == True)
+    return q.all()
+
+
+@router.post("/types", response_model=BonusTypeOut, status_code=201)
+def create_bonus_type(body: BonusTypeIn, db: Session = Depends(get_db)):
+    _validate_bonus_type(body)
+    key = _slugify(body.label)
+    if db.query(BonusType).filter(BonusType.key == key).first():
+        raise HTTPException(400, f"A bonus type named '{body.label}' already exists")
+    bonus_type = BonusType(
+        key=key, label=body.label, description=body.description,
+        calculation_method=body.calculation_method,
+        basis_is_salary=body.basis_is_salary,
+        default_percentage=0.0 if body.calculation_method == "flat_amount" else body.default_percentage,
+        is_active=body.is_active,
+    )
+    db.add(bonus_type)
+    db.commit()
+    db.refresh(bonus_type)
+    return bonus_type
+
+
+@router.put("/types/{type_id}", response_model=BonusTypeOut)
+def update_bonus_type(type_id: int, body: BonusTypeIn, db: Session = Depends(get_db)):
+    bonus_type = get_or_404(db, BonusType, type_id, "Bonus type")
+    _validate_bonus_type(body)
+    bonus_type.label = body.label
+    bonus_type.description = body.description
+    bonus_type.calculation_method = body.calculation_method
+    bonus_type.basis_is_salary = body.basis_is_salary
+    bonus_type.default_percentage = 0.0 if body.calculation_method == "flat_amount" else body.default_percentage
+    bonus_type.is_active = body.is_active
+    bonus_type.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(bonus_type)
+    return bonus_type
+
+
+@router.delete("/types/{type_id}", status_code=204)
+def retire_bonus_type(type_id: int, db: Session = Depends(get_db)):
+    """Soft-retire only — is_active=False, never a hard delete, so any
+    historical TeacherBonus referencing this type's key keeps resolving
+    its label via GET /types?active_only=false."""
+    bonus_type = get_or_404(db, BonusType, type_id, "Bonus type")
+    bonus_type.is_active = False
+    bonus_type.updated_at = datetime.utcnow()
+    db.commit()
+
+
+# ── endpoints ────────────────────────────────────────────────────────────────
 
 
 @router.get("/", response_model=list[TeacherBonusOut])
