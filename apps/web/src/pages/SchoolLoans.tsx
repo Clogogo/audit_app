@@ -92,8 +92,11 @@ export function SchoolLoans() {
   const [linkingPayment, setLinkingPayment] = useState<{ loanId: number; payment: SchoolLoanPaymentOut } | null>(null);
   // Picking a transaction to record as a brand-new payment
   const [linkingNewPaymentForLoan, setLinkingNewPaymentForLoan] = useState<number | null>(null);
-  // Linking the loan's own collection to an income transaction
+  // Linking the loan's own collection to an income transaction (from the loan row)
   const [linkingLoan, setLinkingLoan] = useState<SchoolLoan | null>(null);
+  // Linking within the Add/Edit Loan form itself — staged on loanForm until saved
+  const [showLoanFormTxPicker, setShowLoanFormTxPicker] = useState(false);
+  const [loanFormLinkedTx, setLoanFormLinkedTx] = useState<MatchedTransaction | null>(null);
 
   // Expanded rows
   const [expandedLoanId, setExpandedLoanId] = useState<number | null>(null);
@@ -110,7 +113,12 @@ export function SchoolLoans() {
 
   // ── Loan handlers ────────────────────────────────────────────────────────────
 
-  const openAddLoan = () => { setEditingLoan(null); setLoanForm(EMPTY_LOAN); setShowLoanForm(true); };
+  const openAddLoan = () => {
+    setEditingLoan(null);
+    setLoanForm(EMPTY_LOAN);
+    setLoanFormLinkedTx(null);
+    setShowLoanForm(true);
+  };
   const openEditLoan = (loan: SchoolLoan) => {
     setEditingLoan(loan);
     setLoanForm({
@@ -123,7 +131,19 @@ export function SchoolLoans() {
       notes: loan.notes ?? '',
       is_active: loan.is_active,
     });
+    setLoanFormLinkedTx(loan.matched_tx);
     setShowLoanForm(true);
+  };
+
+  const handleSelectLoanFormTx = (t: MatchedTransaction) => {
+    setLoanForm((f) => ({ ...f, transaction_id: t.id }));
+    setLoanFormLinkedTx(t);
+    setShowLoanFormTxPicker(false);
+  };
+
+  const handleUnlinkLoanFormTx = () => {
+    setLoanForm((f) => ({ ...f, transaction_id: null }));
+    setLoanFormLinkedTx(null);
   };
 
   const handleLinkLoanTransaction = async (loan: SchoolLoan, transactionId: number) => {
@@ -689,6 +709,36 @@ export function SchoolLoans() {
               </div>
 
               <div>
+                <label className="block text-xs font-medium text-foreground mb-1">Linked Transaction</label>
+                {loanFormLinkedTx ? (
+                  <div className="flex items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm">
+                    <span
+                      className="inline-flex items-center gap-1 text-green-700 font-medium truncate"
+                      title={`${loanFormLinkedTx.description} — ${formatCurrency(loanFormLinkedTx.amount)}`}
+                    >
+                      <BadgeCheck className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{loanFormLinkedTx.description}</span>
+                    </span>
+                    <div className="flex gap-2 shrink-0">
+                      <button type="button" onClick={() => setShowLoanFormTxPicker(true)} className="text-xs text-primary underline hover:no-underline">Change</button>
+                      <button type="button" onClick={handleUnlinkLoanFormTx} className="text-xs text-muted-foreground underline hover:no-underline">Unlink</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowLoanFormTxPicker(true)}
+                    className="w-full rounded-md border border-dashed border-input px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/40 text-left"
+                  >
+                    Link the income transaction for this loan's collection…
+                  </button>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  Optional — links this loan to the bank transaction that recorded the cash actually received from the lender.
+                </p>
+              </div>
+
+              <div>
                 <label className="block text-xs font-medium text-foreground mb-1">Notes</label>
                 <input
                   type="text"
@@ -893,6 +943,20 @@ export function SchoolLoans() {
             .map((l) => l.transaction_id as number)}
           onClose={() => setLinkingLoan(null)}
           onSelect={(t) => handleLinkLoanTransaction(linkingLoan, t.id)}
+        />
+      )}
+
+      {/* Link a transaction from within the Add/Edit Loan form itself */}
+      {showLoanFormTxPicker && (
+        <TransactionPickerModal
+          title="Link a transaction to this loan's collection"
+          category="Loans"
+          type="income"
+          excludeTransactionIds={loans
+            .filter((l) => l.transaction_id !== null && l.id !== editingLoan?.id)
+            .map((l) => l.transaction_id as number)}
+          onClose={() => setShowLoanFormTxPicker(false)}
+          onSelect={handleSelectLoanFormTx}
         />
       )}
 

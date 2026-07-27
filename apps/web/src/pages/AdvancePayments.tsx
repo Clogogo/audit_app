@@ -121,7 +121,7 @@ export function AdvancePayments() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Banknote className="h-6 w-6 text-primary" />
-            Advance Payment (IOU)
+            IOU
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
             One-off salary advances — fully deducted from the next payroll run after they're recorded
@@ -129,7 +129,7 @@ export function AdvancePayments() {
         </div>
         <Button onClick={openAdd}>
           <Plus className="h-4 w-4 mr-1" />
-          Add Advance
+          Add IOU
         </Button>
       </div>
 
@@ -166,14 +166,14 @@ export function AdvancePayments() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">All Advances</CardTitle>
+          <CardTitle className="text-base">All IOUs</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
             <p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
           ) : advances.length === 0 ? (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              No advances recorded yet. Click "Add Advance" to record one.
+              No IOUs recorded yet. Click "Add IOU" to record one.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -270,7 +270,7 @@ export function AdvancePayments() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md bg-card rounded-xl shadow-xl border border-border p-6 space-y-5">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">{editing ? 'Edit Advance' : 'Add Advance'}</h2>
+              <h2 className="text-lg font-semibold">{editing ? 'Edit IOU' : 'Add IOU'}</h2>
               <button type="button" aria-label="Close" onClick={() => setShowForm(false)} className="text-muted-foreground hover:text-foreground">
                 <XCircle className="h-5 w-5" />
               </button>
@@ -342,7 +342,7 @@ export function AdvancePayments() {
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setShowForm(false)} disabled={saving}>Cancel</Button>
               <Button onClick={handleSave} disabled={saving || !form.staff_id || form.amount <= 0 || !form.date_issued}>
-                {saving ? 'Saving…' : editing ? 'Save Changes' : 'Add Advance'}
+                {saving ? 'Saving…' : editing ? 'Save Changes' : 'Add IOU'}
               </Button>
             </div>
           </div>
@@ -352,7 +352,7 @@ export function AdvancePayments() {
       {/* Link transaction */}
       {linkingAdvance && (
         <TransactionPickerModal
-          title={`Link a transaction for ${linkingAdvance.staff_name}'s advance`}
+          title={`Link a transaction for ${linkingAdvance.staff_name}'s IOU`}
           category="IOU (Advance Salary)"
           excludeTransactionIds={advances
             .filter((a) => a.transaction_id !== null && a.id !== linkingAdvance.id)
@@ -366,8 +366,8 @@ export function AdvancePayments() {
       {deleteId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-sm bg-card rounded-xl shadow-xl border border-border p-6 space-y-4">
-            <h2 className="text-base font-semibold">Delete Advance Payment?</h2>
-            <p className="text-sm text-muted-foreground">This will permanently remove this advance record.</p>
+            <h2 className="text-base font-semibold">Delete IOU?</h2>
+            <p className="text-sm text-muted-foreground">This will permanently remove this IOU record.</p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
               <Button variant="destructive" onClick={handleDelete}>
