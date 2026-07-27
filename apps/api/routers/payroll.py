@@ -402,13 +402,17 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
     month_start = date(req.year, req.month, 1)
     month_end   = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
 
-    # Fetch this month's expense transactions once; fuzzy-match staff names
-    # against them in Python rather than per-staff SQL ilike (which required an
-    # exact substring match and broke on reordered/varied bank narrations).
+    # Fetch this month's Salary and Wages expense transactions once;
+    # fuzzy-match staff names against them in Python rather than per-staff
+    # SQL ilike (which required an exact substring match and broke on
+    # reordered/varied bank narrations). Restricted to this one category so
+    # payroll can never link to an unrelated expense that merely happens to
+    # mention a staff member's name (a reimbursement, a vendor payment, etc.).
     month_expenses = (
         db.query(Transaction)
         .filter(
             Transaction.type == "expense",
+            Transaction.category == "Salary and Wages",
             Transaction.date >= month_start,
             Transaction.date <= month_end,
         )
@@ -446,12 +450,13 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
         net_by_staff[line.staff_id] = max(0.0, round(line.gross_salary + line.bonus - loan_ded - advance_ded - line.other_deductions, 2))
 
         # Manual override: the user explicitly picked this transaction (e.g.
-        # after automatic matching failed to find it) — use it as-is, no
-        # name/category/amount re-validation needed.
+        # after automatic matching failed to find it) — no name/amount
+        # re-validation needed, but it must still be tagged as an actual
+        # salary payment, same as the automatic search below.
         if line.transaction_id:
             tx = db.get(Transaction, line.transaction_id)
-            if not tx or tx.type != "expense":
-                raise HTTPException(400, f"Transaction {line.transaction_id} is not a valid expense transaction")
+            if not tx or tx.type != "expense" or tx.category != "Salary and Wages":
+                raise HTTPException(400, f"Transaction {line.transaction_id} is not a valid Salary and Wages expense transaction")
             if tx.date < month_start or tx.date > month_end:
                 raise HTTPException(400, f"Transaction {line.transaction_id} is outside the payroll period")
             claimed_by_other = (
@@ -498,18 +503,19 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
         # Fallback: the bank account may be registered under a different
         # first/middle name than the staff record (e.g. a spouse's name, or a
         # maiden name) — common enough in practice that name-matching alone
-        # can't bridge it. Accept a transaction tagged "Salary and Wages"
-        # whose amount covers at least the computed net pay (it may be
-        # bundled with an IOU/advance repayment on top) and that still shares
-        # at least one name token, so we don't attach the wrong payment when
-        # multiple unclaimed salary transactions exist in the same month.
+        # can't bridge it. Both tiers already only see Salary and Wages
+        # transactions (see month_expenses above); this one additionally
+        # requires the amount to cover at least the computed net pay (it may
+        # be bundled with an IOU/advance repayment on top) and that it still
+        # shares at least one name token, so we don't attach the wrong
+        # payment when multiple unclaimed salary transactions exist in the
+        # same month.
         if not tx:
             net = net_by_staff[line.staff_id]
             tx = next(
                 (
                     t for t in month_expenses
                     if t.id not in used_tx_ids
-                    and t.category == "Salary and Wages"
                     and t.amount >= net - 0.01
                     and (
                         _has_any_name_token_overlap(staff.full_name, t.vendor or "")

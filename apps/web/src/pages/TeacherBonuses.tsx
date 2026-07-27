@@ -94,7 +94,7 @@ export function TeacherBonuses() {
     setLoading(true);
     Promise.all([listTeacherBonuses(), listStaffMembers(true), getBonusTypes(), getTerms()])
       .then(([b, s, t, tm]) => { setBonuses(b); setStaffList(s); setBonusTypes(t); setTerms(tm); })
-      .catch(() => setError('Failed to load teacher bonuses'))
+      .catch(() => setError('Failed to load bonuses'))
       .finally(() => setLoading(false));
   };
 
@@ -226,7 +226,7 @@ export function TeacherBonuses() {
       closeForm();
       load();
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Failed to save teacher bonus');
+      setError(e?.response?.data?.detail || 'Failed to save bonus');
     } finally {
       setSaving(false);
     }
@@ -238,7 +238,7 @@ export function TeacherBonuses() {
       setDeleteId(null);
       load();
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Failed to delete teacher bonus');
+      setError(e?.response?.data?.detail || 'Failed to delete bonus');
     }
   };
 
@@ -260,7 +260,7 @@ export function TeacherBonuses() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Gift className="h-6 w-6 text-primary" />
-            Teacher Bonuses
+            Bonuses
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
             Performance, referral, loyalty, and annual bonuses — automatically added to that staff member's payroll for the target month
