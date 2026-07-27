@@ -822,6 +822,9 @@ export interface SchoolLoan {
   interest_rate: number;
   total_interest_due: number;
   collected_date: string;
+  transaction_id: number | null;
+  verified: boolean;
+  matched_tx: MatchedTransaction | null;
   notes: string | null;
   is_active: boolean;
   outstanding_today: number;
@@ -841,6 +844,7 @@ export interface SchoolLoanIn {
   interest_rate: number;
   total_interest_due: number;
   collected_date: string;
+  transaction_id?: number | null;
   notes?: string | null;
   is_active?: boolean;
 }

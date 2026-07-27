@@ -1,9 +1,12 @@
 """Tests for School Loan payment handling — specifically that a loan only
 auto-closes (is_active -> False) once BOTH principal and the agreed
 total_interest_due are paid, not principal alone."""
+from datetime import date
+
 from sqlalchemy.orm import Session as OrmSession
 
 import models as models_module
+from models import Transaction
 
 
 def _create_loan(client, total_interest_due: float = 0.0, loan_amount: float = 100000.0):
@@ -211,3 +214,53 @@ def test_deleting_a_payment_with_a_missing_parent_loan_returns_404_not_500(clien
     _simulate_missing_loan(monkeypatch, loan["id"])
     resp = client.delete(f"/school-loans/{loan['id']}/payments/{payment_id}")
     assert resp.status_code == 404
+
+
+def test_new_loan_is_unverified_with_no_linked_transaction(client, db_session):
+    loan = _create_loan(client)
+    assert loan["transaction_id"] is None
+    assert loan["verified"] is False
+    assert loan["matched_tx"] is None
+
+
+def test_linking_a_transaction_to_a_loan_marks_it_verified(client, db_session):
+    loan = _create_loan(client)
+    tx = Transaction(
+        type="income", amount=100000.0, currency="NGN", category="Loans",
+        description="Loan from Test Cooperative", date=date(2026, 1, 1),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    resp = client.put(f"/school-loans/{loan['id']}", json={
+        "lender_name": loan["lender_name"], "loan_amount": loan["loan_amount"],
+        "interest_rate": loan["interest_rate"], "total_interest_due": loan["total_interest_due"],
+        "collected_date": loan["collected_date"], "transaction_id": tx.id,
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["transaction_id"] == tx.id
+    assert body["verified"] is True
+    assert body["matched_tx"]["id"] == tx.id
+    assert body["matched_tx"]["amount"] == 100000.0
+
+
+def test_match_transactions_income_type_excludes_expense_transactions(client, db_session):
+    loan = _create_loan(client)
+    income_tx = Transaction(
+        type="income", amount=100000.0, currency="NGN", category="Loans",
+        description="Test Cooperative loan disbursement", date=date(2026, 1, 1),
+    )
+    expense_tx = Transaction(
+        type="expense", amount=5000.0, currency="NGN", category="Loans",
+        description="Test Cooperative repayment", date=date(2026, 1, 1),
+    )
+    db_session.add_all([income_tx, expense_tx])
+    db_session.commit()
+
+    resp = client.get(f"/school-loans/{loan['id']}/match-transactions", params={
+        "year": 2026, "month": 1, "tx_type": "income",
+    })
+    assert resp.status_code == 200, resp.text
+    ids = {t["id"] for t in resp.json()}
+    assert ids == {income_tx.id}

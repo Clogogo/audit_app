@@ -92,6 +92,8 @@ export function SchoolLoans() {
   const [linkingPayment, setLinkingPayment] = useState<{ loanId: number; payment: SchoolLoanPaymentOut } | null>(null);
   // Picking a transaction to record as a brand-new payment
   const [linkingNewPaymentForLoan, setLinkingNewPaymentForLoan] = useState<number | null>(null);
+  // Linking the loan's own collection to an income transaction
+  const [linkingLoan, setLinkingLoan] = useState<SchoolLoan | null>(null);
 
   // Expanded rows
   const [expandedLoanId, setExpandedLoanId] = useState<number | null>(null);
@@ -117,10 +119,30 @@ export function SchoolLoans() {
       interest_rate: loan.interest_rate,
       total_interest_due: loan.total_interest_due,
       collected_date: loan.collected_date,
+      transaction_id: loan.transaction_id,
       notes: loan.notes ?? '',
       is_active: loan.is_active,
     });
     setShowLoanForm(true);
+  };
+
+  const handleLinkLoanTransaction = async (loan: SchoolLoan, transactionId: number) => {
+    try {
+      await updateSchoolLoan(loan.id, {
+        lender_name: loan.lender_name,
+        loan_amount: loan.loan_amount,
+        interest_rate: loan.interest_rate,
+        total_interest_due: loan.total_interest_due,
+        collected_date: loan.collected_date,
+        transaction_id: transactionId,
+        notes: loan.notes,
+        is_active: loan.is_active,
+      });
+      setLinkingLoan(null);
+      load();
+    } catch {
+      setError('Failed to link transaction to school loan');
+    }
   };
 
   const handleSaveLoan = async () => {
@@ -360,6 +382,26 @@ export function SchoolLoans() {
                               <p className="text-xs text-muted-foreground mt-0.5">
                                 {loan.interest_rate}% interest{loan.notes ? ` · ${loan.notes}` : ''}
                               </p>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                {loan.verified ? (
+                                  <span
+                                    className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700 font-medium"
+                                    title={loan.matched_tx ? `Linked to tx #${loan.matched_tx.id} — ${loan.matched_tx.description}` : 'Verified'}
+                                  >
+                                    <BadgeCheck className="h-3 w-3" />
+                                    Verified
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground/60">Loan collection not linked</span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setLinkingLoan(loan)}
+                                  className="text-xs text-primary underline hover:no-underline"
+                                >
+                                  {loan.verified ? 'Change' : 'Link transaction…'}
+                                </button>
+                              </div>
                             </div>
                             <div className="flex gap-1 shrink-0">
                               <button
@@ -837,6 +879,20 @@ export function SchoolLoans() {
             .map((p) => p.transaction_id as number))}
           onClose={() => setLinkingNewPaymentForLoan(null)}
           onSelect={(t) => handleLinkNewPayment(linkingNewPaymentForLoan, t)}
+        />
+      )}
+
+      {/* Link the loan's own collection to an income transaction */}
+      {linkingLoan && (
+        <TransactionPickerModal
+          title="Link a transaction to this loan's collection"
+          category="Loans"
+          type="income"
+          excludeTransactionIds={loans
+            .filter((l) => l.transaction_id !== null && l.id !== linkingLoan.id)
+            .map((l) => l.transaction_id as number)}
+          onClose={() => setLinkingLoan(null)}
+          onSelect={(t) => handleLinkLoanTransaction(linkingLoan, t.id)}
         />
       )}
 

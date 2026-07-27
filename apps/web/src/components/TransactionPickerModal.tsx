@@ -8,6 +8,7 @@ import { formatCurrency, formatDate } from '../lib/utils';
 interface TransactionPickerModalProps {
   title: string;
   category: string;
+  type?: 'income' | 'expense';
   startDate?: string;
   endDate?: string;
   excludeTransactionIds: number[];
@@ -16,7 +17,7 @@ interface TransactionPickerModalProps {
 }
 
 export function TransactionPickerModal({
-  title, category, startDate, endDate, excludeTransactionIds, onSelect, onClose,
+  title, category, type = 'expense', startDate, endDate, excludeTransactionIds, onSelect, onClose,
 }: TransactionPickerModalProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,7 +29,7 @@ export function TransactionPickerModal({
     setError(null);
 
     getTransactions({
-      type: 'expense',
+      type,
       category,
       start_date: startDate,
       end_date: endDate,
@@ -47,7 +48,7 @@ export function TransactionPickerModal({
       });
 
     return () => { cancelled = true; };
-  }, [category, startDate, endDate, excludeTransactionIds.join(',')]);
+  }, [category, type, startDate, endDate, excludeTransactionIds.join(',')]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
