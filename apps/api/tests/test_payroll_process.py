@@ -92,6 +92,33 @@ def test_fallback_rejects_when_validation_fails(client, db_session, staff_name, 
     assert staff_name in resp.json()["detail"]["missing"]
 
 
+def test_exact_name_match_with_wrong_category_is_not_treated_as_salary(client, db_session):
+    # Full name match (the strongest signal) must still not attach an
+    # unrelated expense — e.g. a reimbursement or vendor payment that
+    # happens to mention the staff member's exact name.
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    _create_salary_transaction(db_session, "Ngozi Williams", amount=15020.0, day="2026-01-30", category="Other")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0}],
+    })
+    assert resp.status_code == 422
+    assert "Ngozi Williams" in resp.json()["detail"]["missing"]
+
+
+def test_manual_transaction_id_rejects_wrong_category(client, db_session):
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=15020.0)
+    tx = _create_salary_transaction(db_session, "Ngozi Williams", amount=15020.0, day="2026-01-30", category="Other")
+
+    resp = client.post("/payroll/process", json={
+        "year": 2026, "month": 1,
+        "lines": [{"staff_id": staff.id, "gross_salary": 15020.0, "transaction_id": tx.id}],
+    })
+    assert resp.status_code == 400
+    assert "Salary and Wages" in resp.json()["detail"]
+
+
 def test_manual_transaction_id_overrides_automatic_matching(client, db_session):
     # Vendor name has zero overlap with staff name and amount is below net
     # pay — automatic matching (name + category/amount fallback) would

@@ -680,7 +680,10 @@ export function Payroll() {
             <div className="mt-4 flex items-start gap-2 rounded-lg bg-muted/30 border border-border px-4 py-3 text-xs text-muted-foreground">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>
-                Adjust gross salary and bonuses before processing. Loan deductions are calculated automatically.{' '}
+                Adjust gross salary and bonuses before processing. Loan and IOU deductions are calculated
+                automatically — record them under Staff → Loans or Staff → IOU, not here.{' '}
+                <strong className="text-foreground">Other Deductions</strong> is only for one-off charges
+                (uniform, fines, etc.) that don't belong to a loan or IOU.{' '}
                 <strong className="text-foreground">Before clicking "Process Payroll"</strong>, import the bank
                 statement for this month — salary payments in the statement are used to verify and link each staff
                 member's transaction.

@@ -69,8 +69,8 @@ const taxSubItems = [
 const staffSubItems = [
   { to: '/staff/directory', icon: Users, label: 'Staff Directory' },
   { to: '/staff/loans', icon: CreditCard, label: 'Staff Loans' },
-  { to: '/staff/advances', icon: Banknote, label: 'Advance Payment (IOU)' },
-  { to: '/staff/bonuses', icon: Gift, label: 'Teacher Bonuses' },
+  { to: '/staff/advances', icon: Banknote, label: 'IOU' },
+  { to: '/staff/bonuses', icon: Gift, label: 'Bonuses' },
   { to: '/staff/payroll', icon: Calculator, label: 'Payroll' },
   { to: '/staff/terms', icon: CalendarRange, label: 'Terms' },
 ];
