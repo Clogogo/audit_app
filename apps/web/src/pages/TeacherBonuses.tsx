@@ -128,16 +128,29 @@ export function TeacherBonuses() {
     return t.basis_is_salary ? 'salary' : 'manual';
   };
 
+  // A flat bonus still stores percentage/basis_amount under the hood (no
+  // schema change), but basis_amount is the staff's salary and percentage
+  // is DERIVED from the entered amount — "what % of their salary is this
+  // flat amount" — rather than a meaningless hardcoded 100%. Falls back to
+  // the old amount-as-basis/100% scheme only when salary is unknown/zero,
+  // since a percentage of nothing is undefined.
+  const flatFieldsFor = (amount: number, salary: number): Pick<TeacherBonusIn, 'basis_amount' | 'percentage'> =>
+    salary > 0
+      ? { basis_amount: salary, percentage: (amount / salary) * 100 }
+      : { basis_amount: amount, percentage: 100 };
+
   const applyType = (typeKey: string) => {
     const type = bonusTypes.find((t) => t.key === typeKey);
     if (!type) return;
     setForm((f) => {
       const staff = staffList.find((s) => s.id === f.staff_id);
       const prevType = bonusTypes.find((t) => t.key === f.bonus_type);
-      const carried = basisCategory(prevType) === basisCategory(type) ? f.basis_amount : 0;
+      const sameCategory = basisCategory(prevType) === basisCategory(type);
       if (type.calculation_method === 'flat_amount') {
-        return { ...f, bonus_type: typeKey, percentage: 100, basis_amount: carried };
+        const carriedAmount = sameCategory ? round2((f.percentage / 100) * f.basis_amount) : 0;
+        return { ...f, bonus_type: typeKey, ...flatFieldsFor(carriedAmount, staff?.monthly_gross ?? 0) };
       }
+      const carried = sameCategory ? f.basis_amount : 0;
       const basis = type.basis_is_salary ? (staff?.monthly_gross ?? carried) : carried;
       return { ...f, bonus_type: typeKey, percentage: type.default_percentage, basis_amount: basis };
     });
@@ -147,9 +160,12 @@ export function TeacherBonuses() {
     const staff = staffList.find((s) => s.id === staffId);
     setForm((f) => {
       const type = bonusTypes.find((t) => t.key === f.bonus_type);
-      if (!type || type.calculation_method === 'flat_amount' || !type.basis_is_salary) {
-        return { ...f, staff_id: staffId };
+      if (!type) return { ...f, staff_id: staffId };
+      if (type.calculation_method === 'flat_amount') {
+        const currentAmount = round2((f.percentage / 100) * f.basis_amount);
+        return { ...f, staff_id: staffId, ...flatFieldsFor(currentAmount, staff?.monthly_gross ?? 0) };
       }
+      if (!type.basis_is_salary) return { ...f, staff_id: staffId };
       return { ...f, staff_id: staffId, basis_amount: staff?.monthly_gross ?? f.basis_amount };
     });
   };
@@ -346,7 +362,7 @@ export function TeacherBonuses() {
                       <tr key={b.id} className="hover:bg-muted/30 transition-colors">
                         <td className="py-3 pr-3 font-medium">{b.staff_name}</td>
                         <td className="py-3 pr-3 text-muted-foreground">{typeLabel(b.bonus_type)}</td>
-                        <td className="py-3 pr-3 text-right">{b.percentage}%</td>
+                        <td className="py-3 pr-3 text-right">{b.percentage.toFixed(2)}%</td>
                         <td className="py-3 pr-3 text-right text-muted-foreground">{formatCurrency(b.basis_amount)}</td>
                         <td className="py-3 pr-3 text-right font-medium text-income">{formatCurrency(b.amount)}</td>
                         <td className="py-3 pr-3 text-muted-foreground">{MONTHS[b.period_month - 1]} {b.period_year}</td>
@@ -417,11 +433,19 @@ export function TeacherBonuses() {
               </div>
 
               {selectedType?.calculation_method === 'flat_amount' ? (
-                <NumInput
-                  label="Bonus Amount (₦)"
-                  value={form.basis_amount}
-                  onChange={(n) => setForm((f) => ({ ...f, percentage: 100, basis_amount: n }))}
-                />
+                <>
+                  <NumInput
+                    label="Bonus Amount (₦)"
+                    value={previewAmount}
+                    onChange={(n) => {
+                      const staff = staffList.find((s) => s.id === form.staff_id);
+                      setForm((f) => ({ ...f, ...flatFieldsFor(n, staff?.monthly_gross ?? 0) }));
+                    }}
+                  />
+                  {form.staff_id > 0 && (
+                    <p className="text-xs text-muted-foreground">{form.percentage.toFixed(2)}% of this staff member's salary</p>
+                  )}
+                </>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   <NumInput label="Percentage (%)" value={form.percentage} onChange={(n) => setForm((f) => ({ ...f, percentage: n }))} />
