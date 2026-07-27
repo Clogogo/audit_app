@@ -97,6 +97,7 @@ def initialize_database() -> None:
         ],
         "school_loans": [
             "total_interest_due REAL NOT NULL DEFAULT 0.0",
+            "transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL",
         ],
         "users": [
             "is_admin BOOLEAN NOT NULL DEFAULT FALSE",
