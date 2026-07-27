@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Gift, Plus, Pencil, Trash2, XCircle, AlertCircle } from 'lucide-react';
+import { Gift, Plus, Pencil, Trash2, XCircle, AlertCircle, Settings, RotateCcw } from 'lucide-react';
 import {
   listTeacherBonuses, createTeacherBonus, updateTeacherBonus, deleteTeacherBonus,
-  getBonusTypes, listStaffMembers, getTerms,
+  getBonusTypes, createBonusType, updateBonusType, deleteBonusType, listStaffMembers, getTerms,
 } from '../api/client';
-import type { TeacherBonus, TeacherBonusIn, BonusType, StaffMember, Term } from '../api/types';
+import type { TeacherBonus, TeacherBonusIn, BonusType, BonusTypeIn, StaffMember, Term } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { formatCurrency } from '../lib/utils';
@@ -32,6 +32,15 @@ const emptyForm = (): TeacherBonusIn => {
     notes: '',
   };
 };
+
+const emptyTypeForm = (): BonusTypeIn => ({
+  label: '',
+  description: '',
+  calculation_method: 'percentage',
+  basis_is_salary: true,
+  default_percentage: 0,
+  is_active: true,
+});
 
 function NumInput({ label, value, onChange }: {
   label: string; value: number; onChange: (n: number) => void;
@@ -76,6 +85,11 @@ export function TeacherBonuses() {
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
+  const [showTypesModal, setShowTypesModal] = useState(false);
+  const [editingType, setEditingType] = useState<BonusType | null>(null);
+  const [typeForm, setTypeForm] = useState<BonusTypeIn>(emptyTypeForm());
+  const [savingType, setSavingType] = useState(false);
+
   const load = () => {
     setLoading(true);
     Promise.all([listTeacherBonuses(), listStaffMembers(true), getBonusTypes(), getTerms()])
@@ -108,18 +122,67 @@ export function TeacherBonuses() {
     if (!type) return;
     setForm((f) => {
       const staff = staffList.find((s) => s.id === f.staff_id);
-      const basis = typeKey === 'student_referral' ? f.basis_amount : (staff?.monthly_gross ?? f.basis_amount);
+      if (type.calculation_method === 'flat_amount') {
+        return { ...f, bonus_type: typeKey, percentage: 100, basis_amount: f.basis_amount };
+      }
+      const basis = type.basis_is_salary ? (staff?.monthly_gross ?? f.basis_amount) : f.basis_amount;
       return { ...f, bonus_type: typeKey, percentage: type.default_percentage, basis_amount: basis };
     });
   };
 
   const applyStaff = (staffId: number) => {
     const staff = staffList.find((s) => s.id === staffId);
-    setForm((f) => ({
-      ...f,
-      staff_id: staffId,
-      basis_amount: f.bonus_type === 'student_referral' ? f.basis_amount : (staff?.monthly_gross ?? f.basis_amount),
-    }));
+    setForm((f) => {
+      const type = bonusTypes.find((t) => t.key === f.bonus_type);
+      if (!type || type.calculation_method === 'flat_amount' || !type.basis_is_salary) {
+        return { ...f, staff_id: staffId };
+      }
+      return { ...f, staff_id: staffId, basis_amount: staff?.monthly_gross ?? f.basis_amount };
+    });
+  };
+
+  const openManageTypes = () => { setEditingType(null); setTypeForm(emptyTypeForm()); setShowTypesModal(true); };
+  const openEditType = (t: BonusType) => {
+    setEditingType(t);
+    setTypeForm({
+      label: t.label, description: t.description ?? '', calculation_method: t.calculation_method,
+      basis_is_salary: t.basis_is_salary, default_percentage: t.default_percentage, is_active: t.is_active,
+    });
+  };
+  const closeTypeForm = () => { setEditingType(null); setTypeForm(emptyTypeForm()); };
+
+  const handleSaveType = async () => {
+    if (!typeForm.label.trim()) return;
+    setSavingType(true);
+    try {
+      if (editingType) {
+        await updateBonusType(editingType.id, typeForm);
+      } else {
+        await createBonusType(typeForm);
+      }
+      closeTypeForm();
+      load();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Failed to save bonus type');
+    } finally {
+      setSavingType(false);
+    }
+  };
+
+  const handleToggleTypeActive = async (t: BonusType) => {
+    try {
+      if (t.is_active) {
+        await deleteBonusType(t.id);
+      } else {
+        await updateBonusType(t.id, {
+          label: t.label, description: t.description, calculation_method: t.calculation_method,
+          basis_is_salary: t.basis_is_salary, default_percentage: t.default_percentage, is_active: true,
+        });
+      }
+      load();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Failed to update bonus type');
+    }
   };
 
   const handleSave = async () => {
@@ -156,6 +219,9 @@ export function TeacherBonuses() {
   const totalAmount = filtered.reduce((sum, b) => sum + b.amount, 0);
   const selectedType = bonusTypes.find((t) => t.key === form.bonus_type);
   const previewAmount = round2((form.percentage / 100) * form.basis_amount);
+  // Retired types stay selectable only if they're already on the record
+  // being edited — otherwise the dropdown would silently blank out.
+  const typeOptions = bonusTypes.filter((t) => t.is_active || t.key === form.bonus_type);
 
   const typeLabel = (key: string) => bonusTypes.find((t) => t.key === key)?.label ?? key;
 
@@ -171,10 +237,16 @@ export function TeacherBonuses() {
             Performance, referral, loyalty, and annual bonuses — automatically added to that staff member's payroll for the target month
           </p>
         </div>
-        <Button onClick={openAdd} disabled={staffList.length === 0}>
-          <Plus className="h-4 w-4 mr-1" />
-          Add Bonus
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={openManageTypes}>
+            <Settings className="h-4 w-4 mr-1" />
+            Manage Types
+          </Button>
+          <Button onClick={openAdd} disabled={staffList.length === 0}>
+            <Plus className="h-4 w-4 mr-1" />
+            Add Bonus
+          </Button>
+        </div>
       </div>
 
       {staffList.length === 0 && !loading && (
@@ -324,21 +396,29 @@ export function TeacherBonuses() {
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   <option value="">— Select type —</option>
-                  {bonusTypes.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  {typeOptions.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
                 </select>
                 {selectedType && (
                   <p className="text-xs text-muted-foreground mt-1">{selectedType.description}</p>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <NumInput label="Percentage (%)" value={form.percentage} onChange={(n) => setForm((f) => ({ ...f, percentage: n }))} />
+              {selectedType?.calculation_method === 'flat_amount' ? (
                 <NumInput
-                  label={form.bonus_type === 'student_referral' ? "Referred Student's Fee" : 'Basis Amount (salary)'}
+                  label="Bonus Amount (₦)"
                   value={form.basis_amount}
-                  onChange={(n) => setForm((f) => ({ ...f, basis_amount: n }))}
+                  onChange={(n) => setForm((f) => ({ ...f, percentage: 100, basis_amount: n }))}
                 />
-              </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <NumInput label="Percentage (%)" value={form.percentage} onChange={(n) => setForm((f) => ({ ...f, percentage: n }))} />
+                  <NumInput
+                    label={selectedType && !selectedType.basis_is_salary ? "Referred Student's Fee" : 'Basis Amount (salary)'}
+                    value={form.basis_amount}
+                    onChange={(n) => setForm((f) => ({ ...f, basis_amount: n }))}
+                  />
+                </div>
+              )}
 
               <div className="rounded-md bg-secondary/40 px-3 py-2 text-sm">
                 Computed bonus: <span className="font-semibold text-income">{formatCurrency(previewAmount)}</span>
@@ -389,6 +469,116 @@ export function TeacherBonuses() {
               <Button onClick={handleSave} disabled={saving || !form.staff_id || !form.bonus_type}>
                 {saving ? 'Saving…' : editing ? 'Save Changes' : 'Add Bonus'}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manage Bonus Types */}
+      {showTypesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg bg-card rounded-xl shadow-xl border border-border p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Manage Bonus Types</h2>
+              <button type="button" aria-label="Close" onClick={() => { setShowTypesModal(false); closeTypeForm(); }} className="text-muted-foreground hover:text-foreground">
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 border-b border-border pb-5">
+              <h3 className="text-sm font-medium">{editingType ? `Edit "${editingType.label}"` : 'Add a new type'}</h3>
+              <input
+                type="text"
+                placeholder="Label, e.g. Christmas Gift"
+                value={typeForm.label}
+                onChange={(e) => setTypeForm((f) => ({ ...f, label: e.target.value }))}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <input
+                type="text"
+                placeholder="Description (optional)"
+                value={typeForm.description ?? ''}
+                onChange={(e) => setTypeForm((f) => ({ ...f, description: e.target.value }))}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+
+              <div className="flex gap-4 text-sm">
+                <label className="flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    checked={typeForm.calculation_method === 'percentage'}
+                    onChange={() => setTypeForm((f) => ({ ...f, calculation_method: 'percentage' }))}
+                  />
+                  Percentage of a basis amount
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    checked={typeForm.calculation_method === 'flat_amount'}
+                    onChange={() => setTypeForm((f) => ({ ...f, calculation_method: 'flat_amount' }))}
+                  />
+                  Direct amount
+                </label>
+              </div>
+
+              {typeForm.calculation_method === 'percentage' && (
+                <>
+                  <div className="flex gap-4 text-sm">
+                    <label className="flex items-center gap-1.5">
+                      <input
+                        type="radio"
+                        checked={typeForm.basis_is_salary}
+                        onChange={() => setTypeForm((f) => ({ ...f, basis_is_salary: true }))}
+                      />
+                      Basis = staff's salary
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <input
+                        type="radio"
+                        checked={!typeForm.basis_is_salary}
+                        onChange={() => setTypeForm((f) => ({ ...f, basis_is_salary: false }))}
+                      />
+                      Basis = manual entry
+                    </label>
+                  </div>
+                  <NumInput
+                    label="Default Percentage (%)"
+                    value={typeForm.default_percentage}
+                    onChange={(n) => setTypeForm((f) => ({ ...f, default_percentage: n }))}
+                  />
+                </>
+              )}
+
+              <div className="flex justify-end gap-2">
+                {editingType && <Button variant="outline" onClick={closeTypeForm} disabled={savingType}>Cancel</Button>}
+                <Button onClick={handleSaveType} disabled={savingType || !typeForm.label.trim()}>
+                  {savingType ? 'Saving…' : editingType ? 'Save Changes' : 'Add Type'}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {bonusTypes.map((t) => (
+                <div key={t.key} className="flex items-center justify-between gap-2 py-1.5 border-b border-border/50 last:border-0">
+                  <div className={t.is_active ? '' : 'opacity-50'}>
+                    <p className="text-sm font-medium">{t.label}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t.calculation_method === 'flat_amount' ? 'Direct amount' : `${t.default_percentage}% of ${t.basis_is_salary ? "salary" : 'manual entry'}`}
+                      {!t.is_active && ' — retired'}
+                    </p>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button type="button" aria-label="Edit type" onClick={() => openEditType(t)}
+                      className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button type="button" aria-label={t.is_active ? 'Retire type' : 'Reactivate type'} onClick={() => handleToggleTypeActive(t)}
+                      className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground">
+                      {t.is_active ? <Trash2 className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

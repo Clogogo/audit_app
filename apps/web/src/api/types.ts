@@ -1112,10 +1112,23 @@ export interface SchoolProfileIn {
 // ── Teacher/Staff Bonuses ────────────────────────────────────────────────────
 
 export interface BonusType {
+  id: number;
   key: string;
   label: string;
+  description: string | null;
+  calculation_method: 'percentage' | 'flat_amount';
+  basis_is_salary: boolean;
   default_percentage: number;
-  description: string;
+  is_active: boolean;
+}
+
+export interface BonusTypeIn {
+  label: string;
+  description?: string | null;
+  calculation_method: 'percentage' | 'flat_amount';
+  basis_is_salary: boolean;
+  default_percentage: number;
+  is_active?: boolean;
 }
 
 export interface TeacherBonus {

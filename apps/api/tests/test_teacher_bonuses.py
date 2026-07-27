@@ -34,6 +34,80 @@ def test_types_endpoint_returns_all_six_seed_types(client):
     }
 
 
+def test_create_bonus_type_slugifies_label_and_defaults_active(client):
+    resp = client.post("/teacher-bonuses/types", json={"label": "Christmas Gift", "calculation_method": "flat_amount"})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["key"] == "christmas_gift"
+    assert body["is_active"] is True
+    assert body["default_percentage"] == 0.0
+
+
+def test_create_bonus_type_rejects_duplicate_label(client):
+    client.post("/teacher-bonuses/types", json={"label": "Christmas Gift"})
+    resp = client.post("/teacher-bonuses/types", json={"label": "christmas gift"})
+    assert resp.status_code == 400
+
+
+def test_create_bonus_type_rejects_unknown_calculation_method(client):
+    resp = client.post("/teacher-bonuses/types", json={"label": "Mystery Bonus", "calculation_method": "bogus"})
+    assert resp.status_code == 400
+
+
+def test_update_bonus_type_renames_label_but_keeps_key(client):
+    created = client.post("/teacher-bonuses/types", json={"label": "Christmas Gift", "calculation_method": "flat_amount"}).json()
+    resp = client.put(f"/teacher-bonuses/types/{created['id']}", json={
+        "label": "Festive Season Gift", "calculation_method": "flat_amount",
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["key"] == "christmas_gift"
+    assert body["label"] == "Festive Season Gift"
+
+
+def test_retire_bonus_type_is_soft_delete(client):
+    created = client.post("/teacher-bonuses/types", json={"label": "Christmas Gift", "calculation_method": "flat_amount"}).json()
+    resp = client.delete(f"/teacher-bonuses/types/{created['id']}")
+    assert resp.status_code == 204
+
+    active = client.get("/teacher-bonuses/types", params={"active_only": True}).json()
+    assert not any(t["key"] == "christmas_gift" for t in active)
+
+    everyone = client.get("/teacher-bonuses/types").json()
+    retired = next(t for t in everyone if t["key"] == "christmas_gift")
+    assert retired["is_active"] is False
+
+
+def test_retired_bonus_type_still_resolves_on_existing_bonus(client):
+    created = client.post("/teacher-bonuses/types", json={"label": "Christmas Gift", "calculation_method": "flat_amount"}).json()
+    staff = _create_staff(client)
+    bonus = client.post("/teacher-bonuses/", json=_bonus_payload(
+        staff["id"], bonus_type="christmas_gift", percentage=100.0, basis_amount=20000.0,
+    ))
+    assert bonus.status_code == 201, bonus.text
+
+    client.delete(f"/teacher-bonuses/types/{created['id']}")
+
+    resp = client.get("/teacher-bonuses/", params={"staff_id": staff["id"]})
+    assert resp.json()[0]["bonus_type"] == "christmas_gift"
+
+
+def test_flat_amount_type_bonus_amount_equals_entered_amount(client):
+    client.post("/teacher-bonuses/types", json={"label": "Christmas Gift", "calculation_method": "flat_amount"})
+    staff = _create_staff(client)
+    resp = client.post("/teacher-bonuses/", json=_bonus_payload(
+        staff["id"], bonus_type="christmas_gift", percentage=100.0, basis_amount=20000.0,
+    ))
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["amount"] == 20000.0
+
+
+def test_create_bonus_rejects_unknown_bonus_type(client):
+    staff = _create_staff(client)
+    resp = client.post("/teacher-bonuses/", json=_bonus_payload(staff["id"], bonus_type="not_a_real_type"))
+    assert resp.status_code == 400
+
+
 def test_create_computes_amount_from_percentage_and_basis(client):
     staff = _create_staff(client)
     resp = client.post("/teacher-bonuses/", json=_bonus_payload(staff["id"], percentage=10.0, basis_amount=150000.0))
