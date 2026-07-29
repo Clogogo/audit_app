@@ -157,6 +157,7 @@ export interface BankAccount {
   account_holder_name?: string;
   account_number?: string;
   opening_balance?: number | null;
+  opening_balance_date?: string | null;
   current_balance?: number | null;
   created_at: string;
   transaction_count?: number;
@@ -167,6 +168,7 @@ export interface BankAccountCreate {
   account_holder_name?: string;
   account_number?: string;
   opening_balance?: number | null;
+  opening_balance_date?: string | null;
   current_balance?: number | null;
 }
 
@@ -444,6 +446,7 @@ export interface BankAccountReportSummary {
   account_holder_name: string | null;
   account_number: string | null;
   opening_balance: number;
+  opening_balance_date: string | null;
   total_income: number;
   total_expense: number;
   total_transfer: number;
