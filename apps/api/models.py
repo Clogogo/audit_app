@@ -202,6 +202,7 @@ class BankAccount(Base):
     account_holder_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     account_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     opening_balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    opening_balance_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     current_balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     __table_args__ = (

@@ -353,6 +353,7 @@ class BankAccountCreate(BaseModel):
     account_holder_name: Optional[str] = None
     account_number: Optional[str] = None
     opening_balance: Optional[float] = None
+    opening_balance_date: Optional[date] = None
     current_balance: Optional[float] = None
 
 
@@ -363,6 +364,7 @@ class BankAccountOut(BaseModel):
     account_holder_name: Optional[str]
     account_number: Optional[str]
     opening_balance: Optional[float]
+    opening_balance_date: Optional[date] = None
     current_balance: Optional[float]
     created_at: datetime
 
@@ -443,10 +445,11 @@ class BankAccountReportSummary(BaseModel):
     account_holder_name: Optional[str]
     account_number: Optional[str]
     opening_balance: float  # Balance at start of period (e.g. Dec 31 prior year)
+    opening_balance_date: Optional[date] = None  # Date opening_balance was recorded as of
     total_income: float
     total_expense: float
     total_transfer: float  # Inter-account transfers shown separately for reference
-    net_amount: float  # opening_balance + income - expense
+    net_amount: float  # opening_balance + income - expense, rolled forward from opening_balance_date
     income_count: int
     expense_count: int  # Includes transfer count
     transfer_count: int  # Subset of expense_count - for reference only
@@ -463,10 +466,11 @@ class BankAccountReport(BaseModel):
     account_holder_name: Optional[str]
     account_number: Optional[str]
     opening_balance: float
+    opening_balance_date: Optional[date] = None  # Date opening_balance was recorded as of
     total_income: float
     total_expense: float
     total_transfer: float
-    net_amount: float  # opening_balance + income - expense
+    net_amount: float  # opening_balance + income - expense, rolled forward from opening_balance_date
     income_count: int
     expense_count: int
     transfer_count: int

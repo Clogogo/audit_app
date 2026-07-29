@@ -776,6 +776,31 @@ def _is_savings_wallet_account(bank_name: str) -> bool:
     return any(kw in lower for kw in _SAVINGS_WALLET_KEYWORDS)
 
 
+def _sum_income_expense(
+    transactions: list[Transaction], bank_name: str, db: Session
+) -> tuple[float, float]:
+    """
+    Sum income/expense from a transaction list. Inter-account transfers count
+    as income or expense per their actual debit/credit direction; intra-account
+    transfers (auto-saves, vaults) are excluded entirely. Shared by the period
+    totals and the balance roll-forward so both use identical classification.
+    """
+    inter_transfers = [
+        t for t in transactions if t.type == "transfer" and not _is_intra_account_transfer(t)
+    ]
+    transfer_income = [t for t in inter_transfers if _transfer_is_income(t, bank_name, db)]
+    transfer_expense = [t for t in inter_transfers if not _transfer_is_income(t, bank_name, db)]
+    income = (
+        sum(t.amount for t in transactions if t.type == "income")
+        + sum(t.amount for t in transfer_income)
+    )
+    expense = (
+        sum(t.amount for t in transactions if t.type == "expense")
+        + sum(t.amount for t in transfer_expense)
+    )
+    return income, expense
+
+
 def _transfer_is_income(t: Transaction, bank_name: str, db: Session) -> bool:
     """
     Direction of a (non-intra-account) transfer: True = money received (income),
@@ -824,9 +849,11 @@ def get_bank_account_reports(
             .all()
         )
 
-        # Transfers (excluding intra-account auto-saves/vaults) count as income or
-        # expense per-transaction, by their actual debit/credit direction — not by
-        # an account-type guess, since any account can both send and receive.
+        # Period totals (what happened within the selected date range) — shown
+        # as "this period"'s activity, independent of the balance calc below.
+        # Transfers (excluding intra-account auto-saves/vaults) count as income
+        # or expense per-transaction, by their actual debit/credit direction —
+        # not by an account-type guess, since any account can both send and receive.
         inter_transfers = [
             t for t in transactions
             if t.type == "transfer" and not _is_intra_account_transfer(t)
@@ -850,21 +877,38 @@ def get_bank_account_reports(
         )
 
         # Inter-account transfers shown separately for reference (never intra-account).
-        total_transfer = sum(
-            t.amount for t in transactions
-            if t.type == "transfer" and not _is_intra_account_transfer(t)
-        )
-        transfer_count = sum(
-            1 for t in transactions
-            if t.type == "transfer" and not _is_intra_account_transfer(t)
-        )
+        total_transfer = sum(t.amount for t in inter_transfers)
+        transfer_count = len(inter_transfers)
 
         transaction_dates = [t.date for t in transactions]
         first_transaction = min(transaction_dates) if transaction_dates else None
         last_transaction = max(transaction_dates) if transaction_dates else None
 
+        # Book balance (net_amount) must roll forward from the date opening_balance
+        # was actually recorded, not from the period's start_date — otherwise
+        # changing the report's date filter silently drops the income/expense
+        # that happened between the true anchor and start_date, drifting away
+        # from the real bank statement. Falls back to start_date when no anchor
+        # has been set yet, matching the previous (pre-fix) behavior.
         opening_balance = account.opening_balance or 0.0
-        net_amount = opening_balance + total_income - total_expense
+        balance_anchor_date = account.opening_balance_date or start_date
+        if balance_anchor_date == start_date:
+            # Anchor matches the period's start_date — the period totals
+            # already computed above are the balance totals too, no need to
+            # requery or reclassify transfers a second time.
+            balance_income, balance_expense = total_income, total_expense
+        else:
+            balance_transactions = (
+                TransactionQueryBuilder(db)
+                .filter_bank_account(account.id)
+                .filter_date_range(balance_anchor_date, end_date)
+                .build()
+                .all()
+            )
+            balance_income, balance_expense = _sum_income_expense(
+                balance_transactions, account.bank_name, db
+            )
+        net_amount = opening_balance + balance_income - balance_expense
 
         reports.append(
             BankAccountReportSummary(
@@ -873,6 +917,7 @@ def get_bank_account_reports(
                 account_holder_name=account.account_holder_name,
                 account_number=account.account_number,
                 opening_balance=opening_balance,
+                opening_balance_date=account.opening_balance_date,
                 total_income=total_income,
                 total_expense=total_expense,
                 total_transfer=total_transfer,
@@ -987,17 +1032,39 @@ def get_bank_account_report(
     first_transaction = min(transaction_dates) if transaction_dates else None
     last_transaction = max(transaction_dates) if transaction_dates else None
 
+    # Book balance (net_amount) rolls forward from the date opening_balance was
+    # actually recorded, not from the period's start_date — see matching
+    # comment in get_bank_account_reports for why. Falls back to start_date
+    # when no anchor has been set yet, matching the previous behavior.
     opening_balance = account.opening_balance or 0.0
+    balance_anchor_date = account.opening_balance_date or start_date
+    if balance_anchor_date == start_date:
+        # Anchor matches the period's start_date — the period totals already
+        # computed above are the balance totals too, no need to requery or
+        # reclassify transfers a second time.
+        balance_income, balance_expense = total_income, total_expense
+    else:
+        balance_transactions = (
+            TransactionQueryBuilder(db)
+            .filter_bank_account(account_id)
+            .filter_date_range(balance_anchor_date, end_date)
+            .build()
+            .all()
+        )
+        balance_income, balance_expense = _sum_income_expense(balance_transactions, account.bank_name, db)
+    net_amount = opening_balance + balance_income - balance_expense
+
     return BankAccountReport(
         bank_account_id=account.id,
         bank_name=account.bank_name,
         account_holder_name=account.account_holder_name,
         account_number=account.account_number,
         opening_balance=opening_balance,
+        opening_balance_date=account.opening_balance_date,
         total_income=total_income,
         total_expense=total_expense,
         total_transfer=total_transfer,
-        net_amount=opening_balance + total_income - total_expense,
+        net_amount=net_amount,
         income_count=income_count,
         expense_count=expense_count,
         transfer_count=transfer_count,

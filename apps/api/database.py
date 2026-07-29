@@ -90,6 +90,7 @@ def initialize_database() -> None:
         ],
         "bank_accounts": [
             "opening_balance REAL",
+            "opening_balance_date DATE",
             "current_balance REAL",
         ],
         "advance_payments": [

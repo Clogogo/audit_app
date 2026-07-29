@@ -2,6 +2,7 @@
 Bank Account Management API
 CRUD operations for managing bank accounts
 """
+from datetime import date
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth import require_permission
@@ -44,6 +45,7 @@ def create_bank_account(data: BankAccountCreate, db: Session = Depends(get_db)):
         account_holder_name=data.account_holder_name,
         account_number=data.account_number,
         opening_balance=data.opening_balance,
+        opening_balance_date=data.opening_balance_date,
         current_balance=data.current_balance,
     )
     db.add(account)
@@ -69,6 +71,7 @@ def update_bank_account(
     account.account_holder_name = data.account_holder_name
     account.account_number = data.account_number
     account.opening_balance = data.opening_balance
+    account.opening_balance_date = data.opening_balance_date
     account.current_balance = data.current_balance
     db.commit()
     db.refresh(account)
@@ -81,6 +84,7 @@ class _BalanceUpdate(BaseModel):
 
 class _OpeningBalanceUpdate(BaseModel):
     opening_balance: Optional[float]
+    opening_balance_date: Optional[date] = None
 
 
 @router.patch("/{account_id}/balance", response_model=BankAccountOut)
@@ -98,6 +102,7 @@ def update_opening_balance(account_id: int, data: _OpeningBalanceUpdate, db: Ses
     """Set the opening balance (closing balance of prior period) for book balance calculation."""
     account = get_or_404(db, BankAccount, account_id, "Bank account")
     account.opening_balance = data.opening_balance
+    account.opening_balance_date = data.opening_balance_date
     db.commit()
     db.refresh(account)
     return account
