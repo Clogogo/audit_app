@@ -376,13 +376,23 @@ class PayrollEntry(Base):
 
 
 class TeacherBonus(Base):
-    """A bonus award for a staff member, feeding automatically into a
-    specific payroll month. The qualifying judgment (class average,
-    punctuality rating, "the referred teacher stayed", etc.) happens
-    outside this app — recording it here already is the approval, same
-    as StaffLoan/AdvancePayment. amount is computed and stored at
-    create/update time so a later salary change never retroactively
-    changes a historical bonus."""
+    """A bonus award for a staff member, feeding automatically into payroll.
+    The qualifying judgment (class average, punctuality rating, "the
+    referred teacher stayed", etc.) happens outside this app — recording
+    it here already is the approval, same as StaffLoan/AdvancePayment.
+
+    One-time (frequency="onetime"): feeds into exactly period_year/
+    period_month; amount is computed and stored at create/update time so a
+    later salary change never retroactively changes a historical bonus.
+
+    Monthly (frequency="monthly"): period_year/period_month is the START
+    month; it feeds into every payroll month from there onward (through
+    end_year/end_month inclusive, or indefinitely if those are None). Its
+    amount is NOT frozen — payroll recomputes it from the staff member's
+    CURRENT salary each month (percentage/basis_amount unchanged, so a
+    raise flows through automatically), matching how loan/advance
+    deductions already work. The stored `amount` column is only an
+    at-creation preview for display before the first real computation."""
     __tablename__ = "teacher_bonuses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -391,8 +401,11 @@ class TeacherBonus(Base):
     percentage: Mapped[float] = mapped_column(Float)        # e.g. 10.0, 5.0, 20.0 — editable per record, not locked to type
     basis_amount: Mapped[float] = mapped_column(Float)      # what the percentage applies to — usually the staff member's own salary, but the referred student's fee for student_referral
     amount: Mapped[float] = mapped_column(Float)            # computed: round(percentage / 100 * basis_amount, 2)
-    period_year: Mapped[int] = mapped_column(Integer)       # which payroll month this bonus feeds into
+    frequency: Mapped[str] = mapped_column(String(20), default="onetime")  # "onetime" | "monthly"
+    period_year: Mapped[int] = mapped_column(Integer)       # which payroll month this bonus feeds into (or the start month, if monthly)
     period_month: Mapped[int] = mapped_column(Integer)
+    end_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)   # monthly only; None = recurs indefinitely
+    end_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     term_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("terms.id", ondelete="SET NULL"), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

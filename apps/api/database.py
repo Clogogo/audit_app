@@ -96,6 +96,11 @@ def initialize_database() -> None:
         "advance_payments": [
             "remaining_amount REAL DEFAULT 0.0",
         ],
+        "teacher_bonuses": [
+            "frequency VARCHAR(20) DEFAULT 'onetime'",
+            "end_year INTEGER",
+            "end_month INTEGER",
+        ],
         "school_loans": [
             "total_interest_due REAL NOT NULL DEFAULT 0.0",
             "transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL",

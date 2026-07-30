@@ -26,8 +26,11 @@ const emptyForm = (): TeacherBonusIn => {
     bonus_type: '',
     percentage: 0,
     basis_amount: 0,
+    frequency: 'onetime',
     period_year: year,
     period_month: month,
+    end_year: null,
+    end_month: null,
     term_id: null,
     notes: '',
   };
@@ -108,8 +111,11 @@ export function TeacherBonuses() {
       bonus_type: b.bonus_type,
       percentage: b.percentage,
       basis_amount: b.basis_amount,
+      frequency: b.frequency,
       period_year: b.period_year,
       period_month: b.period_month,
+      end_year: b.end_year,
+      end_month: b.end_month,
       term_id: b.term_id,
       notes: b.notes ?? '',
     });
@@ -254,6 +260,13 @@ export function TeacherBonuses() {
 
   const typeLabel = (key: string) => bonusTypes.find((t) => t.key === key)?.label ?? key;
 
+  const periodLabel = (b: TeacherBonus) => {
+    if (b.frequency !== 'monthly') return `${MONTHS[b.period_month - 1]} ${b.period_year}`;
+    const start = `${MONTHS[b.period_month - 1]} ${b.period_year}`;
+    if (b.end_year === null || b.end_month === null) return `Monthly, since ${start}`;
+    return `Monthly, ${start} – ${MONTHS[b.end_month - 1]} ${b.end_year}`;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -352,7 +365,7 @@ export function TeacherBonuses() {
                       <th className="text-right py-2 pr-3 font-medium">%</th>
                       <th className="text-right py-2 pr-3 font-medium">Basis</th>
                       <th className="text-right py-2 pr-3 font-medium">Amount</th>
-                      <th className="text-left py-2 pr-3 font-medium">Payroll Month</th>
+                      <th className="text-left py-2 pr-3 font-medium">Period</th>
                       <th className="text-left py-2 pr-3 font-medium">Notes</th>
                       <th className="py-2"><span className="sr-only">Actions</span></th>
                     </tr>
@@ -365,7 +378,7 @@ export function TeacherBonuses() {
                         <td className="py-3 pr-3 text-right">{b.percentage.toFixed(2)}%</td>
                         <td className="py-3 pr-3 text-right text-muted-foreground">{formatCurrency(b.basis_amount)}</td>
                         <td className="py-3 pr-3 text-right font-medium text-income">{formatCurrency(b.amount)}</td>
-                        <td className="py-3 pr-3 text-muted-foreground">{MONTHS[b.period_month - 1]} {b.period_year}</td>
+                        <td className="py-3 pr-3 text-muted-foreground">{periodLabel(b)}</td>
                         <td className="py-3 pr-3 text-xs text-muted-foreground max-w-xs truncate" title={b.notes ?? ''}>{b.notes || '—'}</td>
                         <td className="py-3">
                           <div className="flex gap-1 justify-end">
@@ -461,9 +474,33 @@ export function TeacherBonuses() {
                 Computed bonus: <span className="font-semibold text-income">{formatCurrency(previewAmount)}</span>
               </div>
 
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1">Frequency *</label>
+                <div className="flex gap-4 text-sm">
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      checked={form.frequency === 'onetime'}
+                      onChange={() => setForm((f) => ({ ...f, frequency: 'onetime', end_year: null, end_month: null }))}
+                    />
+                    One-time payment
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      checked={form.frequency === 'monthly'}
+                      onChange={() => setForm((f) => ({ ...f, frequency: 'monthly' }))}
+                    />
+                    Monthly payment
+                  </label>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-foreground mb-1">Payroll Month *</label>
+                  <label className="block text-xs font-medium text-foreground mb-1">
+                    {form.frequency === 'monthly' ? 'Start Month *' : 'Payroll Month *'}
+                  </label>
                   <select
                     title="Payroll month"
                     value={form.period_month}
@@ -473,8 +510,52 @@ export function TeacherBonuses() {
                     {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                   </select>
                 </div>
-                <NumInput label="Payroll Year" value={form.period_year} onChange={(n) => setForm((f) => ({ ...f, period_year: n }))} />
+                <NumInput
+                  label={form.frequency === 'monthly' ? 'Start Year' : 'Payroll Year'}
+                  value={form.period_year}
+                  onChange={(n) => setForm((f) => ({ ...f, period_year: n }))}
+                />
               </div>
+
+              {form.frequency === 'monthly' && (
+                <div className="space-y-2 rounded-md border border-border p-3">
+                  <label className="flex items-center gap-1.5 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.end_year === null}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setForm((f) => ({ ...f, end_year: null, end_month: null }));
+                        } else {
+                          const { year, month } = todayYearMonth();
+                          setForm((f) => ({ ...f, end_year: f.period_year ?? year, end_month: f.period_month ?? month }));
+                        }
+                      }}
+                    />
+                    No end date (recurs indefinitely)
+                  </label>
+                  {form.end_year !== null && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-foreground mb-1">End Month</label>
+                        <select
+                          title="End month"
+                          value={form.end_month ?? form.period_month}
+                          onChange={(e) => setForm((f) => ({ ...f, end_month: parseInt(e.target.value, 10) }))}
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        >
+                          {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                        </select>
+                      </div>
+                      <NumInput
+                        label="End Year"
+                        value={form.end_year ?? form.period_year}
+                        onChange={(n) => setForm((f) => ({ ...f, end_year: n }))}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-medium text-foreground mb-1">Term (optional)</label>

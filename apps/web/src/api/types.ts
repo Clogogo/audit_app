@@ -1138,6 +1138,8 @@ export interface BonusTypeIn {
   is_active?: boolean;
 }
 
+export type BonusFrequency = 'onetime' | 'monthly';
+
 export interface TeacherBonus {
   id: number;
   staff_id: number;
@@ -1146,8 +1148,11 @@ export interface TeacherBonus {
   percentage: number;
   basis_amount: number;
   amount: number;
+  frequency: BonusFrequency;
   period_year: number;
   period_month: number;
+  end_year: number | null;
+  end_month: number | null;
   term_id: number | null;
   term_name: string | null;
   notes: string | null;
@@ -1160,8 +1165,11 @@ export interface TeacherBonusIn {
   bonus_type: string;
   percentage: number;
   basis_amount: number;
+  frequency: BonusFrequency;
   period_year: number;
   period_month: number;
+  end_year?: number | null;
+  end_month?: number | null;
   term_id?: number | null;
   notes?: string | null;
 }
