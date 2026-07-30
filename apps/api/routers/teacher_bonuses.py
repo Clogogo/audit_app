@@ -22,6 +22,7 @@ from utils.errors import get_or_404
 router = APIRouter(prefix="/teacher-bonuses", tags=["teacher-bonuses"], dependencies=[Depends(require_permission("staff"))])
 
 _CALCULATION_METHODS = {"percentage", "flat_amount"}
+_FREQUENCIES = {"onetime", "monthly"}
 
 
 def _slugify(label: str) -> str:
@@ -36,8 +37,11 @@ class TeacherBonusIn(BaseModel):
     bonus_type: str
     percentage: float
     basis_amount: float
-    period_year: int
+    frequency: str = "onetime"          # "onetime" | "monthly"
+    period_year: int                    # start month, if monthly
     period_month: int
+    end_year: Optional[int] = None      # monthly only; None = recurs indefinitely
+    end_month: Optional[int] = None
     term_id: Optional[int] = None
     notes: Optional[str] = None
 
@@ -49,9 +53,12 @@ class TeacherBonusOut(BaseModel):
     bonus_type: str
     percentage: float
     basis_amount: float
-    amount: float
+    amount: float                       # for monthly, recomputed live from current salary — see _to_out
+    frequency: str
     period_year: int
     period_month: int
+    end_year: Optional[int]
+    end_month: Optional[int]
     term_id: Optional[int]
     term_name: Optional[str]
     notes: Optional[str]
@@ -86,11 +93,25 @@ class BonusTypeOut(BaseModel):
 
 # ── serialization ────────────────────────────────────────────────────────────
 
-def _to_out(b: TeacherBonus) -> TeacherBonusOut:
+def _basis_is_salary_by_key(db: Session) -> dict[str, bool]:
+    return dict(db.query(BonusType.key, BonusType.basis_is_salary).all())
+
+
+def _to_out(b: TeacherBonus, basis_is_salary_by_key: dict[str, bool]) -> TeacherBonusOut:
+    amount = b.amount
+    if b.frequency == "monthly":
+        # Not frozen — recompute from the staff member's CURRENT salary so a
+        # raise flows through automatically, same as loan/advance deductions.
+        # Falls back to True (salary-basis) for a retired/unknown type key,
+        # matching BonusType's own default.
+        basis_is_salary = basis_is_salary_by_key.get(b.bonus_type, True)
+        basis = b.staff.monthly_gross if basis_is_salary else b.basis_amount
+        amount = round(b.percentage / 100 * basis, 2)
     return TeacherBonusOut(
         id=b.id, staff_id=b.staff_id, staff_name=b.staff.full_name,
         bonus_type=b.bonus_type, percentage=b.percentage, basis_amount=b.basis_amount,
-        amount=b.amount, period_year=b.period_year, period_month=b.period_month,
+        amount=amount, frequency=b.frequency, period_year=b.period_year, period_month=b.period_month,
+        end_year=b.end_year, end_month=b.end_month,
         term_id=b.term_id, term_name=b.term.name if b.term else None,
         notes=b.notes, created_at=b.created_at, updated_at=b.updated_at,
     )
@@ -108,6 +129,15 @@ def _validate(body: TeacherBonusIn, db: Session) -> None:
         raise HTTPException(400, "basis_amount cannot be negative")
     if not (1 <= body.period_month <= 12):
         raise HTTPException(400, "period_month must be between 1 and 12")
+    if body.frequency not in _FREQUENCIES:
+        raise HTTPException(400, f"frequency must be one of {sorted(_FREQUENCIES)}")
+    if body.frequency == "monthly" and body.end_year is not None and body.end_month is not None:
+        if not (1 <= body.end_month <= 12):
+            raise HTTPException(400, "end_month must be between 1 and 12")
+        if (body.end_year, body.end_month) < (body.period_year, body.period_month):
+            raise HTTPException(400, "end period cannot be before the start period")
+    elif body.frequency == "monthly" and (body.end_year is None) != (body.end_month is None):
+        raise HTTPException(400, "end_year and end_month must be set together, or both left unset")
 
 
 def _validate_bonus_type(body: BonusTypeIn) -> None:
@@ -197,33 +227,42 @@ def list_teacher_bonuses(
         q = q.filter(TeacherBonus.period_year == period_year)
     if period_month:
         q = q.filter(TeacherBonus.period_month == period_month)
-    return [_to_out(b) for b in q.all()]
+    basis_by_key = _basis_is_salary_by_key(db)
+    return [_to_out(b, basis_by_key) for b in q.all()]
 
 
 @router.post("/", response_model=TeacherBonusOut, status_code=201)
 def create_teacher_bonus(body: TeacherBonusIn, db: Session = Depends(get_db)):
     _validate(body, db)
+    data = body.model_dump()
+    if data["frequency"] == "onetime":
+        data["end_year"] = None
+        data["end_month"] = None
     bonus = TeacherBonus(
-        **body.model_dump(),
+        **data,
         amount=round(body.percentage / 100 * body.basis_amount, 2),
     )
     db.add(bonus)
     db.commit()
     db.refresh(bonus)
-    return _to_out(bonus)
+    return _to_out(bonus, _basis_is_salary_by_key(db))
 
 
 @router.put("/{bonus_id}", response_model=TeacherBonusOut)
 def update_teacher_bonus(bonus_id: int, body: TeacherBonusIn, db: Session = Depends(get_db)):
     bonus = get_or_404(db, TeacherBonus, bonus_id, "Teacher bonus")
     _validate(body, db)
-    for k, v in body.model_dump().items():
+    data = body.model_dump()
+    if data["frequency"] == "onetime":
+        data["end_year"] = None
+        data["end_month"] = None
+    for k, v in data.items():
         setattr(bonus, k, v)
     bonus.amount = round(body.percentage / 100 * body.basis_amount, 2)
     bonus.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(bonus)
-    return _to_out(bonus)
+    return _to_out(bonus, _basis_is_salary_by_key(db))
 
 
 @router.delete("/{bonus_id}", status_code=204)
