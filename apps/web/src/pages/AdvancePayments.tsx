@@ -239,9 +239,8 @@ export function AdvancePayments() {
                           <button
                             type="button"
                             aria-label="Edit advance"
-                            disabled={a.is_recovered}
                             onClick={() => openEdit(a)}
-                            className="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+                            className="p-1 rounded hover:bg-accent text-muted-foreground"
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
@@ -275,6 +274,17 @@ export function AdvancePayments() {
                 <XCircle className="h-5 w-5" />
               </button>
             </div>
+
+            {editing?.is_recovered && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>
+                  This IOU was already recovered from payroll. Raising the amount reopens an
+                  outstanding balance for the next payroll run to deduct; lowering it can close
+                  it out early.
+                </span>
+              </div>
+            )}
 
             <div className="space-y-4">
               <div>
