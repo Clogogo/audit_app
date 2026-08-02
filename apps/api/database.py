@@ -90,10 +90,16 @@ def initialize_database() -> None:
         ],
         "bank_accounts": [
             "opening_balance REAL",
+            "opening_balance_date DATE",
             "current_balance REAL",
         ],
         "advance_payments": [
             "remaining_amount REAL DEFAULT 0.0",
+        ],
+        "teacher_bonuses": [
+            "frequency VARCHAR(20) DEFAULT 'onetime'",
+            "end_year INTEGER",
+            "end_month INTEGER",
         ],
         "school_loans": [
             "total_interest_due REAL NOT NULL DEFAULT 0.0",

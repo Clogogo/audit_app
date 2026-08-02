@@ -272,8 +272,12 @@ export const updateTerm = (id: number, body: TermCreate) =>
 export const deleteTerm = (id: number) =>
   api.delete<void>(`/terms/${id}`).then(unwrap);
 
-export const updateBankAccountOpeningBalance = (id: number, opening_balance: number | null) =>
-  api.patch<BankAccount>(`/bank-accounts/${id}/opening-balance`, { opening_balance }).then(unwrap);
+export const updateBankAccountOpeningBalance = (
+  id: number,
+  opening_balance: number | null,
+  opening_balance_date?: string | null,
+) =>
+  api.patch<BankAccount>(`/bank-accounts/${id}/opening-balance`, { opening_balance, opening_balance_date }).then(unwrap);
 
 export const getAccountTransactions = (accountId: number) =>
   api.get<Transaction[]>(`/bank-accounts/${accountId}/transactions`).then(unwrap);

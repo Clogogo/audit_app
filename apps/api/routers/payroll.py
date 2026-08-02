@@ -16,7 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import AdvancePayment, PayrollEntry, Staff, StaffLoan, StaffLoanPayment, TeacherBonus, Transaction
+from models import AdvancePayment, BonusType, PayrollEntry, Staff, StaffLoan, StaffLoanPayment, TeacherBonus, Transaction
 
 router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(require_permission("staff"))])
 
@@ -265,7 +265,7 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
     had not yet ended before the first day of the month.
     Returns existing processed entries if available, or fresh calculation otherwise.
     """
-    from sqlalchemy import or_
+    from sqlalchemy import and_, or_
     month_first = date(year, month, 1)
     month_last  = date(year, month, calendar.monthrange(year, month)[1])
 
@@ -282,14 +282,52 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
         .all()
     )
 
-    bonus_totals: dict[int, float] = {}
-    for staff_id, total in (
-        db.query(TeacherBonus.staff_id, func.sum(TeacherBonus.amount))
-        .filter(TeacherBonus.period_year == year, TeacherBonus.period_month == month)
-        .group_by(TeacherBonus.staff_id)
+    # Bonuses that apply to this exact month — either a one-time bonus
+    # earmarked for it, or a monthly recurring bonus whose start period is on
+    # or before this month and whose end period (if any) is on or after it.
+    bonus_rows = (
+        db.query(TeacherBonus)
+        .filter(
+            or_(
+                and_(
+                    TeacherBonus.frequency == "onetime",
+                    TeacherBonus.period_year == year,
+                    TeacherBonus.period_month == month,
+                ),
+                and_(
+                    TeacherBonus.frequency == "monthly",
+                    or_(
+                        TeacherBonus.period_year < year,
+                        and_(TeacherBonus.period_year == year, TeacherBonus.period_month <= month),
+                    ),
+                    or_(
+                        TeacherBonus.end_year.is_(None),
+                        TeacherBonus.end_year > year,
+                        and_(TeacherBonus.end_year == year, TeacherBonus.end_month >= month),
+                    ),
+                ),
+            )
+        )
         .all()
-    ):
-        bonus_totals[staff_id] = round(total, 2)
+    )
+    basis_by_key = {bt.key: bt.basis_is_salary for bt in db.query(BonusType.key, BonusType.basis_is_salary).all()}
+    gross_by_staff_id = {s.id: s.monthly_gross for s in staff_list}
+    bonus_totals: dict[int, float] = {}
+    for b in bonus_rows:
+        if b.frequency == "monthly":
+            # Not frozen — recompute from the staff member's CURRENT salary
+            # (same reasoning as _to_out in routers/teacher_bonuses.py).
+            # Staff outside this month's active list (e.g. since ended)
+            # contribute nothing rather than a stale/undefined salary.
+            gross = gross_by_staff_id.get(b.staff_id)
+            if gross is None:
+                continue
+            basis_is_salary = basis_by_key.get(b.bonus_type, True)
+            basis = gross if basis_is_salary else b.basis_amount
+            contribution = round(b.percentage / 100 * basis, 2)
+        else:
+            contribution = b.amount
+        bonus_totals[b.staff_id] = round(bonus_totals.get(b.staff_id, 0.0) + contribution, 2)
 
     result: list[PayrollLineOut] = []
     for s in staff_list:

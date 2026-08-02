@@ -112,7 +112,26 @@ def test_updating_amount_keeps_remaining_amount_in_sync(client, db_session):
     assert body["remaining_amount"] == 15000.0
 
 
-def test_cannot_edit_or_delete_a_recovered_advance(client, db_session):
+def test_cannot_delete_a_recovered_advance(client, db_session):
+    from models import AdvancePayment
+
+    staff = _create_staff(db_session, "Ngozi Williams")
+    advance = AdvancePayment(
+        staff_id=staff.id, amount=15000.0, remaining_amount=0.0, date_issued=date(2026, 1, 10),
+        is_recovered=True, recovered_period_year=2026, recovered_period_month=1,
+    )
+    db_session.add(advance)
+    db_session.commit()
+
+    resp = client.delete(f"/advance-payments/{advance.id}")
+    assert resp.status_code == 400
+
+
+def test_editing_a_recovered_advance_amount_up_reopens_it(client, db_session):
+    """Raising the amount on a fully-recovered advance must reopen a
+    balance for the next payroll run — otherwise the extra money would be
+    tracked as owed but never actually deducted (payroll only sums
+    remaining_amount for is_recovered == False)."""
     from models import AdvancePayment
 
     staff = _create_staff(db_session, "Ngozi Williams")
@@ -124,9 +143,128 @@ def test_cannot_edit_or_delete_a_recovered_advance(client, db_session):
     db_session.commit()
 
     resp = client.put(f"/advance-payments/{advance.id}", json={
-        "staff_id": staff.id, "amount": 99999.0, "date_issued": "2026-01-10",
+        "staff_id": staff.id, "amount": 20000.0, "date_issued": "2026-01-10",
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["amount"] == 20000.0
+    assert body["remaining_amount"] == 5000.0  # 15,000 already deducted
+    assert body["is_recovered"] is False
+    assert body["recovered_period_year"] is None
+    assert body["recovered_period_month"] is None
+
+
+def test_editing_a_recovered_advance_without_changing_amount_stays_recovered(client, db_session):
+    """Editing an unrelated field (notes) on a recovered advance must not
+    disturb its recovered status or clear the recorded recovery period."""
+    from models import AdvancePayment
+
+    staff = _create_staff(db_session, "Ngozi Williams")
+    advance = AdvancePayment(
+        staff_id=staff.id, amount=15000.0, remaining_amount=0.0, date_issued=date(2026, 1, 10),
+        is_recovered=True, recovered_period_year=2026, recovered_period_month=1,
+    )
+    db_session.add(advance)
+    db_session.commit()
+
+    resp = client.put(f"/advance-payments/{advance.id}", json={
+        "staff_id": staff.id, "amount": 15000.0, "date_issued": "2026-01-10", "notes": "Corrected typo",
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["notes"] == "Corrected typo"
+    assert body["remaining_amount"] == 0.0
+    assert body["is_recovered"] is True
+    assert body["recovered_period_year"] == 2026
+    assert body["recovered_period_month"] == 1
+
+
+def test_editing_amount_down_on_active_advance_can_mark_it_recovered(client, db_session):
+    """Symmetric direction: lowering the amount below what's already been
+    deducted should flip is_recovered on, since there's nothing left owed."""
+    from models import AdvancePayment
+
+    staff = _create_staff(db_session, "Ngozi Williams")
+    # ₦15,000 issued, ₦5,000 already deducted, ₦10,000 still outstanding.
+    advance = AdvancePayment(
+        staff_id=staff.id, amount=15000.0, remaining_amount=10000.0,
+        date_issued=date(2026, 1, 10), is_recovered=False,
+    )
+    db_session.add(advance)
+    db_session.commit()
+
+    resp = client.put(f"/advance-payments/{advance.id}", json={
+        "staff_id": staff.id, "amount": 5000.0, "date_issued": "2026-01-10",
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["remaining_amount"] == 0.0
+    assert body["is_recovered"] is True
+    # Recovered via edit, not an actual payroll run — stamped with today's
+    # period rather than left blank, so it doesn't look like a data gap.
+    today = date.today()
+    assert body["recovered_period_year"] == today.year
+    assert body["recovered_period_month"] == today.month
+
+
+def test_cannot_reassign_staff_on_an_advance_payroll_already_deducted_against(client, db_session):
+    """remaining_amount only means anything relative to one staff member's
+    payroll history — reassigning staff after any deduction has happened
+    would sever the link between who was actually deducted and whose
+    record says recovered."""
+    from models import AdvancePayment
+
+    staff_a = _create_staff(db_session, "Ngozi Williams")
+    staff_b = _create_staff(db_session, "Chidi Okafor")
+    # Partially deducted — not even fully recovered, this should already be blocked.
+    advance = AdvancePayment(
+        staff_id=staff_a.id, amount=15000.0, remaining_amount=10000.0,
+        date_issued=date(2026, 1, 10), is_recovered=False,
+    )
+    db_session.add(advance)
+    db_session.commit()
+
+    resp = client.put(f"/advance-payments/{advance.id}", json={
+        "staff_id": staff_b.id, "amount": 15000.0, "date_issued": "2026-01-10",
     })
     assert resp.status_code == 400
 
-    resp = client.delete(f"/advance-payments/{advance.id}")
-    assert resp.status_code == 400
+    # Editing amount/notes for the SAME staff is still fine.
+    resp = client.put(f"/advance-payments/{advance.id}", json={
+        "staff_id": staff_a.id, "amount": 20000.0, "date_issued": "2026-01-10",
+    })
+    assert resp.status_code == 200, resp.text
+
+
+def test_reassigning_staff_on_an_untouched_advance_is_allowed(client, db_session):
+    """No deduction has happened yet, so nothing to desync — reassignment
+    should go through same as before this change."""
+    from models import AdvancePayment
+
+    staff_a = _create_staff(db_session, "Ngozi Williams")
+    staff_b = _create_staff(db_session, "Chidi Okafor")
+    advance = AdvancePayment(
+        staff_id=staff_a.id, amount=15000.0, remaining_amount=15000.0,
+        date_issued=date(2026, 1, 10), is_recovered=False,
+    )
+    db_session.add(advance)
+    db_session.commit()
+
+    resp = client.put(f"/advance-payments/{advance.id}", json={
+        "staff_id": staff_b.id, "amount": 15000.0, "date_issued": "2026-01-10",
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["staff_name"] == "Chidi Okafor"
+
+
+def test_amount_must_be_positive(client, db_session):
+    staff = _create_staff(db_session, "Ngozi Williams")
+    resp = client.post("/advance-payments/", json={
+        "staff_id": staff.id, "amount": 0, "date_issued": "2026-01-10",
+    })
+    assert resp.status_code == 422
+
+    resp = client.post("/advance-payments/", json={
+        "staff_id": staff.id, "amount": -500.0, "date_issued": "2026-01-10",
+    })
+    assert resp.status_code == 422

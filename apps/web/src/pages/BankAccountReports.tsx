@@ -178,27 +178,35 @@ function BalanceEditor({
 function OpeningBalanceEditor({
   accountId,
   openingBalance,
+  openingBalanceDate,
   onSaved,
 }: {
   accountId: number;
   openingBalance: number | null | undefined;
-  onSaved: (balance: number | null) => void;
+  openingBalanceDate: string | null | undefined;
+  onSaved: (balance: number | null, balanceDate: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(openingBalance != null ? String(openingBalance) : '');
+  const [draftDate, setDraftDate] = useState(openingBalanceDate ?? '');
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const open = () => { setDraft(openingBalance != null ? String(openingBalance) : ''); setEditing(true); };
+  const open = () => {
+    setDraft(openingBalance != null ? String(openingBalance) : '');
+    setDraftDate(openingBalanceDate ?? '');
+    setEditing(true);
+  };
   const cancel = () => setEditing(false);
 
   const save = async () => {
     const val = draft.trim() === '' ? null : parseFloat(draft.replace(/,/g, ''));
     if (draft.trim() !== '' && isNaN(val!)) return;
+    const dateVal = draftDate.trim() === '' ? null : draftDate;
     setSaving(true);
     try {
-      await updateBankAccountOpeningBalance(accountId, val);
-      onSaved(val);
+      await updateBankAccountOpeningBalance(accountId, val, dateVal);
+      onSaved(val, dateVal);
       setEditing(false);
     } finally {
       setSaving(false);
@@ -209,23 +217,33 @@ function OpeningBalanceEditor({
 
   if (editing) {
     return (
-      <div className="flex items-center gap-1.5 mt-1">
-        <span className="text-sm text-muted-foreground">₦</span>
+      <div className="flex flex-col gap-1.5 mt-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm text-muted-foreground">₦</span>
+          <input
+            ref={inputRef}
+            type="number"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
+            className="w-36 border rounded px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-primary"
+            placeholder="0.00"
+          />
+          <button type="button" aria-label="Save opening balance" onClick={save} disabled={saving} className="text-green-600 hover:text-green-700">
+            <Check className="h-4 w-4" />
+          </button>
+          <button type="button" aria-label="Cancel" onClick={cancel} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
         <input
-          ref={inputRef}
-          type="number"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          type="date"
+          value={draftDate}
+          onChange={(e) => setDraftDate(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
-          className="w-36 border rounded px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-primary"
-          placeholder="0.00"
+          className="w-36 border rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary"
+          aria-label="Opening balance as-of date"
         />
-        <button type="button" aria-label="Save opening balance" onClick={save} disabled={saving} className="text-green-600 hover:text-green-700">
-          <Check className="h-4 w-4" />
-        </button>
-        <button type="button" aria-label="Cancel" onClick={cancel} className="text-muted-foreground hover:text-foreground">
-          <X className="h-4 w-4" />
-        </button>
       </div>
     );
   }
@@ -234,10 +252,15 @@ function OpeningBalanceEditor({
     <button
       type="button"
       onClick={open}
-      className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mt-1 group"
+      className="flex flex-col items-start gap-0.5 text-sm text-muted-foreground hover:text-foreground mt-1 group"
     >
-      <span>{openingBalance != null ? formatCurrency(openingBalance) : 'Set opening balance'}</span>
-      <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+      <span className="flex items-center gap-1.5">
+        {openingBalance != null ? formatCurrency(openingBalance) : 'Set opening balance'}
+        <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+      </span>
+      <span className="text-xs">
+        {openingBalanceDate ? `as of ${openingBalanceDate}` : 'Set as-of date'}
+      </span>
     </button>
   );
 }
@@ -319,9 +342,18 @@ export default function BankAccountReports() {
     setAccounts((prev) => ({ ...prev, [accountId]: { ...prev[accountId], current_balance: balance } }));
   };
 
-  const handleOpeningBalanceSaved = (accountId: number, balance: number | null) => {
-    setAccounts((prev) => ({ ...prev, [accountId]: { ...prev[accountId], opening_balance: balance } }));
-    // Refresh summaries so net_amount recalculates from the server
+  const handleOpeningBalanceSaved = (accountId: number, balance: number | null, balanceDate: string | null) => {
+    setAccounts((prev) => ({
+      ...prev,
+      [accountId]: { ...prev[accountId], opening_balance: balance, opening_balance_date: balanceDate },
+    }));
+    // Refresh summaries so net_amount recalculates from the server. Also
+    // refresh the detail report if that's the currently open view — otherwise
+    // its header keeps showing the pre-edit net_amount/opening_balance until
+    // the user navigates back to the list and reopens the account.
+    if (viewMode === 'detail' && selectedReport?.bank_account_id === accountId) {
+      fetchDetailedReport(accountId);
+    }
     fetchSummaries();
   };
 
@@ -490,7 +522,8 @@ export default function BankAccountReports() {
                       <OpeningBalanceEditor
                         accountId={summary.bank_account_id}
                         openingBalance={acct?.opening_balance}
-                        onSaved={(bal) => handleOpeningBalanceSaved(summary.bank_account_id, bal)}
+                        openingBalanceDate={acct?.opening_balance_date}
+                        onSaved={(bal, balDate) => handleOpeningBalanceSaved(summary.bank_account_id, bal, balDate)}
                       />
                     </div>
                     <div>
@@ -580,11 +613,12 @@ export default function BankAccountReports() {
                   </div>
                   <div className="flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
                     <div>
-                      <p className="text-xs text-muted-foreground mb-1">Opening balance (Dec 31 prior year)</p>
+                      <p className="text-xs text-muted-foreground mb-1">Opening balance</p>
                       <OpeningBalanceEditor
                         accountId={selectedReport.bank_account_id}
                         openingBalance={accounts[selectedReport.bank_account_id]?.opening_balance}
-                        onSaved={(bal) => handleOpeningBalanceSaved(selectedReport.bank_account_id, bal)}
+                        openingBalanceDate={accounts[selectedReport.bank_account_id]?.opening_balance_date}
+                        onSaved={(bal, balDate) => handleOpeningBalanceSaved(selectedReport.bank_account_id, bal, balDate)}
                       />
                     </div>
                     <div>
@@ -651,7 +685,7 @@ export default function BankAccountReports() {
                 </div>
                 <p className="text-xs text-primary-foreground/70 mt-1">
                   {selectedReport.opening_balance > 0
-                    ? `Opening ${formatCurrency(selectedReport.opening_balance)} + Income − Expense`
+                    ? `Opening ${formatCurrency(selectedReport.opening_balance)}${selectedReport.opening_balance_date ? ` (as of ${selectedReport.opening_balance_date})` : ''} + Income − Expense since`
                     : 'Income − Expense − Transfers out'}
                 </p>
               </CardContent>

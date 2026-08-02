@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
@@ -26,6 +26,13 @@ class AdvancePaymentIn(BaseModel):
     date_issued: date
     transaction_id: Optional[int] = None
     notes: Optional[str] = None
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("amount must be greater than 0")
+        return v
 
 
 class MatchedTransaction(BaseModel):
@@ -124,18 +131,52 @@ def update_advance_payment(advance_id: int, body: AdvancePaymentIn, db: Session 
     advance = db.get(AdvancePayment, advance_id)
     if not advance:
         raise HTTPException(404, "Advance payment not found")
-    if advance.is_recovered:
-        raise HTTPException(400, "Cannot edit an advance that has already been recovered from payroll")
     staff = db.get(Staff, body.staff_id)
     if not staff:
         raise HTTPException(404, "Staff member not found")
     _validate_transaction(body.transaction_id, db)
     # Capture how much has already been deducted before overwriting amount,
-    # so we can keep remaining_amount consistent with the new amount.
+    # so we can keep remaining_amount consistent with the new amount — this
+    # also covers editing an already-recovered advance (e.g. correcting the
+    # amount after the fact): raising it reopens an outstanding balance for
+    # the next payroll run to pick up, lowering it can close it out early.
     already_deducted = round(advance.amount - advance.remaining_amount, 2)
+    # Reassigning staff after payroll has already deducted against the
+    # original staff member would sever the link between "who was actually
+    # deducted from" and "whose IOU record says recovered" — remaining_amount
+    # only means anything relative to one staff member's payroll history.
+    if already_deducted > 0 and body.staff_id != advance.staff_id:
+        raise HTTPException(
+            400,
+            "Cannot reassign staff on an advance that payroll has already "
+            "deducted against. Delete and re-create it instead if it was "
+            "recorded for the wrong person.",
+        )
     for k, v in body.model_dump().items():
         setattr(advance, k, v)
     advance.remaining_amount = round(max(0.0, advance.amount - already_deducted), 2)
+
+    # Re-derive is_recovered from the new balance, matching the threshold
+    # payroll.py uses when it deducts (models.py's payroll loop). Without
+    # this, editing the amount on a recovered advance could leave a
+    # remaining balance while is_recovered stays True — payroll only sums
+    # remaining_amount for is_recovered == False, so that balance would
+    # silently never be deducted.
+    now_recovered = advance.remaining_amount <= 1e-6
+    if now_recovered and not advance.is_recovered:
+        advance.is_recovered = True
+        # This recovery happened via manual edit, not an actual payroll run —
+        # stamp today's period rather than leaving it blank, so the record
+        # still shows *when* it was marked recovered instead of looking like
+        # a data gap.
+        today = date.today()
+        advance.recovered_period_year = today.year
+        advance.recovered_period_month = today.month
+    elif not now_recovered and advance.is_recovered:
+        advance.is_recovered = False
+        advance.recovered_period_year = None
+        advance.recovered_period_month = None
+
     advance.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(advance)
