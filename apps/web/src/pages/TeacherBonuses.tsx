@@ -480,6 +480,7 @@ export function TeacherBonuses() {
                   <label className="flex items-center gap-1.5">
                     <input
                       type="radio"
+                      name="bonus-frequency"
                       checked={form.frequency === 'onetime'}
                       onChange={() => setForm((f) => ({ ...f, frequency: 'onetime', end_year: null, end_month: null }))}
                     />
@@ -488,6 +489,7 @@ export function TeacherBonuses() {
                   <label className="flex items-center gap-1.5">
                     <input
                       type="radio"
+                      name="bonus-frequency"
                       checked={form.frequency === 'monthly'}
                       onChange={() => setForm((f) => ({ ...f, frequency: 'monthly' }))}
                     />

@@ -102,7 +102,11 @@ def update_opening_balance(account_id: int, data: _OpeningBalanceUpdate, db: Ses
     """Set the opening balance (closing balance of prior period) for book balance calculation."""
     account = get_or_404(db, BankAccount, account_id, "Bank account")
     account.opening_balance = data.opening_balance
-    account.opening_balance_date = data.opening_balance_date
+    # Only touch the anchor date if the caller actually sent it - a partial
+    # payload that only updates opening_balance must not silently clear the
+    # existing anchor date (that regressed book-balance accuracy before, see PR #135).
+    if "opening_balance_date" in data.model_fields_set:
+        account.opening_balance_date = data.opening_balance_date
     db.commit()
     db.refresh(account)
     return account
