@@ -788,8 +788,9 @@ def _sum_income_expense(
     inter_transfers = [
         t for t in transactions if t.type == "transfer" and not _is_intra_account_transfer(t)
     ]
-    transfer_income = [t for t in inter_transfers if _transfer_is_income(t, bank_name, db)]
-    transfer_expense = [t for t in inter_transfers if not _transfer_is_income(t, bank_name, db)]
+    transfer_directions = [(t, _transfer_is_income(t, bank_name, db)) for t in inter_transfers]
+    transfer_income = [t for t, is_income in transfer_directions if is_income]
+    transfer_expense = [t for t, is_income in transfer_directions if not is_income]
     income = (
         sum(t.amount for t in transactions if t.type == "income")
         + sum(t.amount for t in transfer_income)
