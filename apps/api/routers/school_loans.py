@@ -12,7 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth import require_permission
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -76,7 +76,7 @@ def _sync_active_status(loan: SchoolLoan) -> None:
 # ── schemas ────────────────────────────────────────────────────────────────────
 
 class SchoolLoanIn(BaseModel):
-    lender_name: str
+    lender_name: str = Field(max_length=200)  # matches SchoolLoan.lender_name column width
     loan_amount: float
     interest_rate: float = 0.0   # annual %, kept for reference / display only
     total_interest_due: float = 0.0  # agreed total interest owed on this loan
@@ -212,8 +212,55 @@ def list_school_loans(db: Session = Depends(get_db)):
     return [_to_out(l) for l in loans]
 
 
+@router.get("/suggestions", response_model=list[MatchedTransaction])
+def suggest_untracked_loan_transactions(db: Session = Depends(get_db)):
+    """Income transactions categorized "Loans" that aren't yet linked to any
+    school loan record — a loan credit can land in the ledger via bank import
+    or manual entry without anyone remembering to also track it here, so
+    surface it instead of letting it silently miss the Loans Payable figure."""
+    linked_ids = {
+        row[0] for row in
+        db.query(SchoolLoan.transaction_id).filter(SchoolLoan.transaction_id.isnot(None)).all()
+    }
+    txs = (
+        db.query(Transaction)
+        .filter(Transaction.type == "income", Transaction.category == "Loans")
+        .order_by(Transaction.date.desc())
+        .all()
+    )
+    return [
+        MatchedTransaction(
+            id=t.id, date=t.date, amount=t.amount,
+            description=t.description, vendor=t.vendor, category=t.category,
+        )
+        for t in txs if t.id not in linked_ids
+    ]
+
+
+def _assert_transaction_not_already_linked(
+    db: Session, transaction_id: Optional[int], exclude_loan_id: Optional[int] = None,
+) -> None:
+    """A transaction can only be the "collection" record for one loan — two
+    loans pointing at the same transaction would double-count it in the
+    Loans Payable total (which sums outstanding_today across all active
+    loans)."""
+    if transaction_id is None:
+        return
+    query = db.query(SchoolLoan).filter(SchoolLoan.transaction_id == transaction_id)
+    if exclude_loan_id is not None:
+        query = query.filter(SchoolLoan.id != exclude_loan_id)
+    other = query.first()
+    if other:
+        raise HTTPException(
+            400,
+            f"Transaction {transaction_id} is already linked to loan "
+            f"\"{other.lender_name}\" (id {other.id})",
+        )
+
+
 @router.post("/", response_model=SchoolLoanOut, status_code=201)
 def create_school_loan(body: SchoolLoanIn, db: Session = Depends(get_db)):
+    _assert_transaction_not_already_linked(db, body.transaction_id)
     loan = SchoolLoan(**body.model_dump())
     db.add(loan)
     db.commit()
@@ -226,6 +273,7 @@ def update_school_loan(loan_id: int, body: SchoolLoanIn, db: Session = Depends(g
     loan = db.get(SchoolLoan, loan_id)
     if not loan:
         raise HTTPException(404, "School loan not found")
+    _assert_transaction_not_already_linked(db, body.transaction_id, exclude_loan_id=loan_id)
     for k, v in body.model_dump().items():
         setattr(loan, k, v)
     loan.updated_at = datetime.utcnow()
