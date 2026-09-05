@@ -74,6 +74,7 @@ export function SchoolLoans() {
   const [showLoanForm, setShowLoanForm] = useState(false);
   const [editingLoan, setEditingLoan] = useState<SchoolLoan | null>(null);
   const [loanForm, setLoanForm] = useState<SchoolLoanIn>(EMPTY_LOAN);
+  const [interestMode, setInterestMode] = useState<'percent' | 'amount'>('percent');
   const [savingLoan, setSavingLoan] = useState(false);
   const [deleteLoanId, setDeleteLoanId] = useState<number | null>(null);
 
@@ -116,6 +117,7 @@ export function SchoolLoans() {
   const openAddLoan = () => {
     setEditingLoan(null);
     setLoanForm(EMPTY_LOAN);
+    setInterestMode('percent');
     setLoanFormLinkedTx(null);
     setShowLoanForm(true);
   };
@@ -131,6 +133,9 @@ export function SchoolLoans() {
       notes: loan.notes ?? '',
       is_active: loan.is_active,
     });
+    // A loan whose interest was agreed as a flat amount (no rate) should
+    // reopen in Amount mode, not silently show a stale/zero rate.
+    setInterestMode(loan.interest_rate > 0 ? 'percent' : 'amount');
     setLoanFormLinkedTx(loan.matched_tx);
     setShowLoanForm(true);
   };
@@ -400,7 +405,10 @@ export function SchoolLoans() {
                             <div className="flex-1 min-w-0">
                               <p className="font-semibold text-sm">{loan.lender_name}</p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {loan.interest_rate}% interest{loan.notes ? ` · ${loan.notes}` : ''}
+                                {loan.interest_rate > 0
+                                  ? `${loan.interest_rate}% interest`
+                                  : `${formatCurrency(loan.total_interest_due)} flat interest`}
+                                {loan.notes ? ` · ${loan.notes}` : ''}
                               </p>
                               <div className="flex items-center gap-1.5 mt-1">
                                 {loan.verified ? (
@@ -670,31 +678,61 @@ export function SchoolLoans() {
               <NumInput label="Loan Amount" value={loanForm.loan_amount} onChange={(n) => setLoanForm((f) => ({ ...f, loan_amount: n }))} required />
 
               <div>
-                <label className="block text-xs font-medium text-foreground mb-1">Interest Rate (% per annum)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  placeholder="0"
-                  value={loanForm.interest_rate || ''}
-                  onChange={(e) => {
-                    const rate = parseFloat(e.target.value) || 0;
-                    setLoanForm((f) => ({ ...f, interest_rate: rate, total_interest_due: round2(f.loan_amount * rate / 100) }));
-                  }}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-                <p className="text-xs text-muted-foreground mt-1">Auto-fills Total Interest Due below (loan amount × this rate) — still freely editable if the actual agreed figure differs.</p>
-              </div>
+                <label className="block text-xs font-medium text-foreground mb-1">Interest *</label>
+                <div className="flex gap-4 text-sm mb-2">
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="interest-mode"
+                      checked={interestMode === 'percent'}
+                      onChange={() => setInterestMode('percent')}
+                    />
+                    % rate
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="interest-mode"
+                      checked={interestMode === 'amount'}
+                      onChange={() => {
+                        setInterestMode('amount');
+                        setLoanForm((f) => ({ ...f, interest_rate: 0 }));
+                      }}
+                    />
+                    Flat amount
+                  </label>
+                </div>
 
-              <div>
-                <NumInput
-                  label="Total Interest Due (agreed with lender)"
-                  value={loanForm.total_interest_due || 0}
-                  onChange={(n) => setLoanForm((f) => ({ ...f, total_interest_due: n }))}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  The loan only counts as fully repaid once principal AND this amount are both paid off.
-                </p>
+                {interestMode === 'percent' ? (
+                  <>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      placeholder="0"
+                      value={loanForm.interest_rate || ''}
+                      onChange={(e) => {
+                        const rate = parseFloat(e.target.value) || 0;
+                        setLoanForm((f) => ({ ...f, interest_rate: rate, total_interest_due: round2(f.loan_amount * rate / 100) }));
+                      }}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      % per annum — Total Interest Due computes as loan amount × this rate: {formatCurrency(loanForm.total_interest_due || 0)}.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <NumInput
+                      label=""
+                      value={loanForm.total_interest_due || 0}
+                      onChange={(n) => setLoanForm((f) => ({ ...f, total_interest_due: n }))}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The flat total interest agreed with the lender. The loan only counts as fully repaid once principal AND this amount are both paid off.
+                    </p>
+                  </>
+                )}
               </div>
 
               <div>
