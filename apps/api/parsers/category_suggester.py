@@ -38,8 +38,12 @@ TRANSFER_KEYWORDS = [
 ]
 
 # (category, forced_type) pairs — income-only categories, checked first.
-# "Fund from Director" is listed first so explicit director-funding phrases win.
+# "Loans" is listed first so any explicit "loan" mention wins over the generic
+# "transfer from"/"director" phrasing that would otherwise catch it below
+# (e.g. "loan from director" must land in Loans, not Fund from Director).
 INCOME_KEYWORD_MAP: List[Tuple[str, List[str]]] = [
+    ("Loans",      ["loan", "loan received", "loan credit", "loan disbursement",
+                    "credit facility", "overdraft credit"]),
     ("Fund from Director", ["fund from director", "funds from director",
                     "from director", "director fund", "director funding",
                     "directors fund", "director's fund", "proprietor fund",
@@ -58,8 +62,6 @@ INCOME_KEYWORD_MAP: List[Tuple[str, List[str]]] = [
                     "received from", "rcv from", "rcvd from",
                     "payment from", "pmt from", "funds from",
                     "nip from", "neft from", "credit from", "lodgment from"]),
-    ("Loans",      ["loan received", "loan credit", "loan disbursement",
-                    "credit facility", "overdraft credit"]),
 ]
 
 # Expense/neutral categories (type follows the bank direction — debit=expense,
@@ -129,7 +131,9 @@ NEUTRAL_KEYWORD_MAP: List[Tuple[str, List[str]]] = [
     ("Repairs and Maintenance", ["repair", "maintenance", "servicing", "spare part",
                               "technician", "mechanic", "electrician", "plumber",
                               "renovation", "overhaul", "refurbish", "painting",
-                              "carpenter", "welder"]),
+                              "carpenter", "welder", "construction", "contruction",
+                              "cement", "block", "workmanship", "plumbing", "tile",
+                              "door", "pvc", "plaster"]),
     ("Security Expenses",   ["security guard", "gate guard", "gateman", "gate man",
                               "vigilante", "cctv", "security man", "security expense",
                               "security service"]),
@@ -332,6 +336,21 @@ def is_self_transfer(description: str, account_holder_name: str | None) -> bool:
 
 # ── Suggestion Functions ──────────────────────────────────────────────────────
 
+def _keyword_matches(desc: str, pattern: str) -> bool:
+    """Plain substring containment for multi-word phrases (safe — a whole
+    phrase like "loan received" landing mid-word is effectively impossible),
+    but a word-boundary match for single-word keywords, so a short word like
+    "loan" or "door" doesn't fire on a substring buried inside an unrelated
+    name (e.g. Nigerian names such as "...ELOANYA" or names containing
+    "...OORE...")."""
+    if " " in pattern:
+        return pattern in desc
+    # Allow a trailing "s" so plain-English plurals (doors, blocks, tiles)
+    # still match a singular keyword without falling back to substring
+    # containment (which is what let "loan" match inside unrelated names).
+    return re.search(rf"\b{re.escape(pattern)}s?\b", desc) is not None
+
+
 def suggest_category_keyword(description: str, tx_type: str) -> Tuple[str, str]:
     """
     Return (category, suggested_type) using keyword rules.
@@ -349,14 +368,17 @@ def suggest_category_keyword(description: str, tx_type: str) -> Tuple[str, str]:
     if any(p in desc for p in TRANSFER_KEYWORDS):
         return "Internal Transfer", "transfer"
 
-    # 2. Income-specific categories (forced income)
-    for cat, patterns in INCOME_KEYWORD_MAP:
-        if any(p in desc for p in patterns):
-            return cat, "income"
+    # 2. Income-specific categories (forced income) — only for actual credits,
+    # so a debit narration that happens to contain e.g. "loan" or "refund"
+    # isn't mistyped as income.
+    if tx_type == "credit":
+        for cat, patterns in INCOME_KEYWORD_MAP:
+            if any(_keyword_matches(desc, p) for p in patterns):
+                return cat, "income"
 
     # 3. Neutral categories
     for cat, patterns in NEUTRAL_KEYWORD_MAP:
-        if any(p in desc for p in patterns):
+        if any(_keyword_matches(desc, p) for p in patterns):
             return cat, default_type
 
     # 4. Default: credit transactions are School Fees (this is a school account)
