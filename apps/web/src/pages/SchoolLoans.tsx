@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
   Landmark, Plus, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle, ChevronDown, ChevronUp,
-  BadgeCheck, Link as LinkIcon, Loader2,
+  BadgeCheck, Link as LinkIcon, Loader2, Lightbulb,
 } from 'lucide-react';
 import {
   listSchoolLoans, createSchoolLoan, updateSchoolLoan, deleteSchoolLoan,
   addSchoolLoanPayment, updateSchoolLoanPayment, deleteSchoolLoanPayment,
-  matchSchoolLoanTransactions,
+  matchSchoolLoanTransactions, suggestUntrackedLoanTransactions,
 } from '../api/client';
 import type { SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn, MatchedTransaction, Transaction } from '../api/types';
 import { Button } from '../components/ui/button';
@@ -101,12 +101,16 @@ export function SchoolLoans() {
   // Expanded rows
   const [expandedLoanId, setExpandedLoanId] = useState<number | null>(null);
 
+  // Income transactions categorized "Loans" with no tracked loan record yet
+  const [suggestions, setSuggestions] = useState<MatchedTransaction[]>([]);
+
   const load = () => {
     setLoading(true);
     listSchoolLoans()
       .then(setLoans)
       .catch(() => setError('Failed to load data'))
       .finally(() => setLoading(false));
+    suggestUntrackedLoanTransactions().then(setSuggestions).catch(() => setSuggestions([]));
   };
 
   useEffect(() => { load(); }, []);
@@ -119,6 +123,23 @@ export function SchoolLoans() {
     setLoanFormLinkedTx(null);
     setShowLoanForm(true);
   };
+
+  // Pre-fill Add Loan from a suggested untracked "Loans"-category income
+  // transaction — the user still reviews/edits before saving, nothing is
+  // created automatically.
+  const openAddLoanFromSuggestion = (tx: MatchedTransaction) => {
+    setEditingLoan(null);
+    setLoanForm({
+      ...EMPTY_LOAN,
+      lender_name: tx.vendor || tx.description,
+      loan_amount: tx.amount,
+      collected_date: tx.date,
+      transaction_id: tx.id,
+    });
+    setLoanFormLinkedTx(tx);
+    setShowLoanForm(true);
+  };
+
   const openEditLoan = (loan: SchoolLoan) => {
     setEditingLoan(loan);
     setLoanForm({
@@ -347,6 +368,28 @@ export function SchoolLoans() {
           <button type="button" title="Dismiss error" className="ml-auto text-destructive/80 hover:text-destructive" onClick={() => setError(null)}>
             <XCircle className="h-4 w-4" />
           </button>
+        </div>
+      )}
+
+      {suggestions.length > 0 && (
+        <div className="rounded-lg border border-amber-300/50 bg-amber-50 dark:bg-amber-950/20 px-4 py-3 text-sm space-y-2">
+          <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-400">
+            <Lightbulb className="h-4 w-4 shrink-0" />
+            {suggestions.length} income transaction{suggestions.length > 1 ? 's are' : ' is'} categorized "Loans" but not tracked here yet
+          </div>
+          <ul className="space-y-1.5">
+            {suggestions.map((tx) => (
+              <li key={tx.id} className="flex items-center justify-between gap-3 rounded-md bg-background/60 px-3 py-2">
+                <span className="truncate">
+                  <span className="font-medium">{formatCurrency(tx.amount)}</span>{' '}
+                  <span className="text-muted-foreground">— {tx.description}</span>
+                </span>
+                <Button size="sm" variant="outline" className="shrink-0" onClick={() => openAddLoanFromSuggestion(tx)}>
+                  Track as Loan
+                </Button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

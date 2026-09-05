@@ -202,6 +202,31 @@ def list_school_loans(db: Session = Depends(get_db)):
     return [_to_out(l) for l in loans]
 
 
+@router.get("/suggestions", response_model=list[MatchedTransaction])
+def suggest_untracked_loan_transactions(db: Session = Depends(get_db)):
+    """Income transactions categorized "Loans" that aren't yet linked to any
+    school loan record — a loan credit can land in the ledger via bank import
+    or manual entry without anyone remembering to also track it here, so
+    surface it instead of letting it silently miss the Loans Payable figure."""
+    linked_ids = {
+        row[0] for row in
+        db.query(SchoolLoan.transaction_id).filter(SchoolLoan.transaction_id.isnot(None)).all()
+    }
+    txs = (
+        db.query(Transaction)
+        .filter(Transaction.type == "income", Transaction.category == "Loans")
+        .order_by(Transaction.date.desc())
+        .all()
+    )
+    return [
+        MatchedTransaction(
+            id=t.id, date=t.date, amount=t.amount,
+            description=t.description, vendor=t.vendor, category=t.category,
+        )
+        for t in txs if t.id not in linked_ids
+    ]
+
+
 @router.post("/", response_model=SchoolLoanOut, status_code=201)
 def create_school_loan(body: SchoolLoanIn, db: Session = Depends(get_db)):
     loan = SchoolLoan(**body.model_dump())

@@ -264,3 +264,45 @@ def test_match_transactions_income_type_excludes_expense_transactions(client, db
     assert resp.status_code == 200, resp.text
     ids = {t["id"] for t in resp.json()}
     assert ids == {income_tx.id}
+
+
+def test_suggestions_lists_untracked_loan_income_transactions(client, db_session):
+    untracked = Transaction(
+        type="income", amount=1000000.0, currency="NGN", category="Loans",
+        description="Transfer from LUCKY OGOGO | loan from director",
+        vendor="LUCKY OGOGO", date=date(2026, 8, 26),
+    )
+    non_loan = Transaction(
+        type="income", amount=45000.0, currency="NGN", category="School Fees",
+        description="Transfer from a parent", date=date(2026, 8, 18),
+    )
+    expense_loan = Transaction(
+        type="expense", amount=50000.0, currency="NGN", category="Loans",
+        description="Loan repayment", date=date(2026, 8, 20),
+    )
+    db_session.add_all([untracked, non_loan, expense_loan])
+    db_session.commit()
+
+    resp = client.get("/school-loans/suggestions")
+    assert resp.status_code == 200, resp.text
+    ids = {t["id"] for t in resp.json()}
+    assert ids == {untracked.id}
+
+
+def test_suggestions_excludes_a_transaction_already_linked_to_a_loan(client, db_session):
+    tx = Transaction(
+        type="income", amount=1000000.0, currency="NGN", category="Loans",
+        description="Transfer from LUCKY OGOGO | loan from director", date=date(2026, 8, 26),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    resp = client.post("/school-loans/", json={
+        "lender_name": "Lucky Ogogo", "loan_amount": 1000000.0,
+        "collected_date": "2026-08-26", "transaction_id": tx.id,
+    })
+    assert resp.status_code == 201, resp.text
+
+    resp = client.get("/school-loans/suggestions")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
