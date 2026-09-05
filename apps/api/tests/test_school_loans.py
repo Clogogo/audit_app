@@ -245,6 +245,42 @@ def test_linking_a_transaction_to_a_loan_marks_it_verified(client, db_session):
     assert body["matched_tx"]["amount"] == 100000.0
 
 
+def test_overpaid_interest_credits_toward_principal_remaining(client, db_session):
+    # Regression guard for the "Total Remaining" figure not moving after
+    # editing total_interest_due: two payments recorded 30,000 interest each
+    # (60,000 total) against a loan whose agreed interest is later corrected
+    # down to 50,000. The 10,000 excess must count toward principal, not
+    # vanish into the outstanding_interest floor — total paid (200,038.60)
+    # already covers total owed (150,000 + 50,000), so nothing should be left.
+    loan = _create_loan(client, total_interest_due=60000.0, loan_amount=150000.0)
+    client.post(f"/school-loans/{loan['id']}/payments", json={
+        "amount_paid": 100020.0, "interest_amount": 30000.0, "misc_amount": 0.0,
+        "paid_date": "2026-02-18",
+    })
+    client.post(f"/school-loans/{loan['id']}/payments", json={
+        "amount_paid": 100018.6, "interest_amount": 30000.0, "misc_amount": 0.0,
+        "paid_date": "2026-06-13",
+    })
+    loan = client.get("/school-loans/").json()[0]
+    # At the original 60,000 agreed interest, nothing is overpaid yet — a
+    # small principal balance genuinely remains.
+    assert loan["outstanding_today"] == 9961.4
+    assert loan["fully_paid"] is False
+
+    # Now correct the agreed interest down to 50,000 — interest paid (60,000)
+    # now exceeds it by 10,000, which must credit toward the remaining
+    # principal instead of vanishing.
+    resp = _update_loan(client, loan, total_interest_due=50000.0)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["outstanding_interest"] == 0.0
+    assert body["outstanding_today"] == 0.0
+    assert body["fully_paid"] is True
+    # is_active is untouched here by design: the loan-terms endpoint only
+    # force-reopens a loan that no longer qualifies as paid, it never
+    # force-closes one — the user's explicit active/inactive choice stands.
+
+
 def test_match_transactions_income_type_excludes_expense_transactions(client, db_session):
     loan = _create_loan(client)
     income_tx = Transaction(

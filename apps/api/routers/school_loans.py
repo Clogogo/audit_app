@@ -39,9 +39,19 @@ def _total_misc_paid(loan: SchoolLoan) -> float:
     return round(sum(p.misc_amount for p in loan.payments), 2)
 
 
+def _excess_interest_paid(loan: SchoolLoan) -> float:
+    """Interest paid beyond the agreed total_interest_due doesn't vanish — it
+    counts as extra principal repayment. Without this, a payment's fixed
+    principal/interest split (recorded at payment time) could leave money
+    "still owed" on paper even after total cash paid already covers the
+    whole loan, e.g. after total_interest_due is corrected down post-payment."""
+    due = loan.total_interest_due or 0.0
+    return max(0.0, round(_total_interest_paid(loan) - due, 2))
+
+
 def _outstanding(loan: SchoolLoan) -> float:
     principal_paid = sum(_principal_paid(p) for p in loan.payments)
-    return max(0.0, round(loan.loan_amount - principal_paid, 2))
+    return max(0.0, round(loan.loan_amount - principal_paid - _excess_interest_paid(loan), 2))
 
 
 def _outstanding_interest(loan: SchoolLoan) -> float:
