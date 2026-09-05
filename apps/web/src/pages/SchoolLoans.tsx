@@ -405,7 +405,10 @@ export function SchoolLoans() {
                             <div className="flex-1 min-w-0">
                               <p className="font-semibold text-sm">{loan.lender_name}</p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {loan.interest_rate}% interest{loan.notes ? ` · ${loan.notes}` : ''}
+                                {loan.interest_rate > 0
+                                  ? `${loan.interest_rate}% interest`
+                                  : `${formatCurrency(loan.total_interest_due)} flat interest`}
+                                {loan.notes ? ` · ${loan.notes}` : ''}
                               </p>
                               <div className="flex items-center gap-1.5 mt-1">
                                 {loan.verified ? (
@@ -682,10 +685,7 @@ export function SchoolLoans() {
                       type="radio"
                       name="interest-mode"
                       checked={interestMode === 'percent'}
-                      onChange={() => {
-                        setInterestMode('percent');
-                        setLoanForm((f) => ({ ...f, total_interest_due: round2(f.loan_amount * f.interest_rate / 100) }));
-                      }}
+                      onChange={() => setInterestMode('percent')}
                     />
                     % rate
                   </label>
