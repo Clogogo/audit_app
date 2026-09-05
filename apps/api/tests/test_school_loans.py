@@ -306,3 +306,69 @@ def test_suggestions_excludes_a_transaction_already_linked_to_a_loan(client, db_
     resp = client.get("/school-loans/suggestions")
     assert resp.status_code == 200, resp.text
     assert resp.json() == []
+
+
+def test_suggestions_unaffected_by_a_loan_with_no_linked_transaction(client, db_session):
+    # A loan record that was never linked to a transaction (transaction_id
+    # IS NULL) must not suppress unrelated suggestions.
+    _create_loan(client)  # transaction_id defaults to None
+    untracked = Transaction(
+        type="income", amount=500000.0, currency="NGN", category="Loans",
+        description="Transfer from cooperative | loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(untracked)
+    db_session.commit()
+
+    resp = client.get("/school-loans/suggestions")
+    assert resp.status_code == 200, resp.text
+    ids = {t["id"] for t in resp.json()}
+    assert ids == {untracked.id}
+
+
+def test_cannot_create_a_loan_linked_to_a_transaction_already_used_by_another_loan(client, db_session):
+    tx = Transaction(
+        type="income", amount=500000.0, currency="NGN", category="Loans",
+        description="Loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    first = client.post("/school-loans/", json={
+        "lender_name": "First Lender", "loan_amount": 500000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    })
+    assert first.status_code == 201, first.text
+
+    dup = client.post("/school-loans/", json={
+        "lender_name": "Second Lender", "loan_amount": 500000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    })
+    assert dup.status_code == 400
+    assert "already linked" in dup.json()["detail"]
+
+
+def test_updating_a_loan_can_keep_its_own_transaction_link(client, db_session):
+    tx = Transaction(
+        type="income", amount=500000.0, currency="NGN", category="Loans",
+        description="Loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    loan = client.post("/school-loans/", json={
+        "lender_name": "Lender", "loan_amount": 500000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    }).json()
+
+    # Re-saving the same loan with its own existing transaction_id must not
+    # be rejected as a "duplicate".
+    resp = _update_loan(client, loan, transaction_id=tx.id)
+    assert resp.status_code == 200, resp.text
+
+
+def test_lender_name_over_200_chars_is_rejected_with_422_not_500(client, db_session):
+    resp = client.post("/school-loans/", json={
+        "lender_name": "A" * 201, "loan_amount": 100000.0,
+        "collected_date": "2026-08-01",
+    })
+    assert resp.status_code == 422, resp.text

@@ -131,7 +131,9 @@ export function SchoolLoans() {
     setEditingLoan(null);
     setLoanForm({
       ...EMPTY_LOAN,
-      lender_name: tx.vendor || tx.description,
+      // lender_name is capped at 200 chars server-side; vendor is usually
+      // clean but the raw bank description fallback can run much longer.
+      lender_name: (tx.vendor || tx.description).slice(0, 200),
       loan_amount: tx.amount,
       collected_date: tx.date,
       transaction_id: tx.id,
@@ -198,8 +200,9 @@ export function SchoolLoans() {
       setShowLoanForm(false);
       setEditingLoan(null);
       load();
-    } catch {
-      setError('Failed to save school loan');
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(detail || 'Failed to save school loan');
     } finally {
       setSavingLoan(false);
     }
