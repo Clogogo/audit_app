@@ -105,6 +105,11 @@ export function SchoolLoans() {
   // Income transactions categorized "Loans" with no tracked loan record yet
   const [suggestions, setSuggestions] = useState<MatchedTransaction[]>([]);
 
+  // One key per open "create" form — sent as Idempotency-Key so a double
+  // submit or a retried request can't create a second loan/payment record.
+  const [loanIdempotencyKey, setLoanIdempotencyKey] = useState<string>('');
+  const [paymentIdempotencyKey, setPaymentIdempotencyKey] = useState<string>('');
+
   const load = () => {
     setLoading(true);
     listSchoolLoans()
@@ -123,6 +128,7 @@ export function SchoolLoans() {
     setLoanForm(EMPTY_LOAN);
     setInterestMode('percent');
     setLoanFormLinkedTx(null);
+    setLoanIdempotencyKey(crypto.randomUUID());
     setShowLoanForm(true);
   };
 
@@ -141,6 +147,7 @@ export function SchoolLoans() {
       transaction_id: tx.id,
     });
     setLoanFormLinkedTx(tx);
+    setLoanIdempotencyKey(crypto.randomUUID());
     setShowLoanForm(true);
   };
 
@@ -200,7 +207,7 @@ export function SchoolLoans() {
       if (editingLoan) {
         await updateSchoolLoan(editingLoan.id, loanForm);
       } else {
-        await createSchoolLoan(loanForm);
+        await createSchoolLoan(loanForm, loanIdempotencyKey);
       }
       setShowLoanForm(false);
       setEditingLoan(null);
@@ -230,6 +237,7 @@ export function SchoolLoans() {
     setEditingPayment(null);
     setPaymentForm(EMPTY_PAYMENT);
     setMatchedTxs([]);
+    setPaymentIdempotencyKey(crypto.randomUUID());
   };
 
   const openEditPayment = (loanId: number, payment: SchoolLoanPaymentOut) => {
@@ -276,7 +284,7 @@ export function SchoolLoans() {
       if (editingPayment) {
         await updateSchoolLoanPayment(paymentLoanId, editingPayment.id, paymentForm);
       } else {
-        await addSchoolLoanPayment(paymentLoanId, paymentForm);
+        await addSchoolLoanPayment(paymentLoanId, paymentForm, paymentIdempotencyKey);
       }
       setPaymentLoanId(null);
       setEditingPayment(null);
@@ -318,7 +326,7 @@ export function SchoolLoans() {
         paid_date: tx.date,
         transaction_id: tx.id,
         notes: null,
-      });
+      }, paymentIdempotencyKey);
       load();
     } catch {
       setError('Failed to record payment from transaction');
@@ -559,7 +567,7 @@ export function SchoolLoans() {
                             <div className="flex items-center justify-between">
                               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Payment History</p>
                               <div className="flex gap-2">
-                                <Button size="sm" variant="outline" onClick={() => setLinkingNewPaymentForLoan(loan.id)}>
+                                <Button size="sm" variant="outline" onClick={() => { setPaymentIdempotencyKey(crypto.randomUUID()); setLinkingNewPaymentForLoan(loan.id); }}>
                                   <LinkIcon className="h-3.5 w-3.5 mr-1" />
                                   Link Transaction
                                 </Button>
