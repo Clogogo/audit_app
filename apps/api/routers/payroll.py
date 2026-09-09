@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth import require_permission
+from utils.idempotency import IdempotencyKeyHeader, reserve_idempotency_key
 from pydantic import BaseModel
 from rapidfuzz import fuzz
 from sqlalchemy import func
@@ -432,11 +433,22 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
 
 
 @router.post("/process", response_model=list[PayrollEntryOut])
-def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
+def process_payroll(
+    req: ProcessRequest, db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = IdempotencyKeyHeader,
+):
     """Process payroll for a month.
     Each staff member must have a salary expense transaction already recorded in
     the transactions table for this month before payroll can be marked as paid.
     """
+    # Reserved up front, before any matching/mutation work: PayrollEntry
+    # rows are upserted by (staff_id, period_year, period_month) so editing
+    # a period is safe to resubmit, but _recover_advances_for_month is not —
+    # it unconditionally drains the full advance deduction on every call, so
+    # an exact duplicate submission (double click, retried request) would
+    # double-drain an advance even though the PayrollEntry itself looks fine.
+    reserve_idempotency_key(db, idempotency_key)
+
     month_start = date(req.year, req.month, 1)
     month_end   = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
 
@@ -650,9 +662,16 @@ def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
 
         _recover_advances_for_month(staff, req.year, req.month, advance_ded, db)
 
-        db.commit()
+        # flush (not commit) — every line lands in ONE transaction with the
+        # idempotency key reserved at the top of this function, so a failure
+        # partway through a multi-staff batch rolls back everything already
+        # processed instead of leaving it committed with the key consumed
+        # and no way to safely retry under the same key.
+        db.flush()
         db.refresh(entry)
         saved.append(entry)
+
+    db.commit()
 
     from routers.financial_statements import _cache_bust
     _cache_bust()

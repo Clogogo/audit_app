@@ -12,7 +12,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth import require_permission
-from pydantic import BaseModel
+from utils.idempotency import IdempotencyKeyHeader, reserve_idempotency_key
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -39,9 +40,19 @@ def _total_misc_paid(loan: SchoolLoan) -> float:
     return round(sum(p.misc_amount for p in loan.payments), 2)
 
 
+def _excess_interest_paid(loan: SchoolLoan) -> float:
+    """Interest paid beyond the agreed total_interest_due doesn't vanish — it
+    counts as extra principal repayment. Without this, a payment's fixed
+    principal/interest split (recorded at payment time) could leave money
+    "still owed" on paper even after total cash paid already covers the
+    whole loan, e.g. after total_interest_due is corrected down post-payment."""
+    due = loan.total_interest_due or 0.0
+    return max(0.0, round(_total_interest_paid(loan) - due, 2))
+
+
 def _outstanding(loan: SchoolLoan) -> float:
     principal_paid = sum(_principal_paid(p) for p in loan.payments)
-    return max(0.0, round(loan.loan_amount - principal_paid, 2))
+    return max(0.0, round(loan.loan_amount - principal_paid - _excess_interest_paid(loan), 2))
 
 
 def _outstanding_interest(loan: SchoolLoan) -> float:
@@ -66,7 +77,7 @@ def _sync_active_status(loan: SchoolLoan) -> None:
 # ── schemas ────────────────────────────────────────────────────────────────────
 
 class SchoolLoanIn(BaseModel):
-    lender_name: str
+    lender_name: str = Field(max_length=200)  # matches SchoolLoan.lender_name column width
     loan_amount: float
     interest_rate: float = 0.0   # annual %, kept for reference / display only
     total_interest_due: float = 0.0  # agreed total interest owed on this loan
@@ -202,8 +213,59 @@ def list_school_loans(db: Session = Depends(get_db)):
     return [_to_out(l) for l in loans]
 
 
+@router.get("/suggestions", response_model=list[MatchedTransaction])
+def suggest_untracked_loan_transactions(db: Session = Depends(get_db)):
+    """Income transactions categorized "Loans" that aren't yet linked to any
+    school loan record — a loan credit can land in the ledger via bank import
+    or manual entry without anyone remembering to also track it here, so
+    surface it instead of letting it silently miss the Loans Payable figure."""
+    linked_ids = {
+        row[0] for row in
+        db.query(SchoolLoan.transaction_id).filter(SchoolLoan.transaction_id.isnot(None)).all()
+    }
+    txs = (
+        db.query(Transaction)
+        .filter(Transaction.type == "income", Transaction.category == "Loans")
+        .order_by(Transaction.date.desc())
+        .all()
+    )
+    return [
+        MatchedTransaction(
+            id=t.id, date=t.date, amount=t.amount,
+            description=t.description, vendor=t.vendor, category=t.category,
+        )
+        for t in txs if t.id not in linked_ids
+    ]
+
+
+def _assert_transaction_not_already_linked(
+    db: Session, transaction_id: Optional[int], exclude_loan_id: Optional[int] = None,
+) -> None:
+    """A transaction can only be the "collection" record for one loan — two
+    loans pointing at the same transaction would double-count it in the
+    Loans Payable total (which sums outstanding_today across all active
+    loans)."""
+    if transaction_id is None:
+        return
+    query = db.query(SchoolLoan).filter(SchoolLoan.transaction_id == transaction_id)
+    if exclude_loan_id is not None:
+        query = query.filter(SchoolLoan.id != exclude_loan_id)
+    other = query.first()
+    if other:
+        raise HTTPException(
+            400,
+            f"Transaction {transaction_id} is already linked to loan "
+            f"\"{other.lender_name}\" (id {other.id})",
+        )
+
+
 @router.post("/", response_model=SchoolLoanOut, status_code=201)
-def create_school_loan(body: SchoolLoanIn, db: Session = Depends(get_db)):
+def create_school_loan(
+    body: SchoolLoanIn, db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = IdempotencyKeyHeader,
+):
+    _assert_transaction_not_already_linked(db, body.transaction_id)
+    reserve_idempotency_key(db, idempotency_key)
     loan = SchoolLoan(**body.model_dump())
     db.add(loan)
     db.commit()
@@ -216,6 +278,7 @@ def update_school_loan(loan_id: int, body: SchoolLoanIn, db: Session = Depends(g
     loan = db.get(SchoolLoan, loan_id)
     if not loan:
         raise HTTPException(404, "School loan not found")
+    _assert_transaction_not_already_linked(db, body.transaction_id, exclude_loan_id=loan_id)
     for k, v in body.model_dump().items():
         setattr(loan, k, v)
     loan.updated_at = datetime.utcnow()
@@ -304,10 +367,14 @@ def list_payments(loan_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{loan_id}/payments", response_model=LoanPaymentOut, status_code=201)
-def add_payment(loan_id: int, body: LoanPaymentIn, db: Session = Depends(get_db)):
+def add_payment(
+    loan_id: int, body: LoanPaymentIn, db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = IdempotencyKeyHeader,
+):
     loan = db.get(SchoolLoan, loan_id)
     if not loan:
         raise HTTPException(404, "School loan not found")
+    reserve_idempotency_key(db, idempotency_key)
     payment = SchoolLoanPayment(loan_id=loan_id, **body.model_dump())
     db.add(payment)
     db.flush()

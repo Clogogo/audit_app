@@ -245,6 +245,42 @@ def test_linking_a_transaction_to_a_loan_marks_it_verified(client, db_session):
     assert body["matched_tx"]["amount"] == 100000.0
 
 
+def test_overpaid_interest_credits_toward_principal_remaining(client, db_session):
+    # Regression guard for the "Total Remaining" figure not moving after
+    # editing total_interest_due: two payments recorded 30,000 interest each
+    # (60,000 total) against a loan whose agreed interest is later corrected
+    # down to 50,000. The 10,000 excess must count toward principal, not
+    # vanish into the outstanding_interest floor — total paid (200,038.60)
+    # already covers total owed (150,000 + 50,000), so nothing should be left.
+    loan = _create_loan(client, total_interest_due=60000.0, loan_amount=150000.0)
+    client.post(f"/school-loans/{loan['id']}/payments", json={
+        "amount_paid": 100020.0, "interest_amount": 30000.0, "misc_amount": 0.0,
+        "paid_date": "2026-02-18",
+    })
+    client.post(f"/school-loans/{loan['id']}/payments", json={
+        "amount_paid": 100018.6, "interest_amount": 30000.0, "misc_amount": 0.0,
+        "paid_date": "2026-06-13",
+    })
+    loan = client.get("/school-loans/").json()[0]
+    # At the original 60,000 agreed interest, nothing is overpaid yet — a
+    # small principal balance genuinely remains.
+    assert loan["outstanding_today"] == 9961.4
+    assert loan["fully_paid"] is False
+
+    # Now correct the agreed interest down to 50,000 — interest paid (60,000)
+    # now exceeds it by 10,000, which must credit toward the remaining
+    # principal instead of vanishing.
+    resp = _update_loan(client, loan, total_interest_due=50000.0)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["outstanding_interest"] == 0.0
+    assert body["outstanding_today"] == 0.0
+    assert body["fully_paid"] is True
+    # is_active is untouched here by design: the loan-terms endpoint only
+    # force-reopens a loan that no longer qualifies as paid, it never
+    # force-closes one — the user's explicit active/inactive choice stands.
+
+
 def test_match_transactions_income_type_excludes_expense_transactions(client, db_session):
     loan = _create_loan(client)
     income_tx = Transaction(
@@ -264,3 +300,190 @@ def test_match_transactions_income_type_excludes_expense_transactions(client, db
     assert resp.status_code == 200, resp.text
     ids = {t["id"] for t in resp.json()}
     assert ids == {income_tx.id}
+
+
+def test_suggestions_lists_untracked_loan_income_transactions(client, db_session):
+    untracked = Transaction(
+        type="income", amount=1000000.0, currency="NGN", category="Loans",
+        description="Transfer from LUCKY OGOGO | loan from director",
+        vendor="LUCKY OGOGO", date=date(2026, 8, 26),
+    )
+    non_loan = Transaction(
+        type="income", amount=45000.0, currency="NGN", category="School Fees",
+        description="Transfer from a parent", date=date(2026, 8, 18),
+    )
+    expense_loan = Transaction(
+        type="expense", amount=50000.0, currency="NGN", category="Loans",
+        description="Loan repayment", date=date(2026, 8, 20),
+    )
+    db_session.add_all([untracked, non_loan, expense_loan])
+    db_session.commit()
+
+    resp = client.get("/school-loans/suggestions")
+    assert resp.status_code == 200, resp.text
+    ids = {t["id"] for t in resp.json()}
+    assert ids == {untracked.id}
+
+
+def test_suggestions_excludes_a_transaction_already_linked_to_a_loan(client, db_session):
+    tx = Transaction(
+        type="income", amount=1000000.0, currency="NGN", category="Loans",
+        description="Transfer from LUCKY OGOGO | loan from director", date=date(2026, 8, 26),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    resp = client.post("/school-loans/", json={
+        "lender_name": "Lucky Ogogo", "loan_amount": 1000000.0,
+        "collected_date": "2026-08-26", "transaction_id": tx.id,
+    })
+    assert resp.status_code == 201, resp.text
+
+    resp = client.get("/school-loans/suggestions")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+
+
+def test_suggestions_unaffected_by_a_loan_with_no_linked_transaction(client, db_session):
+    # A loan record that was never linked to a transaction (transaction_id
+    # IS NULL) must not suppress unrelated suggestions.
+    _create_loan(client)  # transaction_id defaults to None
+    untracked = Transaction(
+        type="income", amount=500000.0, currency="NGN", category="Loans",
+        description="Transfer from cooperative | loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(untracked)
+    db_session.commit()
+
+    resp = client.get("/school-loans/suggestions")
+    assert resp.status_code == 200, resp.text
+    ids = {t["id"] for t in resp.json()}
+    assert ids == {untracked.id}
+
+
+def test_cannot_create_a_loan_linked_to_a_transaction_already_used_by_another_loan(client, db_session):
+    tx = Transaction(
+        type="income", amount=500000.0, currency="NGN", category="Loans",
+        description="Loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    first = client.post("/school-loans/", json={
+        "lender_name": "First Lender", "loan_amount": 500000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    })
+    assert first.status_code == 201, first.text
+
+    dup = client.post("/school-loans/", json={
+        "lender_name": "Second Lender", "loan_amount": 500000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    })
+    assert dup.status_code == 400
+    assert "already linked" in dup.json()["detail"]
+
+
+def test_updating_a_loan_can_keep_its_own_transaction_link(client, db_session):
+    tx = Transaction(
+        type="income", amount=500000.0, currency="NGN", category="Loans",
+        description="Loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    loan = client.post("/school-loans/", json={
+        "lender_name": "Lender", "loan_amount": 500000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    }).json()
+
+    # Re-saving the same loan with its own existing transaction_id must not
+    # be rejected as a "duplicate".
+    resp = _update_loan(client, loan, transaction_id=tx.id)
+    assert resp.status_code == 200, resp.text
+
+
+def test_lender_name_over_200_chars_is_rejected_with_422_not_500(client, db_session):
+    resp = client.post("/school-loans/", json={
+        "lender_name": "A" * 201, "loan_amount": 100000.0,
+        "collected_date": "2026-08-01",
+    })
+    assert resp.status_code == 422, resp.text
+
+
+def test_idempotency_key_rejects_a_duplicate_loan_submission(client, db_session):
+    payload = {
+        "lender_name": "Idempotent Cooperative", "loan_amount": 250000.0,
+        "collected_date": "2026-08-01",
+    }
+    first = client.post("/school-loans/", json=payload, headers={"Idempotency-Key": "loan-key-1"})
+    assert first.status_code == 201, first.text
+
+    dup = client.post("/school-loans/", json=payload, headers={"Idempotency-Key": "loan-key-1"})
+    assert dup.status_code == 409, dup.text
+
+    # Only one loan record actually exists.
+    assert len(client.get("/school-loans/").json()) == 1
+
+
+def test_idempotency_key_is_optional_and_does_not_block_normal_use(client, db_session):
+    # No Idempotency-Key header at all — must behave exactly as before.
+    resp1 = client.post("/school-loans/", json={
+        "lender_name": "No Key Lender A", "loan_amount": 100000.0, "collected_date": "2026-08-01",
+    })
+    resp2 = client.post("/school-loans/", json={
+        "lender_name": "No Key Lender B", "loan_amount": 100000.0, "collected_date": "2026-08-01",
+    })
+    assert resp1.status_code == 201
+    assert resp2.status_code == 201
+
+
+def test_idempotency_key_rejects_a_duplicate_payment_submission(client, db_session):
+    loan = _create_loan(client)
+    payload = {
+        "amount_paid": 50000.0, "interest_amount": 0.0, "misc_amount": 0.0,
+        "paid_date": "2026-02-01",
+    }
+    first = client.post(
+        f"/school-loans/{loan['id']}/payments", json=payload,
+        headers={"Idempotency-Key": "payment-key-1"},
+    )
+    assert first.status_code == 201, first.text
+
+    dup = client.post(
+        f"/school-loans/{loan['id']}/payments", json=payload,
+        headers={"Idempotency-Key": "payment-key-1"},
+    )
+    assert dup.status_code == 409, dup.text
+
+    payments = client.get(f"/school-loans/{loan['id']}/payments").json()
+    assert len(payments) == 1
+
+
+def test_idempotency_key_reusable_after_a_failed_request(client, db_session):
+    # A request that fails validation (missing parent loan) must not
+    # "consume" the key — the same key should work once the request is
+    # actually valid, so a legitimate client retry with corrected data
+    # isn't permanently blocked by its own first, failed attempt.
+    bad = client.post(
+        "/school-loans/999999/payments",
+        json={"amount_paid": 1000.0, "paid_date": "2026-02-01"},
+        headers={"Idempotency-Key": "retry-key-1"},
+    )
+    assert bad.status_code == 404
+
+    loan = _create_loan(client)
+    good = client.post(
+        f"/school-loans/{loan['id']}/payments",
+        json={"amount_paid": 1000.0, "paid_date": "2026-02-01"},
+        headers={"Idempotency-Key": "retry-key-1"},
+    )
+    assert good.status_code == 201, good.text
+
+
+def test_oversized_idempotency_key_is_rejected_with_422_not_500(client, db_session):
+    resp = client.post(
+        "/school-loans/",
+        json={"lender_name": "Lender", "loan_amount": 100000.0, "collected_date": "2026-08-01"},
+        headers={"Idempotency-Key": "x" * 101},
+    )
+    assert resp.status_code == 422, resp.text

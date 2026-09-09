@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
   Landmark, Plus, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle, ChevronDown, ChevronUp,
-  BadgeCheck, Link as LinkIcon, Loader2,
+  BadgeCheck, Link as LinkIcon, Loader2, Lightbulb,
 } from 'lucide-react';
 import {
   listSchoolLoans, createSchoolLoan, updateSchoolLoan, deleteSchoolLoan,
   addSchoolLoanPayment, updateSchoolLoanPayment, deleteSchoolLoanPayment,
-  matchSchoolLoanTransactions,
+  matchSchoolLoanTransactions, suggestUntrackedLoanTransactions,
 } from '../api/client';
 import type { SchoolLoan, SchoolLoanIn, SchoolLoanPaymentOut, SchoolLoanPaymentIn, MatchedTransaction, Transaction } from '../api/types';
 import { Button } from '../components/ui/button';
@@ -74,6 +74,7 @@ export function SchoolLoans() {
   const [showLoanForm, setShowLoanForm] = useState(false);
   const [editingLoan, setEditingLoan] = useState<SchoolLoan | null>(null);
   const [loanForm, setLoanForm] = useState<SchoolLoanIn>(EMPTY_LOAN);
+  const [interestMode, setInterestMode] = useState<'percent' | 'amount'>('percent');
   const [savingLoan, setSavingLoan] = useState(false);
   const [deleteLoanId, setDeleteLoanId] = useState<number | null>(null);
 
@@ -101,12 +102,21 @@ export function SchoolLoans() {
   // Expanded rows
   const [expandedLoanId, setExpandedLoanId] = useState<number | null>(null);
 
+  // Income transactions categorized "Loans" with no tracked loan record yet
+  const [suggestions, setSuggestions] = useState<MatchedTransaction[]>([]);
+
+  // One key per open "create" form — sent as Idempotency-Key so a double
+  // submit or a retried request can't create a second loan/payment record.
+  const [loanIdempotencyKey, setLoanIdempotencyKey] = useState<string>('');
+  const [paymentIdempotencyKey, setPaymentIdempotencyKey] = useState<string>('');
+
   const load = () => {
     setLoading(true);
     listSchoolLoans()
       .then(setLoans)
       .catch(() => setError('Failed to load data'))
       .finally(() => setLoading(false));
+    suggestUntrackedLoanTransactions().then(setSuggestions).catch(() => setSuggestions([]));
   };
 
   useEffect(() => { load(); }, []);
@@ -116,9 +126,31 @@ export function SchoolLoans() {
   const openAddLoan = () => {
     setEditingLoan(null);
     setLoanForm(EMPTY_LOAN);
+    setInterestMode('percent');
     setLoanFormLinkedTx(null);
+    setLoanIdempotencyKey(crypto.randomUUID());
     setShowLoanForm(true);
   };
+
+  // Pre-fill Add Loan from a suggested untracked "Loans"-category income
+  // transaction — the user still reviews/edits before saving, nothing is
+  // created automatically.
+  const openAddLoanFromSuggestion = (tx: MatchedTransaction) => {
+    setEditingLoan(null);
+    setLoanForm({
+      ...EMPTY_LOAN,
+      // lender_name is capped at 200 chars server-side; vendor is usually
+      // clean but the raw bank description fallback can run much longer.
+      lender_name: (tx.vendor || tx.description).slice(0, 200),
+      loan_amount: tx.amount,
+      collected_date: tx.date,
+      transaction_id: tx.id,
+    });
+    setLoanFormLinkedTx(tx);
+    setLoanIdempotencyKey(crypto.randomUUID());
+    setShowLoanForm(true);
+  };
+
   const openEditLoan = (loan: SchoolLoan) => {
     setEditingLoan(loan);
     setLoanForm({
@@ -131,6 +163,9 @@ export function SchoolLoans() {
       notes: loan.notes ?? '',
       is_active: loan.is_active,
     });
+    // A loan whose interest was agreed as a flat amount (no rate) should
+    // reopen in Amount mode, not silently show a stale/zero rate.
+    setInterestMode(loan.interest_rate > 0 ? 'percent' : 'amount');
     setLoanFormLinkedTx(loan.matched_tx);
     setShowLoanForm(true);
   };
@@ -172,13 +207,14 @@ export function SchoolLoans() {
       if (editingLoan) {
         await updateSchoolLoan(editingLoan.id, loanForm);
       } else {
-        await createSchoolLoan(loanForm);
+        await createSchoolLoan(loanForm, loanIdempotencyKey);
       }
       setShowLoanForm(false);
       setEditingLoan(null);
       load();
-    } catch {
-      setError('Failed to save school loan');
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(detail || 'Failed to save school loan');
     } finally {
       setSavingLoan(false);
     }
@@ -201,6 +237,7 @@ export function SchoolLoans() {
     setEditingPayment(null);
     setPaymentForm(EMPTY_PAYMENT);
     setMatchedTxs([]);
+    setPaymentIdempotencyKey(crypto.randomUUID());
   };
 
   const openEditPayment = (loanId: number, payment: SchoolLoanPaymentOut) => {
@@ -247,7 +284,7 @@ export function SchoolLoans() {
       if (editingPayment) {
         await updateSchoolLoanPayment(paymentLoanId, editingPayment.id, paymentForm);
       } else {
-        await addSchoolLoanPayment(paymentLoanId, paymentForm);
+        await addSchoolLoanPayment(paymentLoanId, paymentForm, paymentIdempotencyKey);
       }
       setPaymentLoanId(null);
       setEditingPayment(null);
@@ -289,7 +326,7 @@ export function SchoolLoans() {
         paid_date: tx.date,
         transaction_id: tx.id,
         notes: null,
-      });
+      }, paymentIdempotencyKey);
       load();
     } catch {
       setError('Failed to record payment from transaction');
@@ -350,6 +387,28 @@ export function SchoolLoans() {
         </div>
       )}
 
+      {suggestions.length > 0 && (
+        <div className="rounded-lg border border-amber-300/50 bg-amber-50 dark:bg-amber-950/20 px-4 py-3 text-sm space-y-2">
+          <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-400">
+            <Lightbulb className="h-4 w-4 shrink-0" />
+            {suggestions.length} income transaction{suggestions.length > 1 ? 's are' : ' is'} categorized "Loans" but not tracked here yet
+          </div>
+          <ul className="space-y-1.5">
+            {suggestions.map((tx) => (
+              <li key={tx.id} className="flex items-center justify-between gap-3 rounded-md bg-background/60 px-3 py-2">
+                <span className="truncate">
+                  <span className="font-medium">{formatCurrency(tx.amount)}</span>{' '}
+                  <span className="text-muted-foreground">— {tx.description}</span>
+                </span>
+                <Button size="sm" variant="outline" className="shrink-0" onClick={() => openAddLoanFromSuggestion(tx)}>
+                  Track as Loan
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
@@ -400,7 +459,10 @@ export function SchoolLoans() {
                             <div className="flex-1 min-w-0">
                               <p className="font-semibold text-sm">{loan.lender_name}</p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {loan.interest_rate}% interest{loan.notes ? ` · ${loan.notes}` : ''}
+                                {loan.interest_rate > 0
+                                  ? `${loan.interest_rate}% interest`
+                                  : `${formatCurrency(loan.total_interest_due)} flat interest`}
+                                {loan.notes ? ` · ${loan.notes}` : ''}
                               </p>
                               <div className="flex items-center gap-1.5 mt-1">
                                 {loan.verified ? (
@@ -505,7 +567,7 @@ export function SchoolLoans() {
                             <div className="flex items-center justify-between">
                               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Payment History</p>
                               <div className="flex gap-2">
-                                <Button size="sm" variant="outline" onClick={() => setLinkingNewPaymentForLoan(loan.id)}>
+                                <Button size="sm" variant="outline" onClick={() => { setPaymentIdempotencyKey(crypto.randomUUID()); setLinkingNewPaymentForLoan(loan.id); }}>
                                   <LinkIcon className="h-3.5 w-3.5 mr-1" />
                                   Link Transaction
                                 </Button>
@@ -670,31 +732,61 @@ export function SchoolLoans() {
               <NumInput label="Loan Amount" value={loanForm.loan_amount} onChange={(n) => setLoanForm((f) => ({ ...f, loan_amount: n }))} required />
 
               <div>
-                <label className="block text-xs font-medium text-foreground mb-1">Interest Rate (% per annum)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  placeholder="0"
-                  value={loanForm.interest_rate || ''}
-                  onChange={(e) => {
-                    const rate = parseFloat(e.target.value) || 0;
-                    setLoanForm((f) => ({ ...f, interest_rate: rate, total_interest_due: round2(f.loan_amount * rate / 100) }));
-                  }}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-                <p className="text-xs text-muted-foreground mt-1">Auto-fills Total Interest Due below (loan amount × this rate) — still freely editable if the actual agreed figure differs.</p>
-              </div>
+                <label className="block text-xs font-medium text-foreground mb-1">Interest *</label>
+                <div className="flex gap-4 text-sm mb-2">
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="interest-mode"
+                      checked={interestMode === 'percent'}
+                      onChange={() => setInterestMode('percent')}
+                    />
+                    % rate
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="interest-mode"
+                      checked={interestMode === 'amount'}
+                      onChange={() => {
+                        setInterestMode('amount');
+                        setLoanForm((f) => ({ ...f, interest_rate: 0 }));
+                      }}
+                    />
+                    Flat amount
+                  </label>
+                </div>
 
-              <div>
-                <NumInput
-                  label="Total Interest Due (agreed with lender)"
-                  value={loanForm.total_interest_due || 0}
-                  onChange={(n) => setLoanForm((f) => ({ ...f, total_interest_due: n }))}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  The loan only counts as fully repaid once principal AND this amount are both paid off.
-                </p>
+                {interestMode === 'percent' ? (
+                  <>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      placeholder="0"
+                      value={loanForm.interest_rate || ''}
+                      onChange={(e) => {
+                        const rate = parseFloat(e.target.value) || 0;
+                        setLoanForm((f) => ({ ...f, interest_rate: rate, total_interest_due: round2(f.loan_amount * rate / 100) }));
+                      }}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      % per annum — Total Interest Due computes as loan amount × this rate: {formatCurrency(loanForm.total_interest_due || 0)}.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <NumInput
+                      label=""
+                      value={loanForm.total_interest_due || 0}
+                      onChange={(n) => setLoanForm((f) => ({ ...f, total_interest_due: n }))}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The flat total interest agreed with the lender. The loan only counts as fully repaid once principal AND this amount are both paid off.
+                    </p>
+                  </>
+                )}
               </div>
 
               <div>
