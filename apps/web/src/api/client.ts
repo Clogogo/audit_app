@@ -578,8 +578,8 @@ export const suggestUntrackedLoanTransactions = () =>
 export const computePayroll = (year: number, month: number) =>
   api.get<PayrollLine[]>('/payroll/compute', { params: { year, month } }).then(unwrap);
 
-export const processPayroll = (year: number, month: number, lines: PayrollLineIn[]) =>
-  api.post<PayrollEntryOut[]>('/payroll/process', { year, month, lines }).then(unwrap);
+export const processPayroll = (year: number, month: number, lines: PayrollLineIn[], idempotencyKey?: string) =>
+  api.post<PayrollEntryOut[]>('/payroll/process', { year, month, lines }, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined).then(unwrap);
 
 export const getPayrollEntries = (year: number, month: number) =>
   api.get<PayrollEntryOut[]>('/payroll/entries', { params: { year, month } }).then(unwrap);

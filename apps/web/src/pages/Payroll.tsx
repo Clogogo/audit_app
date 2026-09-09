@@ -168,7 +168,7 @@ export function Payroll() {
 
     setProcessing(true);
     try {
-      const entries = await processPayroll(year, month, payload);
+      const entries = await processPayroll(year, month, payload, crypto.randomUUID());
       buildPayNotices(entries);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
       setManualLink({});
@@ -229,7 +229,7 @@ export function Payroll() {
         other_deductions: getOther(l),
         transaction_id: manualLink[l.staff_id]?.transactionId,
       }));
-      const entries = await processPayroll(year, month, payload);
+      const entries = await processPayroll(year, month, payload, crypto.randomUUID());
       buildPayNotices(entries);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
       setManualLink({});

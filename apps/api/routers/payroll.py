@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth import require_permission
+from utils.idempotency import IdempotencyKeyHeader, reserve_idempotency_key
 from pydantic import BaseModel
 from rapidfuzz import fuzz
 from sqlalchemy import func
@@ -432,11 +433,22 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
 
 
 @router.post("/process", response_model=list[PayrollEntryOut])
-def process_payroll(req: ProcessRequest, db: Session = Depends(get_db)):
+def process_payroll(
+    req: ProcessRequest, db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = IdempotencyKeyHeader,
+):
     """Process payroll for a month.
     Each staff member must have a salary expense transaction already recorded in
     the transactions table for this month before payroll can be marked as paid.
     """
+    # Reserved up front, before any matching/mutation work: PayrollEntry
+    # rows are upserted by (staff_id, period_year, period_month) so editing
+    # a period is safe to resubmit, but _recover_advances_for_month is not —
+    # it unconditionally drains the full advance deduction on every call, so
+    # an exact duplicate submission (double click, retried request) would
+    # double-drain an advance even though the PayrollEntry itself looks fine.
+    reserve_idempotency_key(db, idempotency_key)
+
     month_start = date(req.year, req.month, 1)
     month_end   = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
 

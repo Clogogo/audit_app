@@ -176,3 +176,41 @@ def test_partial_deduction_reduces_remaining_amount_and_does_not_over_deduct(cli
     assert advance.is_recovered is True
     assert advance.recovered_period_year == 2026
     assert advance.recovered_period_month == 2
+
+
+def test_duplicate_process_payroll_submission_is_rejected_and_does_not_double_drain(client, db_session):
+    # process_payroll upserts PayrollEntry by (staff_id, period_year,
+    # period_month), but _recover_advances_for_month unconditionally drains
+    # the full advance_deduction on every call — a duplicate submission
+    # (double click, or a client retrying a request whose response it never
+    # saw) would double-drain the advance even though the PayrollEntry row
+    # itself ends up looking correct. An Idempotency-Key on the request
+    # rejects the exact duplicate outright before that mutation runs again.
+    staff = _create_staff(db_session, "Ngozi Williams", monthly_gross=100000.0)
+    advance = _create_advance(db_session, staff, amount=15000.0, date_issued="2026-01-10")
+
+    tx = Transaction(
+        type="expense", amount=85000.0, currency="NGN", category="Salary and Wages",
+        description="Transfer to Ngozi Williams | OPay | 0000000000 | January 2026",
+        date=date(2026, 1, 30), vendor="Ngozi Williams",
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    body = {"year": 2026, "month": 1, "lines": [{"staff_id": staff.id, "gross_salary": 100000.0}]}
+    headers = {"Idempotency-Key": "payroll-key-1"}
+    resp1 = client.post("/payroll/process", json=body, headers=headers)
+    assert resp1.status_code == 200, resp1.text
+
+    db_session.refresh(advance)
+    assert advance.remaining_amount == 0.0
+    assert advance.is_recovered is True
+
+    # Re-submitting the identical request with the same key is rejected —
+    # the mutation never runs a second time.
+    resp2 = client.post("/payroll/process", json=body, headers=headers)
+    assert resp2.status_code == 409, resp2.text
+
+    db_session.refresh(advance)
+    assert advance.remaining_amount == 0.0
+    assert advance.is_recovered is True
