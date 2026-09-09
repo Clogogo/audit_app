@@ -662,9 +662,16 @@ def process_payroll(
 
         _recover_advances_for_month(staff, req.year, req.month, advance_ded, db)
 
-        db.commit()
+        # flush (not commit) — every line lands in ONE transaction with the
+        # idempotency key reserved at the top of this function, so a failure
+        # partway through a multi-staff batch rolls back everything already
+        # processed instead of leaving it committed with the key consumed
+        # and no way to safely retry under the same key.
+        db.flush()
         db.refresh(entry)
         saved.append(entry)
+
+    db.commit()
 
     from routers.financial_statements import _cache_bust
     _cache_bust()

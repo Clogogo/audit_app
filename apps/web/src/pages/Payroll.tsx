@@ -71,11 +71,19 @@ export function Payroll() {
   // Staff full_name currently showing the transaction picker, if any
   const [linkingFor, setLinkingFor] = useState<string | null>(null);
 
+  // One key per "processing intent" — set whenever load() runs (mount,
+  // month change, post-reset, post-success), so a failed submit's retry
+  // reuses the same key and is protected by the backend's duplicate check,
+  // while a genuinely new target (different month, or a fresh load after
+  // success) gets a new one.
+  const [processIdempotencyKey, setProcessIdempotencyKey] = useState<string>(() => crypto.randomUUID());
+
   const load = (preserveEdits = false) => {
     setLoading(true);
     setError(null);
     setMissingTx([]);
     setSuccess(null);
+    setProcessIdempotencyKey(crypto.randomUUID());
     computePayroll(year, month)
       .then((data) => {
         setLines(data);
@@ -168,7 +176,7 @@ export function Payroll() {
 
     setProcessing(true);
     try {
-      const entries = await processPayroll(year, month, payload, crypto.randomUUID());
+      const entries = await processPayroll(year, month, payload, processIdempotencyKey);
       buildPayNotices(entries);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
       setManualLink({});
@@ -229,7 +237,7 @@ export function Payroll() {
         other_deductions: getOther(l),
         transaction_id: manualLink[l.staff_id]?.transactionId,
       }));
-      const entries = await processPayroll(year, month, payload, crypto.randomUUID());
+      const entries = await processPayroll(year, month, payload, processIdempotencyKey);
       buildPayNotices(entries);
       setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
       setManualLink({});
