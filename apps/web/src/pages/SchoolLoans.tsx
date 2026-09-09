@@ -326,7 +326,7 @@ export function SchoolLoans() {
         paid_date: tx.date,
         transaction_id: tx.id,
         notes: null,
-      }, crypto.randomUUID());
+      }, paymentIdempotencyKey);
       load();
     } catch {
       setError('Failed to record payment from transaction');
@@ -567,7 +567,7 @@ export function SchoolLoans() {
                             <div className="flex items-center justify-between">
                               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Payment History</p>
                               <div className="flex gap-2">
-                                <Button size="sm" variant="outline" onClick={() => setLinkingNewPaymentForLoan(loan.id)}>
+                                <Button size="sm" variant="outline" onClick={() => { setPaymentIdempotencyKey(crypto.randomUUID()); setLinkingNewPaymentForLoan(loan.id); }}>
                                   <LinkIcon className="h-3.5 w-3.5 mr-1" />
                                   Link Transaction
                                 </Button>

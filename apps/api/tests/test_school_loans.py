@@ -478,3 +478,12 @@ def test_idempotency_key_reusable_after_a_failed_request(client, db_session):
         headers={"Idempotency-Key": "retry-key-1"},
     )
     assert good.status_code == 201, good.text
+
+
+def test_oversized_idempotency_key_is_rejected_with_422_not_500(client, db_session):
+    resp = client.post(
+        "/school-loans/",
+        json={"lender_name": "Lender", "loan_amount": 100000.0, "collected_date": "2026-08-01"},
+        headers={"Idempotency-Key": "x" * 101},
+    )
+    assert resp.status_code == 422, resp.text

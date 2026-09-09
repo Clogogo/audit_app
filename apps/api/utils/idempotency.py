@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from models import IdempotencyKey
 
-IdempotencyKeyHeader = Header(default=None, alias="Idempotency-Key")
+IdempotencyKeyHeader = Header(default=None, alias="Idempotency-Key", max_length=100)
 
 
 def reserve_idempotency_key(db: Session, key: Optional[str]) -> None:
