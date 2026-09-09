@@ -575,3 +575,15 @@ class AuditLog(Base):
         primaryjoin="and_(AuditLog.entity_id == Transaction.id, AuditLog.entity_type == 'transaction')",
         viewonly=True,
     )
+
+
+class IdempotencyKey(Base):
+    """One row per client-supplied Idempotency-Key that's been successfully
+    used on a money-creating write. A second request with the same key hits
+    the unique constraint and is rejected as a duplicate submission (double
+    click, or a client retrying a request whose response it never saw)."""
+    __tablename__ = "idempotency_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

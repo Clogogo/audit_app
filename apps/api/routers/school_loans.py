@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth import require_permission
+from utils.idempotency import IdempotencyKeyHeader, reserve_idempotency_key
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -259,8 +260,12 @@ def _assert_transaction_not_already_linked(
 
 
 @router.post("/", response_model=SchoolLoanOut, status_code=201)
-def create_school_loan(body: SchoolLoanIn, db: Session = Depends(get_db)):
+def create_school_loan(
+    body: SchoolLoanIn, db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = IdempotencyKeyHeader,
+):
     _assert_transaction_not_already_linked(db, body.transaction_id)
+    reserve_idempotency_key(db, idempotency_key)
     loan = SchoolLoan(**body.model_dump())
     db.add(loan)
     db.commit()
@@ -362,10 +367,14 @@ def list_payments(loan_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{loan_id}/payments", response_model=LoanPaymentOut, status_code=201)
-def add_payment(loan_id: int, body: LoanPaymentIn, db: Session = Depends(get_db)):
+def add_payment(
+    loan_id: int, body: LoanPaymentIn, db: Session = Depends(get_db),
+    idempotency_key: Optional[str] = IdempotencyKeyHeader,
+):
     loan = db.get(SchoolLoan, loan_id)
     if not loan:
         raise HTTPException(404, "School loan not found")
+    reserve_idempotency_key(db, idempotency_key)
     payment = SchoolLoanPayment(loan_id=loan_id, **body.model_dump())
     db.add(payment)
     db.flush()

@@ -549,8 +549,8 @@ export const deleteAdvancePayment = (id: number) =>
 export const listSchoolLoans = () =>
   api.get<SchoolLoan[]>('/school-loans/').then(unwrap);
 
-export const createSchoolLoan = (body: SchoolLoanIn) =>
-  api.post<SchoolLoan>('/school-loans/', body).then(unwrap);
+export const createSchoolLoan = (body: SchoolLoanIn, idempotencyKey?: string) =>
+  api.post<SchoolLoan>('/school-loans/', body, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined).then(unwrap);
 
 export const updateSchoolLoan = (id: number, body: SchoolLoanIn) =>
   api.put<SchoolLoan>(`/school-loans/${id}`, body).then(unwrap);
@@ -558,8 +558,8 @@ export const updateSchoolLoan = (id: number, body: SchoolLoanIn) =>
 export const deleteSchoolLoan = (id: number) =>
   api.delete<void>(`/school-loans/${id}`).then(unwrap);
 
-export const addSchoolLoanPayment = (loanId: number, body: SchoolLoanPaymentIn) =>
-  api.post<SchoolLoanPaymentOut>(`/school-loans/${loanId}/payments`, body).then(unwrap);
+export const addSchoolLoanPayment = (loanId: number, body: SchoolLoanPaymentIn, idempotencyKey?: string) =>
+  api.post<SchoolLoanPaymentOut>(`/school-loans/${loanId}/payments`, body, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined).then(unwrap);
 
 export const updateSchoolLoanPayment = (loanId: number, paymentId: number, body: SchoolLoanPaymentIn) =>
   api.put<SchoolLoanPaymentOut>(`/school-loans/${loanId}/payments/${paymentId}`, body).then(unwrap);

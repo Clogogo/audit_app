@@ -408,3 +408,73 @@ def test_lender_name_over_200_chars_is_rejected_with_422_not_500(client, db_sess
         "collected_date": "2026-08-01",
     })
     assert resp.status_code == 422, resp.text
+
+
+def test_idempotency_key_rejects_a_duplicate_loan_submission(client, db_session):
+    payload = {
+        "lender_name": "Idempotent Cooperative", "loan_amount": 250000.0,
+        "collected_date": "2026-08-01",
+    }
+    first = client.post("/school-loans/", json=payload, headers={"Idempotency-Key": "loan-key-1"})
+    assert first.status_code == 201, first.text
+
+    dup = client.post("/school-loans/", json=payload, headers={"Idempotency-Key": "loan-key-1"})
+    assert dup.status_code == 409, dup.text
+
+    # Only one loan record actually exists.
+    assert len(client.get("/school-loans/").json()) == 1
+
+
+def test_idempotency_key_is_optional_and_does_not_block_normal_use(client, db_session):
+    # No Idempotency-Key header at all — must behave exactly as before.
+    resp1 = client.post("/school-loans/", json={
+        "lender_name": "No Key Lender A", "loan_amount": 100000.0, "collected_date": "2026-08-01",
+    })
+    resp2 = client.post("/school-loans/", json={
+        "lender_name": "No Key Lender B", "loan_amount": 100000.0, "collected_date": "2026-08-01",
+    })
+    assert resp1.status_code == 201
+    assert resp2.status_code == 201
+
+
+def test_idempotency_key_rejects_a_duplicate_payment_submission(client, db_session):
+    loan = _create_loan(client)
+    payload = {
+        "amount_paid": 50000.0, "interest_amount": 0.0, "misc_amount": 0.0,
+        "paid_date": "2026-02-01",
+    }
+    first = client.post(
+        f"/school-loans/{loan['id']}/payments", json=payload,
+        headers={"Idempotency-Key": "payment-key-1"},
+    )
+    assert first.status_code == 201, first.text
+
+    dup = client.post(
+        f"/school-loans/{loan['id']}/payments", json=payload,
+        headers={"Idempotency-Key": "payment-key-1"},
+    )
+    assert dup.status_code == 409, dup.text
+
+    payments = client.get(f"/school-loans/{loan['id']}/payments").json()
+    assert len(payments) == 1
+
+
+def test_idempotency_key_reusable_after_a_failed_request(client, db_session):
+    # A request that fails validation (missing parent loan) must not
+    # "consume" the key — the same key should work once the request is
+    # actually valid, so a legitimate client retry with corrected data
+    # isn't permanently blocked by its own first, failed attempt.
+    bad = client.post(
+        "/school-loans/999999/payments",
+        json={"amount_paid": 1000.0, "paid_date": "2026-02-01"},
+        headers={"Idempotency-Key": "retry-key-1"},
+    )
+    assert bad.status_code == 404
+
+    loan = _create_loan(client)
+    good = client.post(
+        f"/school-loans/{loan['id']}/payments",
+        json={"amount_paid": 1000.0, "paid_date": "2026-02-01"},
+        headers={"Idempotency-Key": "retry-key-1"},
+    )
+    assert good.status_code == 201, good.text
