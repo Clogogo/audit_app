@@ -168,6 +168,16 @@ def initialize_database() -> None:
 
                 connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_definition}"))
 
+        # Commit the column migrations above before the guarded block below,
+        # which can roll back — on Postgres, a bare execute() autobegins one
+        # open transaction that persists until commit/rollback, so without
+        # this, a rollback() in the except clause below would silently
+        # discard every ALTER TABLE ADD COLUMN already run in this same
+        # call, for every table, not just undo the failed index creation.
+        # (SQLite auto-commits DDL per-statement, so this only bites Postgres
+        # — which is exactly where it matters, since that's production.)
+        connection.commit()
+
         # Backstop the app-layer duplicate-transaction-link check on school
         # loans with a real DB constraint (nullable unique — multiple NULLs
         # are always allowed, only non-null values must be distinct). Guarded

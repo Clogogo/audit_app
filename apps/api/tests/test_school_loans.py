@@ -524,3 +524,33 @@ def test_db_unique_constraint_backstops_duplicate_transaction_link(client, db_se
     db_session.add(SchoolLoan(lender_name="Loan A", loan_amount=1000.0, collected_date=date(2026, 8, 1)))
     db_session.add(SchoolLoan(lender_name="Loan B", loan_amount=1000.0, collected_date=date(2026, 8, 1)))
     db_session.commit()
+
+
+def test_race_hitting_the_db_constraint_returns_friendly_400_not_500(client, db_session, monkeypatch):
+    # _assert_transaction_not_already_linked can't see a concurrent request
+    # that hasn't committed yet — simulate that race by disabling the
+    # app-layer check for this test, so the second create relies entirely
+    # on the DB unique index. It must still surface as a friendly 400, not
+    # an unhandled IntegrityError/500.
+    import routers.school_loans as school_loans_module
+    monkeypatch.setattr(school_loans_module, "_assert_transaction_not_already_linked", lambda *a, **k: None)
+
+    tx = Transaction(
+        type="income", amount=100000.0, currency="NGN", category="Loans",
+        description="Loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    first = client.post("/school-loans/", json={
+        "lender_name": "First Lender", "loan_amount": 100000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    })
+    assert first.status_code == 201, first.text
+
+    dup = client.post("/school-loans/", json={
+        "lender_name": "Second Lender", "loan_amount": 100000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    })
+    assert dup.status_code == 400, dup.text
+    assert "already linked" in dup.json()["detail"]
