@@ -339,11 +339,16 @@ def is_self_transfer(description: str, account_holder_name: str | None) -> bool:
 def _keyword_matches(desc: str, pattern: str) -> bool:
     """Plain substring containment for multi-word phrases (safe — a whole
     phrase like "loan received" landing mid-word is effectively impossible),
-    but a word-boundary match for single-word keywords, so a short word like
-    "loan" or "door" doesn't fire on a substring buried inside an unrelated
-    name (e.g. Nigerian names such as "...ELOANYA" or names containing
+    and for single-word keywords that already start or end with a
+    non-word character (e.g. "(salary)", "(january" — the punctuation
+    itself is a natural delimiter, and `\\b` can never match next to it
+    since neither side is a word character, so those patterns would never
+    fire with a boundary match). Word-boundary matching only applies to
+    plain alphanumeric single-word keywords, so a short word like "loan" or
+    "door" doesn't fire on a substring buried inside an unrelated name
+    (e.g. Nigerian names such as "...ELOANYA" or names containing
     "...OORE...")."""
-    if " " in pattern:
+    if " " in pattern or not (pattern[0].isalnum() and pattern[-1].isalnum()):
         return pattern in desc
     # Allow a trailing "s" so plain-English plurals (doors, blocks, tiles)
     # still match a singular keyword without falling back to substring

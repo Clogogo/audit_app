@@ -168,6 +168,26 @@ def initialize_database() -> None:
 
                 connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_definition}"))
 
+        # Backstop the app-layer duplicate-transaction-link check on school
+        # loans with a real DB constraint (nullable unique — multiple NULLs
+        # are always allowed, only non-null values must be distinct). Guarded
+        # because an index creation fails outright if any duplicates already
+        # slipped in before the app-layer check existed; in that case, skip
+        # and log rather than block every future app startup on stale data.
+        if "school_loans" in existing_tables:
+            try:
+                connection.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_school_loans_transaction_id_unique "
+                    "ON school_loans (transaction_id)"
+                ))
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                logger.warning(
+                    "Could not create unique index on school_loans.transaction_id — "
+                    "likely pre-existing duplicate transaction links; app-layer check still applies."
+                )
+
         connection.execute(
             text("UPDATE transactions SET currency = 'NGN' WHERE currency = 'USD' OR currency IS NULL")
         )

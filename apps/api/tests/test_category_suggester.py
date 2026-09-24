@@ -43,3 +43,19 @@ def test_construction_terms_map_to_repairs_and_maintenance():
         cat, typ = suggest_category_keyword(desc, "debit")
         assert cat == "Repairs and Maintenance", f"{desc!r} -> {cat}"
         assert typ == "expense"
+
+
+def test_parenthesized_month_keywords_still_match_word_boundary_fix():
+    # Regression: the word-boundary fix for bare "loan" (see above) broke
+    # keywords that start/end with punctuation, like "(salary)" and
+    # "(january" — \b can never match next to a non-word character, so
+    # these never fired at all until _keyword_matches fell back to plain
+    # substring containment for them specifically.
+    for desc in [
+        "Mrs Adeyemi Pay (Salary)",
+        "Staff Pay (January) 2026",
+        "Teacher wages (february) disbursement",
+    ]:
+        cat, typ = suggest_category_keyword(desc, "debit")
+        assert cat == "Salary and Wages", f"{desc!r} -> {cat}"
+        assert typ == "expense"
