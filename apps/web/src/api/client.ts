@@ -549,8 +549,8 @@ export const deleteAdvancePayment = (id: number) =>
 export const listSchoolLoans = () =>
   api.get<SchoolLoan[]>('/school-loans/').then(unwrap);
 
-export const createSchoolLoan = (body: SchoolLoanIn) =>
-  api.post<SchoolLoan>('/school-loans/', body).then(unwrap);
+export const createSchoolLoan = (body: SchoolLoanIn, idempotencyKey?: string) =>
+  api.post<SchoolLoan>('/school-loans/', body, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined).then(unwrap);
 
 export const updateSchoolLoan = (id: number, body: SchoolLoanIn) =>
   api.put<SchoolLoan>(`/school-loans/${id}`, body).then(unwrap);
@@ -558,8 +558,8 @@ export const updateSchoolLoan = (id: number, body: SchoolLoanIn) =>
 export const deleteSchoolLoan = (id: number) =>
   api.delete<void>(`/school-loans/${id}`).then(unwrap);
 
-export const addSchoolLoanPayment = (loanId: number, body: SchoolLoanPaymentIn) =>
-  api.post<SchoolLoanPaymentOut>(`/school-loans/${loanId}/payments`, body).then(unwrap);
+export const addSchoolLoanPayment = (loanId: number, body: SchoolLoanPaymentIn, idempotencyKey?: string) =>
+  api.post<SchoolLoanPaymentOut>(`/school-loans/${loanId}/payments`, body, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined).then(unwrap);
 
 export const updateSchoolLoanPayment = (loanId: number, paymentId: number, body: SchoolLoanPaymentIn) =>
   api.put<SchoolLoanPaymentOut>(`/school-loans/${loanId}/payments/${paymentId}`, body).then(unwrap);
@@ -570,13 +570,16 @@ export const deleteSchoolLoanPayment = (loanId: number, paymentId: number) =>
 export const matchSchoolLoanTransactions = (loanId: number, year: number, month: number, txType: 'income' | 'expense' = 'expense') =>
   api.get<MatchedTransaction[]>(`/school-loans/${loanId}/match-transactions`, { params: { year, month, tx_type: txType } }).then(unwrap);
 
+export const suggestUntrackedLoanTransactions = () =>
+  api.get<MatchedTransaction[]>('/school-loans/suggestions').then(unwrap);
+
 // ── Payroll ───────────────────────────────────────────────────────────────────
 
 export const computePayroll = (year: number, month: number) =>
   api.get<PayrollLine[]>('/payroll/compute', { params: { year, month } }).then(unwrap);
 
-export const processPayroll = (year: number, month: number, lines: PayrollLineIn[]) =>
-  api.post<PayrollEntryOut[]>('/payroll/process', { year, month, lines }).then(unwrap);
+export const processPayroll = (year: number, month: number, lines: PayrollLineIn[], idempotencyKey?: string) =>
+  api.post<PayrollEntryOut[]>('/payroll/process', { year, month, lines }, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined).then(unwrap);
 
 export const getPayrollEntries = (year: number, month: number) =>
   api.get<PayrollEntryOut[]>('/payroll/entries', { params: { year, month } }).then(unwrap);

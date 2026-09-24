@@ -168,6 +168,36 @@ def initialize_database() -> None:
 
                 connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_definition}"))
 
+        # Commit the column migrations above before the guarded block below,
+        # which can roll back — on Postgres, a bare execute() autobegins one
+        # open transaction that persists until commit/rollback, so without
+        # this, a rollback() in the except clause below would silently
+        # discard every ALTER TABLE ADD COLUMN already run in this same
+        # call, for every table, not just undo the failed index creation.
+        # (SQLite auto-commits DDL per-statement, so this only bites Postgres
+        # — which is exactly where it matters, since that's production.)
+        connection.commit()
+
+        # Backstop the app-layer duplicate-transaction-link check on school
+        # loans with a real DB constraint (nullable unique — multiple NULLs
+        # are always allowed, only non-null values must be distinct). Guarded
+        # because an index creation fails outright if any duplicates already
+        # slipped in before the app-layer check existed; in that case, skip
+        # and log rather than block every future app startup on stale data.
+        if "school_loans" in existing_tables:
+            try:
+                connection.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_school_loans_transaction_id_unique "
+                    "ON school_loans (transaction_id)"
+                ))
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                logger.warning(
+                    "Could not create unique index on school_loans.transaction_id — "
+                    "likely pre-existing duplicate transaction links; app-layer check still applies."
+                )
+
         connection.execute(
             text("UPDATE transactions SET currency = 'NGN' WHERE currency = 'USD' OR currency IS NULL")
         )
