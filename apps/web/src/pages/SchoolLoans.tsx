@@ -146,6 +146,7 @@ export function SchoolLoans() {
       collected_date: tx.date,
       transaction_id: tx.id,
     });
+    setInterestMode('percent');
     setLoanFormLinkedTx(tx);
     setLoanIdempotencyKey(crypto.randomUUID());
     setShowLoanForm(true);
@@ -764,6 +765,7 @@ export function SchoolLoans() {
                       step="0.1"
                       min="0"
                       placeholder="0"
+                      aria-label="Interest rate, percent per annum"
                       value={loanForm.interest_rate || ''}
                       onChange={(e) => {
                         const rate = parseFloat(e.target.value) || 0;
@@ -778,7 +780,7 @@ export function SchoolLoans() {
                 ) : (
                   <>
                     <NumInput
-                      label=""
+                      label="Total Interest Due"
                       value={loanForm.total_interest_due || 0}
                       onChange={(n) => setLoanForm((f) => ({ ...f, total_interest_due: n }))}
                     />

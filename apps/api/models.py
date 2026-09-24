@@ -321,7 +321,7 @@ class SchoolLoan(Base):
     interest_rate: Mapped[float] = mapped_column(Float, default=0.0)  # annual %, reference/display only
     total_interest_due: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # agreed total interest, not auto-computed from interest_rate
     collected_date: Mapped[date] = mapped_column(Date)
-    transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True)  # the income transaction recording the cash actually received from the lender
+    transaction_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True, unique=True)  # the income transaction recording the cash actually received from the lender — unique so two loans can never double-count the same transaction (app-layer check in the router is the friendly-error path; this is the backstop)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

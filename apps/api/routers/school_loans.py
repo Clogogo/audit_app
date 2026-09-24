@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from utils.auth import require_permission
 from utils.idempotency import IdempotencyKeyHeader, reserve_idempotency_key
 from pydantic import BaseModel, Field
@@ -268,7 +269,14 @@ def create_school_loan(
     reserve_idempotency_key(db, idempotency_key)
     loan = SchoolLoan(**body.model_dump())
     db.add(loan)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Backstops _assert_transaction_not_already_linked for the narrow
+        # race where two requests both pass that check before either
+        # commits — same friendly message, not a raw 500.
+        db.rollback()
+        raise HTTPException(400, "This transaction is already linked to another loan")
     db.refresh(loan)
     return _to_out(loan)
 
@@ -282,7 +290,14 @@ def update_school_loan(loan_id: int, body: SchoolLoanIn, db: Session = Depends(g
     for k, v in body.model_dump().items():
         setattr(loan, k, v)
     loan.updated_at = datetime.utcnow()
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Backstops _assert_transaction_not_already_linked for the narrow
+        # race where two requests both pass that check before either
+        # commits — same friendly message, not a raw 500.
+        db.rollback()
+        raise HTTPException(400, "This transaction is already linked to another loan")
     db.refresh(loan)
     # Editing loan terms (e.g. raising total_interest_due after principal was
     # already paid off) can make a previously fully-paid loan incomplete

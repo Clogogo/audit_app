@@ -3,10 +3,12 @@ auto-closes (is_active -> False) once BOTH principal and the agreed
 total_interest_due are paid, not principal alone."""
 from datetime import date
 
+import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
 import models as models_module
-from models import Transaction
+from models import SchoolLoan, Transaction
 
 
 def _create_loan(client, total_interest_due: float = 0.0, loan_amount: float = 100000.0):
@@ -487,3 +489,68 @@ def test_oversized_idempotency_key_is_rejected_with_422_not_500(client, db_sessi
         headers={"Idempotency-Key": "x" * 101},
     )
     assert resp.status_code == 422, resp.text
+
+
+def test_db_unique_constraint_backstops_duplicate_transaction_link(client, db_session):
+    # The router's _assert_transaction_not_already_linked check is the
+    # friendly-error path, but it's not race-safe on its own (two concurrent
+    # requests could both pass the check before either commits). Prove the
+    # real backstop — a DB-level unique index — by going around the router
+    # entirely and inserting two SchoolLoan rows pointing at the same
+    # transaction directly.
+    tx = Transaction(
+        type="income", amount=100000.0, currency="NGN", category="Loans",
+        description="Loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    db_session.add(SchoolLoan(
+        lender_name="First Lender", loan_amount=100000.0,
+        collected_date=date(2026, 8, 1), transaction_id=tx.id,
+    ))
+    db_session.commit()
+
+    db_session.add(SchoolLoan(
+        lender_name="Second Lender", loan_amount=100000.0,
+        collected_date=date(2026, 8, 1), transaction_id=tx.id,
+    ))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+    # Multiple loans with NO transaction link (transaction_id IS NULL) must
+    # remain unaffected — a nullable unique column allows any number of NULLs.
+    db_session.add(SchoolLoan(lender_name="Loan A", loan_amount=1000.0, collected_date=date(2026, 8, 1)))
+    db_session.add(SchoolLoan(lender_name="Loan B", loan_amount=1000.0, collected_date=date(2026, 8, 1)))
+    db_session.commit()
+
+
+def test_race_hitting_the_db_constraint_returns_friendly_400_not_500(client, db_session, monkeypatch):
+    # _assert_transaction_not_already_linked can't see a concurrent request
+    # that hasn't committed yet — simulate that race by disabling the
+    # app-layer check for this test, so the second create relies entirely
+    # on the DB unique index. It must still surface as a friendly 400, not
+    # an unhandled IntegrityError/500.
+    import routers.school_loans as school_loans_module
+    monkeypatch.setattr(school_loans_module, "_assert_transaction_not_already_linked", lambda *a, **k: None)
+
+    tx = Transaction(
+        type="income", amount=100000.0, currency="NGN", category="Loans",
+        description="Loan disbursement", date=date(2026, 8, 1),
+    )
+    db_session.add(tx)
+    db_session.commit()
+
+    first = client.post("/school-loans/", json={
+        "lender_name": "First Lender", "loan_amount": 100000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    })
+    assert first.status_code == 201, first.text
+
+    dup = client.post("/school-loans/", json={
+        "lender_name": "Second Lender", "loan_amount": 100000.0,
+        "collected_date": "2026-08-01", "transaction_id": tx.id,
+    })
+    assert dup.status_code == 400, dup.text
+    assert "already linked" in dup.json()["detail"]
