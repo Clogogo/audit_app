@@ -357,6 +357,19 @@ def test_suggestions_lists_untracked_loan_income_transactions(client, db_session
     assert ids == {untracked.id}
 
 
+def test_suggestions_include_directors_loan_income(client, db_session):
+    directors_loan = Transaction(
+        type="income", amount=150000.0, currency="NGN", category="Director's Loan",
+        description="Transfer from LUCKY OGOGO", vendor="LUCKY OGOGO", date=date(2026, 8, 26),
+    )
+    db_session.add(directors_loan)
+    db_session.commit()
+
+    resp = client.get("/school-loans/suggestions")
+    assert resp.status_code == 200, resp.text
+    assert {t["id"] for t in resp.json()} == {directors_loan.id}
+
+
 def test_suggestions_excludes_a_transaction_already_linked_to_a_loan(client, db_session):
     tx = Transaction(
         type="income", amount=1000000.0, currency="NGN", category="Loans",

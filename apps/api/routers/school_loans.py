@@ -252,9 +252,12 @@ def list_school_loans(db: Session = Depends(get_db)):
     return [_to_out(l) for l in loans]
 
 
+LOAN_INCOME_CATEGORIES = ("Loans", "Director's Loan")
+
+
 @router.get("/suggestions", response_model=list[MatchedTransaction])
 def suggest_untracked_loan_transactions(db: Session = Depends(get_db)):
-    """Income transactions categorized "Loans" that aren't yet linked to any
+    """Income transactions categorized as a loan that aren't yet linked to any
     school loan record — a loan credit can land in the ledger via bank import
     or manual entry without anyone remembering to also track it here, so
     surface it instead of letting it silently miss the Loans Payable figure."""
@@ -264,7 +267,7 @@ def suggest_untracked_loan_transactions(db: Session = Depends(get_db)):
     }
     txs = (
         db.query(Transaction)
-        .filter(Transaction.type == "income", Transaction.category == "Loans")
+        .filter(Transaction.type == "income", Transaction.category.in_(LOAN_INCOME_CATEGORIES))
         .order_by(Transaction.date.desc())
         .all()
     )
