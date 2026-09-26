@@ -344,6 +344,7 @@ export const EXPENSE_CATEGORIES = [
   'Transport of Supplies',
   'Travel Expenses',
   'Loss on Sale of Property, Plant and Equipment',
+  'Capital Project',
   // School-operational (school both buys and sells these)
   'Books',
   'Uniform',
@@ -361,6 +362,7 @@ export const INCOME_CATEGORIES = [
   'Uniform',
   'Software',
   'Fund from Director',
+  "Director's Loan",
   'Freelance',
   'Investment',
   'Business',

@@ -288,7 +288,7 @@ _INCOME_LABEL: dict[str, str] = {
     "Refund": "Other Income — Refunds",
 }
 _NON_OPERATING = {"Investment", "Gift", "Refund"}
-_IGNORE_INCOME = {"Fund from Director", "Internal Transfer"}
+_IGNORE_INCOME = {"Fund from Director", "Director's Loan", "Internal Transfer"}
 _FINANCE_COST_CATS = {"Interest Expense", "Bank Charges"}
 # Loan repayments reduce a balance sheet liability — excluded from P&L entirely (same as CIT treatment)
 _IGNORE_EXPENSE = {"Internal Transfer", "Loans"}
