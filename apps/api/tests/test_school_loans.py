@@ -283,6 +283,36 @@ def test_overpaid_interest_credits_toward_principal_remaining(client, db_session
     # force-closes one — the user's explicit active/inactive choice stands.
 
 
+def test_lump_sum_payments_with_no_interest_split_auto_allocate_to_interest(client, db_session):
+    # A lender records payments as plain lump sums without ever working out
+    # a principal/interest split (interest_amount left at 0.0 on every
+    # payment). Once cash paid exceeds the principal, the excess must
+    # automatically count as interest paid instead of vanishing — otherwise
+    # the loan shows interest "still outstanding" forever even though the
+    # cash to cover it was already paid.
+    loan = _create_loan(client, total_interest_due=50000.0, loan_amount=150000.0)
+    client.post(f"/school-loans/{loan['id']}/payments", json={
+        "amount_paid": 100020.0, "interest_amount": 0.0, "misc_amount": 0.0,
+        "paid_date": "2026-02-18",
+    })
+    resp = client.post(f"/school-loans/{loan['id']}/payments", json={
+        "amount_paid": 100018.6, "interest_amount": 0.0, "misc_amount": 0.0,
+        "paid_date": "2026-06-13",
+    })
+    payment2 = resp.json()
+    # First payment fully absorbed by principal (100,020 < 150,000 remaining),
+    # so it shows zero interest.
+    assert payment2["principal_paid"] == 49980.0
+    assert payment2["interest_amount"] == 50038.6
+
+    loan_after = client.get("/school-loans/").json()[0]
+    assert loan_after["outstanding_today"] == 0.0
+    assert loan_after["total_interest_paid"] == 50038.6
+    assert loan_after["outstanding_interest"] == 0.0
+    assert loan_after["fully_paid"] is True
+    assert loan_after["is_active"] is False
+
+
 def test_match_transactions_income_type_excludes_expense_transactions(client, db_session):
     loan = _create_loan(client)
     income_tx = Transaction(

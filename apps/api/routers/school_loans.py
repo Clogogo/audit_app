@@ -25,35 +25,72 @@ router = APIRouter(prefix="/school-loans", tags=["school-loans"], dependencies=[
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
-def _principal_paid(p: SchoolLoanPayment) -> float:
-    return round(p.amount_paid - p.interest_amount - p.misc_amount, 2)
+def _allocate_payments(loan: SchoolLoan) -> dict[int, tuple[float, float]]:
+    """
+    Split each payment's cash between principal and interest, walking the
+    loan's payments in chronological order (SchoolLoan.payments is already
+    ordered by paid_date). Misc charges are carved out first and never
+    enter the split.
+
+    A payment's own interest_amount, when explicitly recorded (> 0), is
+    trusted as-is — the user has told us the split. Otherwise (interest_amount
+    left at its 0.0 default, i.e. a lump-sum payment logged without working
+    out a manual split), cash pays down the remaining principal first; only
+    once principal is fully repaid does the remainder of that — and later —
+    payments start counting as interest paid. Without this, a lump-sum
+    payment that clears the loan several times over on paper still shows
+    zero interest paid and the full agreed interest "still owed" forever,
+    just because nobody typed a split into the interest field.
+
+    Returns {payment.id: (principal_portion, interest_portion)}.
+    """
+    remaining_principal = loan.loan_amount
+    out: dict[int, tuple[float, float]] = {}
+    for p in loan.payments:
+        cash = round(p.amount_paid - p.misc_amount, 2)
+        if p.interest_amount > 0:
+            interest_portion = min(p.interest_amount, cash)
+            principal_portion = round(cash - interest_portion, 2)
+        else:
+            principal_portion = round(min(cash, remaining_principal), 2)
+            interest_portion = round(cash - principal_portion, 2)
+        remaining_principal = round(max(0.0, remaining_principal - principal_portion), 2)
+        out[p.id] = (principal_portion, interest_portion)
+    return out
 
 
 def _total_paid(loan: SchoolLoan) -> float:
     return round(sum(p.amount_paid for p in loan.payments), 2)
 
 
-def _total_interest_paid(loan: SchoolLoan) -> float:
-    return round(sum(p.interest_amount for p in loan.payments), 2)
+def _total_principal_paid(loan: SchoolLoan, alloc: dict[int, tuple[float, float]] | None = None) -> float:
+    alloc = alloc if alloc is not None else _allocate_payments(loan)
+    return round(sum(pp for pp, _ in alloc.values()), 2)
+
+
+def _total_interest_paid(loan: SchoolLoan, alloc: dict[int, tuple[float, float]] | None = None) -> float:
+    alloc = alloc if alloc is not None else _allocate_payments(loan)
+    return round(sum(ip for _, ip in alloc.values()), 2)
 
 
 def _total_misc_paid(loan: SchoolLoan) -> float:
     return round(sum(p.misc_amount for p in loan.payments), 2)
 
 
-def _excess_interest_paid(loan: SchoolLoan) -> float:
+def _excess_interest_paid(loan: SchoolLoan, alloc: dict[int, tuple[float, float]] | None = None) -> float:
     """Interest paid beyond the agreed total_interest_due doesn't vanish — it
     counts as extra principal repayment. Without this, a payment's fixed
     principal/interest split (recorded at payment time) could leave money
     "still owed" on paper even after total cash paid already covers the
     whole loan, e.g. after total_interest_due is corrected down post-payment."""
     due = loan.total_interest_due or 0.0
-    return max(0.0, round(_total_interest_paid(loan) - due, 2))
+    return max(0.0, round(_total_interest_paid(loan, alloc) - due, 2))
 
 
 def _outstanding(loan: SchoolLoan) -> float:
-    principal_paid = sum(_principal_paid(p) for p in loan.payments)
-    return max(0.0, round(loan.loan_amount - principal_paid - _excess_interest_paid(loan), 2))
+    alloc = _allocate_payments(loan)
+    principal_paid = _total_principal_paid(loan, alloc)
+    return max(0.0, round(loan.loan_amount - principal_paid - _excess_interest_paid(loan, alloc), 2))
 
 
 def _outstanding_interest(loan: SchoolLoan) -> float:
@@ -151,16 +188,16 @@ class SchoolLoanOut(BaseModel):
         from_attributes = True
 
 
-def _serialize_payment(p: SchoolLoanPayment) -> LoanPaymentOut:
+def _serialize_payment(p: SchoolLoanPayment, principal_paid: float, interest_paid: float) -> LoanPaymentOut:
     tx = p.transaction
     return LoanPaymentOut(
         id=p.id,
         loan_id=p.loan_id,
         transaction_id=p.transaction_id,
         amount_paid=p.amount_paid,
-        interest_amount=p.interest_amount,
+        interest_amount=interest_paid,
         misc_amount=p.misc_amount,
-        principal_paid=_principal_paid(p),
+        principal_paid=principal_paid,
         paid_date=p.paid_date,
         notes=p.notes,
         verified=p.transaction_id is not None,
@@ -179,6 +216,7 @@ def _serialize_payment(p: SchoolLoanPayment) -> LoanPaymentOut:
 
 def _to_out(loan: SchoolLoan) -> SchoolLoanOut:
     tx = loan.transaction
+    alloc = _allocate_payments(loan)
     return SchoolLoanOut(
         id=loan.id,
         lender_name=loan.lender_name,
@@ -198,9 +236,9 @@ def _to_out(loan: SchoolLoan) -> SchoolLoanOut:
         outstanding_interest=_outstanding_interest(loan),
         fully_paid=_is_fully_paid(loan),
         total_paid=_total_paid(loan),
-        total_interest_paid=_total_interest_paid(loan),
+        total_interest_paid=_total_interest_paid(loan, alloc),
         total_misc_paid=_total_misc_paid(loan),
-        payments=[_serialize_payment(p) for p in loan.payments],
+        payments=[_serialize_payment(p, *alloc[p.id]) for p in loan.payments],
         created_at=loan.created_at,
         updated_at=loan.updated_at,
     )
@@ -378,7 +416,8 @@ def list_payments(loan_id: int, db: Session = Depends(get_db)):
     loan = db.get(SchoolLoan, loan_id)
     if not loan:
         raise HTTPException(404, "School loan not found")
-    return [_serialize_payment(p) for p in loan.payments]
+    alloc = _allocate_payments(loan)
+    return [_serialize_payment(p, *alloc[p.id]) for p in loan.payments]
 
 
 @router.post("/{loan_id}/payments", response_model=LoanPaymentOut, status_code=201)
@@ -397,7 +436,8 @@ def add_payment(
     _sync_active_status(loan)
     db.commit()
     db.refresh(payment)
-    return _serialize_payment(payment)
+    alloc = _allocate_payments(loan)
+    return _serialize_payment(payment, *alloc[payment.id])
 
 
 @router.put("/{loan_id}/payments/{payment_id}", response_model=LoanPaymentOut)
@@ -416,7 +456,8 @@ def update_payment(loan_id: int, payment_id: int, body: LoanPaymentIn, db: Sessi
     _sync_active_status(loan)
     db.commit()
     db.refresh(payment)
-    return _serialize_payment(payment)
+    alloc = _allocate_payments(loan)
+    return _serialize_payment(payment, *alloc[payment.id])
 
 
 @router.delete("/{loan_id}/payments/{payment_id}", status_code=204)
