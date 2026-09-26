@@ -230,7 +230,7 @@ NEUTRAL_KEYWORD_MAP: List[Tuple[str, List[str]]] = [
 VALID_CATEGORIES = {
     # Income
     "School Fees", "Exam", "Stationery", "Books", "Uniform", "Software",
-    "Fund from Director", "Freelance", "Investment", "Business", "Loans",
+    "Fund from Director", "Director's Loan", "Freelance", "Investment", "Business", "Loans",
     "Gift", "Refund",
     # Expense — formal chart of accounts
     "Salary and Wages", "IOU (Advance Salary)", "Employee Benefit Expenses",
@@ -255,7 +255,7 @@ VALID_CATEGORIES = {
     "Training and Development", "Research Cost", "Outsourcing Services Expenses",
     "Selling & Distribution Expenses", "Freight & Transport Expenses",
     "Transport of Supplies", "Travel Expenses",
-    "Loss on Sale of Property, Plant and Equipment",
+    "Loss on Sale of Property, Plant and Equipment", "Capital Project",
     # System
     "Internal Transfer", "Other",
 }
