@@ -65,6 +65,8 @@ function NumInput({
   );
 }
 
+const LOAN_INCOME_CATEGORIES = "Loans,Director's Loan";
+
 export function SchoolLoans() {
   const [loans, setLoans] = useState<SchoolLoan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -392,7 +394,7 @@ export function SchoolLoans() {
         <div className="rounded-lg border border-amber-300/50 bg-amber-50 dark:bg-amber-950/20 px-4 py-3 text-sm space-y-2">
           <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-400">
             <Lightbulb className="h-4 w-4 shrink-0" />
-            {suggestions.length} income transaction{suggestions.length > 1 ? 's are' : ' is'} categorized "Loans" but not tracked here yet
+            {suggestions.length} income transaction{suggestions.length > 1 ? 's are' : ' is'} categorized as a loan but not tracked here yet
           </div>
           <ul className="space-y-1.5">
             {suggestions.map((tx) => (
@@ -1030,7 +1032,7 @@ export function SchoolLoans() {
       {linkingLoan && (
         <TransactionPickerModal
           title="Link a transaction to this loan's collection"
-          category="Loans"
+          category={LOAN_INCOME_CATEGORIES}
           type="income"
           excludeTransactionIds={loans
             .filter((l) => l.transaction_id !== null && l.id !== linkingLoan.id)
@@ -1044,7 +1046,7 @@ export function SchoolLoans() {
       {showLoanFormTxPicker && (
         <TransactionPickerModal
           title="Link a transaction to this loan's collection"
-          category="Loans"
+          category={LOAN_INCOME_CATEGORIES}
           type="income"
           excludeTransactionIds={loans
             .filter((l) => l.transaction_id !== null && l.id !== editingLoan?.id)
