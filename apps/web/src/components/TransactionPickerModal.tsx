@@ -69,7 +69,7 @@ export function TransactionPickerModal({
           <p className="text-sm text-destructive">{error}</p>
         ) : transactions.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
-            No unclaimed "{category}" transactions found{startDate ? ' for this period' : ''}.
+            No unclaimed "{category.split(',').join('" or "')}" transactions found{startDate ? ' for this period' : ''}.
           </p>
         ) : (
           <div className="overflow-y-auto divide-y divide-border -mx-6 px-6">
