@@ -349,11 +349,11 @@ export function SchoolLoans() {
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
-  // is_active is now kept in sync server-side with true payment completeness
-  // (principal AND agreed interest both cleared), so it alone is authoritative —
-  // no need to separately re-derive "repaid" from outstanding_today here.
-  const active = loans.filter((l) => l.is_active);
-  const repaid = loans.filter((l) => !l.is_active);
+  // fully_paid is recomputed on every read, while is_active is a stored flag that
+  // only re-syncs on payment writes — so a loan whose paid total already covers
+  // principal + interest must count as repaid even if its flag is stale.
+  const active = loans.filter((l) => l.is_active && !l.fully_paid);
+  const repaid = loans.filter((l) => !l.is_active || l.fully_paid);
   const totalOutstanding = active.reduce((s, l) => s + l.outstanding_today, 0);
   const totalCollected = loans.reduce((s, l) => s + l.loan_amount, 0);
 
