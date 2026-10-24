@@ -1,6 +1,6 @@
 """
 AI Worker — OpenRouter LLM provider
-  Model: nvidia/nemotron-3-ultra-550b-a55b:free (OPENROUTER_MODEL env var to override)
+  Model: cohere/north-mini-code:free (OPENROUTER_MODEL env var to override)
   Requires: OPENROUTER_API_KEY environment variable
 
 Two extraction modes:
