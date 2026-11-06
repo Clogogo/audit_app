@@ -67,7 +67,8 @@ Backend (`apps/api/.env`, see [`.env.example`](apps/api/.env.example)):
 | `SECRET_KEY` | Yes | App refuses to start without it — no insecure default |
 | `ALGORITHM` | No | Defaults to `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | No | Defaults to `1440` (24h) |
-| `OPENROUTER_API_KEY` | For AI features | Routes through [OpenRouter](https://openrouter.ai) — `.env.example` lists this as `OPENAI_API_KEY`, which is stale; the code reads `OPENROUTER_API_KEY` |
+| `OPENROUTER_API_KEY` | For AI features | Routes AI requests through [OpenRouter](https://openrouter.ai) |
+| `OPENROUTER_MODEL` | No | Defaults to `openrouter/free`, OpenRouter's free model router |
 | `DATABASE_URL` | No locally | SQLite (`finance.db` at repo root) if unset; Postgres in production |
 | `FRONTEND_URL` | Production only | Used for CORS and to build links in password-reset/welcome emails |
 | `MAILEROO_API_KEY` / `MAILEROO_FROM_EMAIL` | For password reset emails | Must both be set together — `/auth/forgot-password` short-circuits without creating a token if either is missing |

@@ -2,7 +2,7 @@
 OpenRouter LLM Client
 
 Provider: OpenRouter (https://openrouter.ai/)
-Model: Cohere North Mini Code (free OpenRouter endpoint, configurable)
+Model: OpenRouter's free model router (configurable)
 Cost: Free tier with rate limits, or pay-as-you-go
 """
 
@@ -26,7 +26,7 @@ class OpenRouterLLMClient:
                 "Get a free API key at https://openrouter.ai/"
             )
 
-        self.model = os.getenv("OPENROUTER_MODEL", "cohere/north-mini-code:free")
+        self.model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
         self.client = OpenAI(
             api_key=api_key,
             base_url="https://openrouter.ai/api/v1",

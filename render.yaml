@@ -20,8 +20,10 @@ services:
         sync: false          # Set to your Vercel URL e.g. https://financeaudit.vercel.app
       
       # API Configuration
-      - key: OPENAI_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false          # Required for AI features
+      - key: OPENROUTER_MODEL
+        value: openrouter/free
       - key: SECRET_KEY
         sync: false          # Required for JWT authentication — app refuses to start without it
       - key: ALGORITHM
