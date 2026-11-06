@@ -6,7 +6,7 @@ This approach eliminates the need for bank-specific parsing logic by leveraging
 LLM's ability to understand context, handle diverse formats, and extract structured data accurately.
 
 Provider: OpenRouter (https://openrouter.ai/)
-Model: configurable via OPENROUTER_MODEL (default: cohere/north-mini-code:free)
+Model: configurable via OPENROUTER_MODEL (default: openrouter/free)
 Cost: Free tier available with rate limits, or pay-as-you-go
 """
 
