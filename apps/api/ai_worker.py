@@ -1,6 +1,6 @@
 """
 AI Worker — OpenRouter LLM provider
-  Model: cohere/north-mini-code:free (OPENROUTER_MODEL env var to override)
+  Model: openrouter/free (OPENROUTER_MODEL env var to override)
   Requires: OPENROUTER_API_KEY environment variable
 
 Two extraction modes:
