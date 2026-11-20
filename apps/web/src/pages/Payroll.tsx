@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Calculator,
   ChevronLeft,
@@ -9,11 +9,15 @@ import {
   Loader2,
   Pencil,
 } from 'lucide-react';
-import { computePayroll, processPayroll, resetPayroll } from '../api/client';
-import type { PayrollEntryOut, PayrollLine, PayrollLineIn } from '../api/types';
+import { computePayroll, getNextPayrollMonth, processPayroll, resetPayroll } from '../api/client';
+import type { PayrollEntryOut, PayrollLine, PayrollLineIn, PayrollProcessIssue, PayrollReconcileResult } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { TransactionPickerModal } from '../components/TransactionPickerModal';
+import { ReconcileResults } from '../components/payroll/ReconcileResults';
+import { ScheduleCells } from '../components/payroll/ScheduleCells';
+import { SchedulePanel } from '../components/payroll/SchedulePanel';
+import { checkRow, scheduleLinesFor } from '../components/payroll/scheduleCheck';
+import type { RowCheck } from '../components/payroll/scheduleCheck';
 import { formatCurrency } from '../lib/utils';
 
 const MONTHS = [
@@ -56,7 +60,11 @@ export function Payroll() {
   const [resetting, setResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [missingTx, setMissingTx] = useState<string[]>([]);
+  const [processIssues, setProcessIssues] = useState<PayrollProcessIssue[]>([]);
+  // The month's payroll schedule reconciled with the bank payments; processing is validated against it
+  const [reconcile, setReconcile] = useState<PayrollReconcileResult | null>(null);
+  // The page opens on the first month whose payroll is not complete; nothing loads until that is known
+  const [startResolved, setStartResolved] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   // Notices about real paid amounts (excess folded into bonus / underpayment)
   // — survives the post-process reload, cleared when the month changes.
@@ -66,10 +74,6 @@ export function Payroll() {
   const [overrides, setOverrides] = useState<Record<number, { gross: number; bonus: number; other: number }>>({});
   // Per-row skip flag — skipped rows are excluded from totals and from processing
   const [skipped, setSkipped] = useState<Record<number, boolean>>({});
-  // Manual transaction link for a missing staff member, staged until the next submit
-  const [manualLink, setManualLink] = useState<Record<number, { transactionId: number; vendor: string }>>({});
-  // Staff full_name currently showing the transaction picker, if any
-  const [linkingFor, setLinkingFor] = useState<string | null>(null);
 
   // One key per "processing intent" — set whenever load() runs (mount,
   // month change, post-reset, post-success), so a failed submit's retry
@@ -81,7 +85,7 @@ export function Payroll() {
   const load = (preserveEdits = false) => {
     setLoading(true);
     setError(null);
-    setMissingTx([]);
+    setProcessIssues([]);
     setSuccess(null);
     setProcessIdempotencyKey(crypto.randomUUID());
     computePayroll(year, month)
@@ -110,11 +114,20 @@ export function Payroll() {
   };
 
   useEffect(() => {
+    getNextPayrollMonth()
+      .then(({ year: y, month: m }) => { setYear(y); setMonth(m); })
+      .catch(() => undefined) // fall back to the current month
+      .finally(() => setStartResolved(true));
+  }, []);
+
+  useEffect(() => {
+    if (!startResolved) return;
     const stored = localStorage.getItem(`payroll_skip_${year}_${month}`);
     setSkipped(stored ? (JSON.parse(stored) as Record<number, boolean>) : {});
     setPayNotices([]);
+    setReconcile(null);
     load();
-  }, [year, month]);
+  }, [year, month, startResolved]);
 
   // Notify how each entry's real bank amount compared to the computed net:
   // excess payments were captured into Bonus; underpayments are flagged only.
@@ -146,59 +159,21 @@ export function Payroll() {
       return updated;
     });
     setError(null);
-    setMissingTx([]);
-  };
-
-  const skipMissingAndProcess = async () => {
-    // Build updated skipped map using current missingTx names — a staff
-    // member who was manually linked should be processed, not skipped.
-    const newSkipped = { ...skipped };
-    lines
-      .filter((l) => missingTx.includes(l.full_name) && !manualLink[l.staff_id])
-      .forEach((l) => { newSkipped[l.staff_id] = true; });
-    setSkipped(newSkipped);
-    localStorage.setItem(`payroll_skip_${year}_${month}`, JSON.stringify(newSkipped));
-    setError(null);
-    setMissingTx([]);
-
-    // Compute payload without waiting for state flush
-    const payload: PayrollLineIn[] = lines
-      .filter((l) => !l.is_paid && !newSkipped[l.staff_id])
-      .map((l) => ({
-        staff_id: l.staff_id,
-        gross_salary: getGross(l),
-        bonus: getBonus(l),
-        other_deductions: getOther(l),
-        transaction_id: manualLink[l.staff_id]?.transactionId,
-      }));
-
-    if (payload.length === 0) return;
-
-    setProcessing(true);
-    try {
-      const entries = await processPayroll(year, month, payload, processIdempotencyKey);
-      buildPayNotices(entries);
-      setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
-      setManualLink({});
-      load(true); // preserve overrides and skipped state
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { status?: number; data?: { detail?: { message?: string; missing?: string[] } } } };
-      const detail = axiosErr?.response?.data?.detail;
-      if (axiosErr?.response?.status === 422 && detail?.missing) {
-        setError(detail.message ?? 'Cannot process payroll');
-        setMissingTx(detail.missing);
-      } else {
-        setError('Failed to process payroll');
-      }
-    } finally {
-      setProcessing(false);
-    }
+    setProcessIssues([]);
   };
 
   const getGross = (l: PayrollLine) => overrides[l.staff_id]?.gross ?? l.gross_salary;
   const getBonus = (l: PayrollLine) => overrides[l.staff_id]?.bonus ?? l.bonus;
   const getOther = (l: PayrollLine) => overrides[l.staff_id]?.other ?? l.other_deductions;
   const getNet   = (l: PayrollLine) => Math.max(0, getGross(l) + getBonus(l) - l.loan_deduction - l.advance_deduction - getOther(l));
+
+  // Per-staff check against the reconciled schedule (keyed by the staff member each schedule row was linked to)
+  const reconcileByStaff = useMemo(
+    () => new Map((reconcile?.lines ?? []).filter((l) => l.staff_id != null).map((l) => [l.staff_id as number, l])),
+    [reconcile],
+  );
+  const checkFor = (l: PayrollLine): RowCheck | null =>
+    l.is_paid ? null : checkRow(getNet(l), reconcileByStaff.get(l.staff_id), reconcile !== null);
 
   // Totals exclude skipped rows
   const activeLines = lines.filter((l) => !isSkipped(l));
@@ -223,11 +198,14 @@ export function Payroll() {
   const hasAnyProcessed = lines.some((l) => l.is_paid);
   // Rows still pending (not paid, not skipped)
   const pendingLines = activeLines.filter((l) => !l.is_paid);
+  // Pending staff the schedule/bank check does not clear yet (the server re-validates on Process)
+  const blockers = pendingLines.filter((l) => checkFor(l)?.state !== 'ready');
 
   const handleProcess = async () => {
+    if (!reconcile) return;
     setProcessing(true);
     setError(null);
-    setMissingTx([]);
+    setProcessIssues([]);
     try {
       // Only process pending, non-skipped rows
       const payload: PayrollLineIn[] = pendingLines.map((l) => ({
@@ -235,19 +213,17 @@ export function Payroll() {
         gross_salary: getGross(l),
         bonus: getBonus(l),
         other_deductions: getOther(l),
-        transaction_id: manualLink[l.staff_id]?.transactionId,
       }));
-      const entries = await processPayroll(year, month, payload, processIdempotencyKey);
+      const entries = await processPayroll(year, month, payload, processIdempotencyKey, scheduleLinesFor(reconcile));
       buildPayNotices(entries);
-      setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and linked to bank transactions.`);
-      setManualLink({});
+      setSuccess(`${MONTHS[month - 1]} ${year} payroll processed and matched to the schedule and bank payments.`);
       load(true); // preserve overrides and skipped state
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { status?: number; data?: { detail?: { message?: string; missing?: string[]; hint?: string } } } };
+      const axiosErr = err as { response?: { status?: number; data?: { detail?: { message?: string; issues?: PayrollProcessIssue[] } } } };
       const detail = axiosErr?.response?.data?.detail;
-      if (axiosErr?.response?.status === 422 && detail?.missing) {
+      if (axiosErr?.response?.status === 422 && detail?.issues) {
         setError(detail.message ?? 'Cannot process payroll');
-        setMissingTx(detail.missing);
+        setProcessIssues(detail.issues);
       } else {
         setError('Failed to process payroll');
       }
@@ -290,7 +266,7 @@ export function Payroll() {
             Payroll Calculator
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Monthly payroll — loan deductions are auto-calculated per staff member
+            Monthly payroll — each teacher is checked against the payroll schedule and the bank payment
           </p>
         </div>
 
@@ -320,99 +296,24 @@ export function Payroll() {
         </div>
       </div>
 
+      <SchedulePanel year={year} month={month} monthLabel={`${MONTHS[month - 1]} ${year}`} onResult={setReconcile} />
+      {reconcile && <ReconcileResults result={reconcile} />}
+
       {error && (
-        <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-2">
+        <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-2">
           <div className="flex items-center gap-2">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span>{error}</span>
           </div>
-          {missingTx.length > 0 && (
-            <div className="pl-6 space-y-2">
-              <p className="text-xs font-semibold text-destructive">Missing salary transactions for:</p>
-              <ul className="text-xs space-y-1">
-                {missingTx.map((name, idx) => {
-                  const staffLine = lines.find((l) => l.full_name === name);
-                  const linked = staffLine ? manualLink[staffLine.staff_id] : undefined;
-                  return (
-                    <li key={`${name}-${staffLine?.staff_id ?? idx}`} className="flex items-center gap-2">
-                      <span>{name}</span>
-                      {linked ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className="text-green-700 dark:text-green-400">✓ linked to {linked.vendor}</span>
-                          <button
-                            type="button"
-                            onClick={() => staffLine && setManualLink((m) => {
-                              const updated = { ...m };
-                              delete updated[staffLine.staff_id];
-                              return updated;
-                            })}
-                            className="text-muted-foreground underline hover:no-underline"
-                          >
-                            Undo
-                          </button>
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setLinkingFor(name)}
-                          className="text-primary underline hover:no-underline"
-                        >
-                          Link transaction…
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-              <p className="text-xs text-destructive/90">
-                Import the bank statement for {MONTHS[month - 1]} {year} first, link an existing transaction above, or skip these staff members to process the rest now.
-              </p>
-              {(() => {
-                const unresolvedCount = missingTx.filter((name) => {
-                  const staffLine = lines.find((l) => l.full_name === name);
-                  return !staffLine || !manualLink[staffLine.staff_id];
-                }).length;
-                return (
-                  <button
-                    type="button"
-                    onClick={skipMissingAndProcess}
-                    disabled={processing}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
-                  >
-                    {processing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                    {unresolvedCount > 0
-                      ? `Skip ${unresolvedCount} staff & process the rest`
-                      : 'Process with linked transactions'}
-                  </button>
-                );
-              })()}
-            </div>
+          {processIssues.length > 0 && (
+            <ul className="pl-6 list-disc text-xs space-y-1">
+              {processIssues.map((i, idx) => (
+                <li key={`${i.staff_id}-${i.kind}-${idx}`}><strong>{i.full_name}</strong>: {i.message}</li>
+              ))}
+            </ul>
           )}
         </div>
       )}
-
-      {linkingFor && (() => {
-        const staffLine = lines.find((l) => l.full_name === linkingFor);
-        const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
-        const monthEnd = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
-        const excludeIds = Object.values(manualLink).map((m) => m.transactionId);
-        return (
-          <TransactionPickerModal
-            title={`Link a transaction for ${linkingFor}`}
-            category="Salary and Wages"
-            startDate={monthStart}
-            endDate={monthEnd}
-            excludeTransactionIds={excludeIds}
-            onClose={() => setLinkingFor(null)}
-            onSelect={(t) => {
-              if (staffLine) {
-                setManualLink((m) => ({ ...m, [staffLine.staff_id]: { transactionId: t.id, vendor: t.vendor || t.description } }));
-              }
-              setLinkingFor(null);
-            }}
-          />
-        );
-      })()}
 
       {success && (
         <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 dark:border-green-900/50 dark:bg-green-950/20 px-4 py-3 text-sm text-green-700 dark:text-green-300">
@@ -509,7 +410,8 @@ export function Payroll() {
               </Button>
             )}
             {!isProcessed && pendingLines.length > 0 && (
-              <Button onClick={handleProcess} disabled={processing} size="sm">
+              <Button onClick={handleProcess} disabled={processing || blockers.length > 0} size="sm"
+                title={blockers.length > 0 ? 'Every pending staff member must match the schedule and the bank first' : undefined}>
                 {processing
                   ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Processing…</>
                   : `Process Payroll${skippedCount > 0 ? ` (${pendingLines.length} staff)` : ''}`}
@@ -518,6 +420,13 @@ export function Payroll() {
           </div>
         </CardHeader>
         <CardContent>
+          {!loading && !isProcessed && pendingLines.length > 0 && blockers.length > 0 && (
+            <p className="mb-3 text-xs text-amber-700 dark:text-amber-400">
+              {reconcile === null
+                ? 'Load the payroll schedule above to process this month.'
+                : `${blockers.length} staff need attention before processing (see the Schedule Check column) — fix them, or Skip them to process the rest.`}
+            </p>
+          )}
           {loading ? (
             <div className="flex items-center gap-2 py-6 justify-center text-muted-foreground text-sm">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -541,6 +450,8 @@ export function Payroll() {
                     <th className="text-right py-2 pr-3 font-medium">Advance Deduction</th>
                     <th className="text-right py-2 pr-3 font-medium">Other Deductions</th>
                     <th className="text-right py-2 pr-3 font-medium">Net Pay</th>
+                    <th className="text-right py-2 pr-3 font-medium">Schedule Net</th>
+                    <th className="text-center py-2 pr-3 font-medium">Schedule Check</th>
                     <th className="text-right py-2 pr-3 font-medium">Amount Paid</th>
                     <th className="text-center py-2 font-medium">Status</th>
                   </tr>
@@ -605,6 +516,7 @@ export function Payroll() {
                         <td className={`py-3 pr-3 text-right font-semibold ${skippedRow ? 'line-through text-muted-foreground' : 'text-primary'}`}>
                           {formatCurrency(getNet(l))}
                         </td>
+                        <ScheduleCells check={skippedRow ? null : checkFor(l)} />
                         <td className="py-3 pr-3 text-right">
                           {l.is_paid && l.paid_amount != null ? (
                             Math.abs(l.paid_amount - l.net_salary) > 0.009 ? (
@@ -677,7 +589,7 @@ export function Payroll() {
                       {totalOther > 0 ? `(${formatCurrency(totalOther)})` : '—'}
                     </td>
                     <td className="py-3 pr-3 text-right text-primary">{formatCurrency(totalNet)}</td>
-                    <td />
+                    <td colSpan={3} />
                   </tr>
                 </tfoot>
               </table>
@@ -693,8 +605,8 @@ export function Payroll() {
                 <strong className="text-foreground">Other Deductions</strong> is only for one-off charges
                 (uniform, fines, etc.) that don't belong to a loan or IOU.{' '}
                 <strong className="text-foreground">Before clicking "Process Payroll"</strong>, import the bank
-                statement for this month — salary payments in the statement are used to verify and link each staff
-                member's transaction.
+                statement for this month and load the payroll schedule above — each teacher must be matched by a bank
+                payment within ₦100 of the schedule, and the total here must agree with the schedule.
               </span>
             </div>
           )}
