@@ -39,11 +39,18 @@ function SummaryTile({ label, value, tone }: { label: string; value: string; ton
   );
 }
 
+type InputMode = 'file' | 'paste';
+
+// Rows copied from Excel/Sheets arrive tab-separated; the API reads them like an uploaded file.
+const pastedToFile = (text: string) => new File([text], 'pasted.tsv', { type: 'text/tab-separated-values' });
+
 export function PayrollReconciliation() {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [file, setFile] = useState<File | null>(null);
+  const [mode, setMode] = useState<InputMode>('file');
+  const [pasted, setPasted] = useState('');
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [accountId, setAccountId] = useState<string>('');
   const [accountsFailed, setAccountsFailed] = useState(false);
@@ -67,13 +74,22 @@ export function PayrollReconciliation() {
     setError(null);
   };
 
+  const switchMode = (next: InputMode) => {
+    setMode(next);
+    setResult(null);
+    setError(null);
+  };
+
+  const canRun = mode === 'file' ? file !== null : pasted.trim().length > 0;
+
   const run = async () => {
-    if (!file) return;
+    const upload = mode === 'file' ? file : pastedToFile(pasted);
+    if (!upload || !canRun) return;
     const id = ++requestId.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await reconcilePayroll(file, year, month, accountId ? Number(accountId) : undefined);
+      const res = await reconcilePayroll(upload, year, month, accountId ? Number(accountId) : undefined);
       if (id === requestId.current) setResult(res);
     } catch (err) {
       if (id !== requestId.current) return;
@@ -85,6 +101,8 @@ export function PayrollReconciliation() {
   };
 
   const summary = result?.summary;
+  const problemRows = result?.skipped_rows.filter((r) => !r.ignored) ?? [];
+  const ignoredRows = result?.skipped_rows.filter((r) => r.ignored) ?? [];
   const gap = summary ? summary.paid_total - summary.expected_total : 0;
 
   return (
@@ -93,7 +111,7 @@ export function PayrollReconciliation() {
         <div>
           <h1 className="text-2xl font-bold">Payroll Reconciliation</h1>
           <p className="text-sm text-muted-foreground">
-            Upload the payroll schedule (.xlsx or .csv) and compare it with the salary payments in the bank account.
+            Upload the payroll schedule (.xlsx or .csv), or paste rows copied from Excel, and compare it with the salary payments in the bank account.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -113,7 +131,28 @@ export function PayrollReconciliation() {
 
       <Card>
         <CardContent className="pt-6 space-y-4">
+          <div className="flex gap-2" role="group" aria-label="Schedule input">
+            <Button type="button" size="sm" variant={mode === 'file' ? 'default' : 'outline'} aria-pressed={mode === 'file'}
+              disabled={loading} onClick={() => switchMode('file')}>Upload file</Button>
+            <Button type="button" size="sm" variant={mode === 'paste' ? 'default' : 'outline'} aria-pressed={mode === 'paste'}
+              disabled={loading} onClick={() => switchMode('paste')}>Paste from Excel</Button>
+          </div>
+          {mode === 'paste' && (
+            <div className="space-y-1">
+              <label htmlFor="schedule-paste" className="text-sm font-medium">Paste rows from Excel</label>
+              <textarea
+                id="schedule-paste"
+                rows={8}
+                value={pasted}
+                disabled={loading}
+                onChange={(e) => { setPasted(e.target.value); setResult(null); setError(null); }}
+                placeholder="Copy the rows in Excel or Google Sheets and paste them here…"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+              />
+            </div>
+          )}
           <div className="flex flex-wrap items-end gap-4">
+            {mode === 'file' && (
             <div className="space-y-1">
               <label htmlFor="schedule-file" className="text-sm font-medium">Payroll schedule</label>
               <div className="flex items-center gap-2">
@@ -132,6 +171,7 @@ export function PayrollReconciliation() {
                 <span className="text-sm text-muted-foreground">{file?.name ?? 'No file chosen'}</span>
               </div>
             </div>
+            )}
             <div className="space-y-1">
               <label htmlFor="bank-account" className="text-sm font-medium">Bank account (optional)</label>
               <select
@@ -149,7 +189,7 @@ export function PayrollReconciliation() {
                 ))}
               </select>
             </div>
-            <Button type="button" onClick={run} disabled={!file || loading}>
+            <Button type="button" onClick={run} disabled={!canRun || loading}>
               {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
               Reconcile
             </Button>
@@ -158,8 +198,9 @@ export function PayrollReconciliation() {
             <p className="text-xs text-amber-600">Couldn't load bank accounts — all accounts will be compared.</p>
           )}
           <p className="text-xs text-muted-foreground">
-            The file needs a header row with a name column and an amount column (an account-number column helps matching).
-            Only Salary and Wages expenses for {MONTHS[month - 1]} {year} are compared. Nothing is saved.
+            A header row (name and amount columns) is optional. Without one, the leftmost text column is the name, the
+            last money column is the amount to pay (net pay), and a long digit column is the account number. Section
+            labels and totals rows are ignored and listed. Pasted data must be tab-separated, as copied straight from Excel or Sheets. Only Salary and Wages expenses for {MONTHS[month - 1]} {year} are compared. Nothing is saved.
           </p>
         </CardContent>
       </Card>
@@ -177,17 +218,31 @@ export function PayrollReconciliation() {
           <h2 className="text-lg font-semibold">
             Results for {MONTHS[result.month - 1]} {result.year}
           </h2>
-          {result.skipped_rows.length > 0 && (
+          {result.notes.length > 0 && (
+            <div role="note" className="rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:bg-blue-900/20 dark:text-blue-200">
+              {result.notes.map((n) => <p key={n}>{n}</p>)}
+            </div>
+          )}
+          {problemRows.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
               <p className="font-medium">
-                {result.skipped_rows.length} row{result.skipped_rows.length === 1 ? '' : 's'} in the file could not be used and {result.skipped_rows.length === 1 ? 'was' : 'were'} left out:
+                {problemRows.length} row{problemRows.length === 1 ? '' : 's'} in the file could not be used and {problemRows.length === 1 ? 'was' : 'were'} left out:
               </p>
               <ul className="mt-1 list-disc pl-5 text-xs">
-                {result.skipped_rows.map((r) => (
-                  <li key={r.row_number}>Row {r.row_number}: {r.reason}</li>
+                {problemRows.map((r) => (
+                  <li key={r.row_number}>
+                    Row {r.row_number}: {r.reason}
+                    {r.label && <span className="text-muted-foreground"> ({r.label})</span>}
+                  </li>
                 ))}
               </ul>
             </div>
+          )}
+          {ignoredRows.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Ignored {ignoredRows.length} row{ignoredRows.length === 1 ? '' : 's'} that look like labels or totals:{' '}
+              {ignoredRows.map((r) => `row ${r.row_number} “${r.label}”`).join(', ')}. Check none of them is a person.
+            </p>
           )}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <SummaryTile label="Expected (schedule)" value={formatCurrency(summary.expected_total)} />

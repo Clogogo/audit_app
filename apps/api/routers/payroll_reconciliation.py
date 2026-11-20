@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import BankAccount, Transaction
 from utils.auth import require_permission
-from utils.payroll_recon import ScheduleError, parse_schedule_with_skips, reconcile
+from utils.payroll_recon import ScheduleError, parse_schedule_full, reconcile
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ class ReconcileLine(BaseModel):
 class SkippedRowOut(BaseModel):
     row_number: int
     reason: str
+    ignored: bool = False
+    label: str = ""
 
 
 class UnmatchedTransaction(BaseModel):
@@ -67,6 +69,7 @@ class ReconcileOut(BaseModel):
     month: int
     lines: list[ReconcileLine]
     skipped_rows: list[SkippedRowOut]
+    notes: list[str]
     unmatched_transactions: list[UnmatchedTransaction]
     summary: ReconcileSummary
 
@@ -90,7 +93,7 @@ def reconcile_payroll(
     expense transactions (optionally limited to one bank account)."""
     content = _read_limited(file)
     try:
-        rows, skipped = parse_schedule_with_skips(content, file.filename or "")
+        parsed = parse_schedule_full(content, file.filename or "")
     except ScheduleError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -108,6 +111,6 @@ def reconcile_payroll(
     if bank_account_id is not None:
         query = query.filter(Transaction.bank_account_id == bank_account_id)
 
-    result = reconcile(rows, query.all())
+    result = reconcile(parsed.rows, query.all())
     logger.info("Payroll reconcile %04d-%02d: %s", year, month, result["summary"])
-    return {"year": year, "month": month, "skipped_rows": [vars(r) for r in skipped], **result}
+    return {"year": year, "month": month, "skipped_rows": [vars(r) for r in parsed.skipped], "notes": parsed.notes, **result}

@@ -56,8 +56,20 @@ class ScheduleRow:
 
 @dataclass(frozen=True)
 class SkippedRow:
+    """A row that is not in the reconciliation. `ignored` rows look like labels
+    or totals (expected); the rest are problems. Either way the row is listed
+    with its text so nobody vanishes silently."""
     row_number: int
     reason: str
+    ignored: bool = False
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class ParsedSchedule:
+    rows: list[ScheduleRow]
+    skipped: list[SkippedRow]
+    notes: list[str]
 
 
 # ── Reading the file ──────────────────────────────────────────────────────────
@@ -91,7 +103,7 @@ def _load_xlsx(content: bytes) -> list[list[Any]]:
         raise ScheduleError("Could not read the Excel file — is it a valid .xlsx?") from exc
 
 
-def _load_csv(content: bytes) -> list[list[Any]]:
+def _load_delimited(content: bytes, delimiter: str) -> list[list[Any]]:
     if b"\x00" in content:
         raise ScheduleError("That doesn't look like a CSV text file.")
     try:
@@ -101,7 +113,7 @@ def _load_csv(content: bytes) -> list[list[Any]]:
     grid: list[list[Any]] = []
     filled = 0
     try:
-        for row in csv.reader(StringIO(text)):
+        for row in csv.reader(StringIO(text), delimiter=delimiter):
             cells = list(row)[:MAX_COLUMNS]
             grid.append(cells)
             filled += any(c.strip() for c in cells)
@@ -117,8 +129,10 @@ def _load_grid(content: bytes, filename: str) -> list[list[Any]]:
     if lower.endswith((".xlsx", ".xlsm")):
         return _load_xlsx(content)
     if lower.endswith(".csv"):
-        return _load_csv(content)
-    raise ScheduleError("Unsupported file type — upload an .xlsx or .csv file.")
+        return _load_delimited(content, ",")
+    if lower.endswith(".tsv"):  # rows pasted from Excel/Sheets arrive tab-separated
+        return _load_delimited(content, "\t")
+    raise ScheduleError("Unsupported file type — upload an .xlsx or .csv file, or paste rows from Excel.")
 
 
 # ── Cells ─────────────────────────────────────────────────────────────────────
@@ -167,6 +181,105 @@ def _parse_account(value: Any) -> Optional[str]:
     if was_numeric and len(digits) == NUBAN_LENGTH - 1:
         digits = digits.zfill(NUBAN_LENGTH)
     return digits if len(digits) >= MIN_ACCOUNT_DIGITS else None
+
+
+# ── Money-shaped cells (used when a sheet has no header row) ──────────────────
+
+MAX_PLAIN_MONEY = 1e8      # bigger bare numbers/digit runs are account numbers, not pay
+_LONG_DIGITS = re.compile(r"\d{9,}")
+
+
+def _looks_like_money(value: Any) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return 0 <= value < MAX_PLAIN_MONEY
+    text = _cell_text(value)
+    if not text or _LONG_DIGITS.fullmatch(text):
+        return False
+    try:
+        _parse_amount(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_name_like(value: Any) -> bool:
+    text = _cell_text(value)
+    return isinstance(value, str) and len(re.findall(r"[A-Za-z]", text)) >= 2 and not _looks_like_money(text)
+
+
+def _is_account_cell(value: Any) -> bool:
+    if isinstance(value, bool) or _looks_like_money(value):
+        return False
+    if isinstance(value, (int, float)):
+        return float(value).is_integer() and value >= MAX_PLAIN_MONEY
+    return bool(_LONG_DIGITS.fullmatch(_cell_text(value)))
+
+
+def _column_letter(index: int) -> str:
+    letters, n = "", index + 1
+    while n:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def _no_columns_error() -> ScheduleError:
+    return ScheduleError(
+        f"Could not find name and amount columns in the first {HEADER_SCAN_ROWS} rows. "
+        "Add a header row such as 'Name' and 'Amount'."
+    )
+
+
+def _infer_layout(grid: Sequence[Sequence[Any]]) -> tuple[tuple[int, int, int, Optional[int]], list[str]]:
+    """Column layout for a sheet with no header row, from the shape of the data:
+    the name is the leftmost mostly-text column, the amount to pay is the
+    rightmost column that is money on most payable rows (net pay comes after
+    basic/deductions/bonus), and the account is a column of long digit runs."""
+    width = max((len(r) for r in grid), default=0)
+    text_counts = [sum(_is_name_like(_cell_at(r, c)) for r in grid) for c in range(width)]
+    if not text_counts or max(text_counts) == 0:
+        raise _no_columns_error()
+    # Among the mostly-text columns the name column has the most distinct values
+    # (a repeated title/bank column has few); ties go to the leftmost.
+    def distinct(c: int) -> int:
+        return len({_cell_text(_cell_at(r, c)).lower() for r in grid if _is_name_like(_cell_at(r, c))})
+    name_col = max((c for c, n in enumerate(text_counts) if n >= max(text_counts) / 2), key=lambda c: (distinct(c), -c))
+
+    data = [
+        r for r in grid
+        if _is_name_like(_cell_at(r, name_col))
+        and any(_looks_like_money(_cell_at(r, c)) for c in range(width) if c != name_col)
+    ]
+    if not data:
+        raise _no_columns_error()
+    money = [sum(_looks_like_money(_cell_at(r, c)) for r in data) if c != name_col else 0 for c in range(width)]
+    need = max(1, math.ceil(len(data) / 2))
+    amount_cols = [c for c, n in enumerate(money) if n >= need]
+    if not amount_cols:
+        raise _no_columns_error()
+    amount_col = amount_cols[-1]
+
+    accounts = [
+        (sum(_is_account_cell(_cell_at(r, c)) for r in data), c)
+        for c in range(width) if c not in (name_col, amount_col)
+    ]
+    best = max(accounts, default=(0, None))
+    account_col = best[1] if best[0] >= max(1, math.ceil(0.4 * len(data))) else None
+
+    notes = [
+        f"No header row found — using column {_column_letter(name_col)} as the name, "
+        f"column {_column_letter(amount_col)} as the amount to pay (net pay)"
+        + (f" and column {_column_letter(account_col)} as the account number." if account_col is not None else ".")
+    ]
+    for c in range(amount_col + 1, width):
+        if money[c] > 0:
+            notes.append(
+                f"Column {_column_letter(c)} has amounts on only {money[c]} of {len(data)} rows, so column "
+                f"{_column_letter(amount_col)} was used instead — check that is the right column."
+            )
+    return (-1, name_col, amount_col, account_col), notes
 
 
 # ── Header detection ──────────────────────────────────────────────────────────
@@ -218,7 +331,7 @@ def _has_data_below(grid: Sequence[Sequence[Any]], header_idx: int, name_col: in
     return False
 
 
-def _detect_header(grid: Sequence[Sequence[Any]]) -> tuple[int, int, int, Optional[int]]:
+def _detect_header(grid: Sequence[Sequence[Any]]) -> tuple[tuple[int, int, int, Optional[int]], list[str]]:
     """Prefer the first header row that has real data under it; fall back to the
     first keyword match so an empty schedule reports 'no payable rows'."""
     fallback: Optional[tuple[int, int, int, Optional[int]]] = None
@@ -229,24 +342,23 @@ def _detect_header(grid: Sequence[Sequence[Any]]) -> tuple[int, int, int, Option
             continue
         found = (i, name_col, amount_col, _find_account_column(headers))
         if _has_data_below(grid, i, name_col, amount_col):
-            return found
+            return found, []
         fallback = fallback or found
-    if fallback:
-        return fallback
-    raise ScheduleError(
-        f"Could not find name and amount columns in the first {HEADER_SCAN_ROWS} rows. "
-        "Add a header row such as 'Name' and 'Amount'."
-    )
+    if fallback:  # a header with nothing usable below it: the sheet may be header-less after all
+        try:
+            return _infer_layout(grid)
+        except ScheduleError:
+            return fallback, []
+    return _infer_layout(grid)
 
 
 # ── Parsing ───────────────────────────────────────────────────────────────────
 
-def parse_schedule_with_skips(content: bytes, filename: str) -> tuple[list[ScheduleRow], list[SkippedRow]]:
-    """Payable rows plus the rows that were skipped (with why), so a person
-    can't silently vanish from the reconciliation. Totals/footers aren't
-    reported — they are expected."""
+def parse_schedule_full(content: bytes, filename: str) -> ParsedSchedule:
+    """Payable rows, every row left out (with why and its text), and notes about
+    how columns were chosen when the sheet had no header row."""
     grid = _load_grid(content, filename)
-    header_idx, name_col, amount_col, account_col = _detect_header(grid)
+    (header_idx, name_col, amount_col, account_col), notes = _detect_header(grid)
 
     rows: list[ScheduleRow] = []
     skipped: list[SkippedRow] = []
@@ -255,30 +367,47 @@ def parse_schedule_with_skips(content: bytes, filename: str) -> tuple[list[Sched
         if not any(texts):
             continue
         name = _cell_text(_cell_at(raw, name_col))
+        label = (name or next(t for t in texts if t))[:60]
+
+        def ignore(reason: str) -> None:
+            skipped.append(SkippedRow(number, reason, ignored=True, label=label))
+
         # A footer is a label in the name cell, or a label elsewhere on a row
         # with no name. A status/remarks cell saying "Approved" must not hide
         # a real staff row.
         if _FOOTER.match(name) or (not name and any(_FOOTER.match(t) for t in texts if t)):
+            ignore("Looks like a totals or sign-off row")
             continue
         amount_cell = _cell_at(raw, amount_col)
+        if name and not any(t for i, t in enumerate(texts) if i != name_col):
+            ignore("Looks like a section label (a name with no other values)")
+            continue
         if not name:
-            if _cell_text(amount_cell):
-                skipped.append(SkippedRow(number, "Missing name"))
+            if sum(_looks_like_money(c) for c in raw) >= 2:
+                ignore("Looks like a totals row (numbers but no name)")
+            elif _cell_text(amount_cell):
+                skipped.append(SkippedRow(number, "Missing name", label=label))
             continue
         try:
             amount = _parse_amount(amount_cell)
         except ValueError:
-            skipped.append(SkippedRow(number, "Amount is blank or not a plain number"))
+            skipped.append(SkippedRow(number, "Amount is blank or not a plain number", label=label))
             continue
         if amount <= 0:
-            skipped.append(SkippedRow(number, "Amount must be greater than zero"))
+            skipped.append(SkippedRow(number, "Amount must be greater than zero", label=label))
             continue
         rows.append(ScheduleRow(number, name, round(amount, 2), _parse_account(_cell_at(raw, account_col))))
 
     if not rows:
-        hint = f" {len(skipped)} row(s) were skipped (row {skipped[0].row_number}: {skipped[0].reason})." if skipped else ""
+        problems = [r for r in skipped if not r.ignored]
+        hint = f" {len(problems)} row(s) were skipped (row {problems[0].row_number}: {problems[0].reason})." if problems else ""
         raise ScheduleError("No payable rows found in the schedule." + hint)
-    return rows, skipped
+    return ParsedSchedule(rows, skipped, notes)
+
+
+def parse_schedule_with_skips(content: bytes, filename: str) -> tuple[list[ScheduleRow], list[SkippedRow]]:
+    parsed = parse_schedule_full(content, filename)
+    return parsed.rows, parsed.skipped
 
 
 def parse_schedule(content: bytes, filename: str) -> list[ScheduleRow]:
@@ -302,13 +431,21 @@ def _has_account(text: str, account: str) -> bool:
     return re.search(rf"(?<!\d){re.escape(account)}(?!\d)", text) is not None
 
 
+def _name_variants(name: str) -> list[str]:
+    """The full name plus the parts outside and inside brackets, e.g.
+    'EXTRA LESSONS (JOY ADA OKO)' also matches a payment to 'JOY ADA OKO'."""
+    parts = [name, re.sub(r"\([^)]*\)", " ", name), *re.findall(r"\(([^)]*)\)", name)]
+    return list(dict.fromkeys(p.strip() for p in parts if p.strip()))
+
+
 def _candidates(row: ScheduleRow, transactions: Sequence[Any]) -> list[Any]:
     """Transactions plausibly paying this row — account number wins over name."""
     if row.account_number:
         by_account = [t for t in transactions if _has_account(_tx_text(t), row.account_number)]
         if by_account:
             return by_account
-    return [t for t in transactions if _name_matches_text(row.name, _tx_text(t))]
+    variants = _name_variants(row.name)
+    return [t for t in transactions if any(_name_matches_text(v, _tx_text(t)) for v in variants)]
 
 
 def _status(difference_cents: int, any_paid: bool) -> str:
