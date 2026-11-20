@@ -10,7 +10,8 @@ from openpyxl import Workbook
 
 from models import Transaction
 from utils.payroll_recon import (
-    ScheduleError, ScheduleRow, SkippedRow, parse_schedule, parse_schedule_full, parse_schedule_with_skips, reconcile,
+    ScheduleError, ScheduleRow, SkippedRow, link_staff_to_rows, parse_schedule, parse_schedule_full,
+    parse_schedule_with_skips, reconcile,
 )
 
 
@@ -206,22 +207,6 @@ def test_endpoint_reconciles_month_and_ignores_other_months_and_categories(clien
     assert body["year"] == 2026 and body["month"] == 1
 
 
-def test_endpoint_filters_by_bank_account(client, db_session):
-    from models import BankAccount
-    acct = BankAccount(bank_name="Test Bank", account_holder_name="Main", account_number="1", opening_balance=0)
-    db_session.add(acct)
-    db_session.commit()
-    _tx(db_session, "NGOZI WILLIAMS", 15000.0, bank_account_id=acct.id)
-    content = _xlsx([["Name", "Amount"], ["Ngozi Williams", 15000]])
-    acct2 = BankAccount(bank_name="Other Bank", account_holder_name="Other", account_number="2", opening_balance=0)
-    db_session.add(acct2)
-    db_session.commit()
-    other = _post(client, content, bank_account_id=str(acct2.id)).json()
-    assert other["lines"][0]["status"] == "not_paid"
-    same = _post(client, content, bank_account_id=str(acct.id)).json()
-    assert same["lines"][0]["status"] == "matched"
-
-
 def test_endpoint_does_not_write_anything(client, db_session):
     _tx(db_session, "NGOZI WILLIAMS", 15000.0)
     before = db_session.query(Transaction).count()
@@ -270,18 +255,34 @@ def test_reconcile_same_person_on_two_rows_matches_each_exact_payment(db_session
 
 
 def test_reconcile_flags_contested_payment_instead_of_guessing(db_session):
-    _tx(db_session, "JOHN MUSA", 150.0)
-    rows = [ScheduleRow(2, "John Musa", 100.0, None), ScheduleRow(3, "John Musa", 200.0, None)]
+    _tx(db_session, "JOHN MUSA", 150000.0)
+    rows = [ScheduleRow(2, "John Musa", 100000.0, None), ScheduleRow(3, "John Musa", 200000.0, None)]
     result = reconcile(rows, db_session.query(Transaction).all())
     assert [l["status"] for l in result["lines"]] == ["not_paid", "not_paid"]
     assert all("review manually" in l["note"] for l in result["lines"])
     assert result["summary"]["unmatched_payments"] == 1
 
 
-def test_reconcile_one_kobo_difference_is_not_matched(db_session):
-    _tx(db_session, "NGOZI WILLIAMS", 14999.99)
+def test_reconcile_difference_under_100_naira_counts_as_paid(db_session):
+    _tx(db_session, "NGOZI WILLIAMS", 14900.01)
     line = reconcile([ScheduleRow(2, "Ngozi Williams", 15000.0, None)], db_session.query(Transaction).all())["lines"][0]
-    assert line["status"] == "underpaid" and line["difference"] == -0.01
+    assert line["status"] == "matched" and line["difference"] == -99.99
+    assert line["paid_amount"] == 14900.01   # the real bank amount is still reported
+
+
+def test_reconcile_difference_of_100_naira_or_more_is_not_paid_in_full(db_session):
+    _tx(db_session, "NGOZI WILLIAMS", 14900.0)
+    under = reconcile([ScheduleRow(2, "Ngozi Williams", 15000.0, None)], db_session.query(Transaction).all())["lines"][0]
+    assert under["status"] == "underpaid" and under["difference"] == -100.0
+    over = reconcile([ScheduleRow(2, "Ngozi Williams", 14800.0, None)], db_session.query(Transaction).all())["lines"][0]
+    assert over["status"] == "overpaid"
+
+
+def test_reconcile_prefers_the_closest_payment_within_tolerance(db_session):
+    _tx(db_session, "NGOZI WILLIAMS", 14950.0, "2026-01-20")
+    best = _tx(db_session, "NGOZI WILLIAMS", 15000.0, "2026-01-30")
+    line = reconcile([ScheduleRow(2, "Ngozi Williams", 15000.0, None)], db_session.query(Transaction).all())["lines"][0]
+    assert line["transaction_ids"] == [best.id]
 
 
 def test_parse_picks_name_column_not_staff_id():
@@ -363,10 +364,9 @@ def test_parse_turns_csv_errors_into_schedule_errors():
         parse_schedule(b"Name,Amount\nA\x00B,1\n", "nul.csv")
 
 
-def test_endpoint_unknown_bank_account_is_404_and_skipped_rows_returned(client, db_session):
+def test_endpoint_returns_skipped_rows_and_ignores_a_stray_bank_account_field(client, db_session):
     content = _xlsx([["Name", "Amount"], ["Ngozi Williams", 15000], ["Bad Row", "n/a"]])
-    assert _post(client, content, bank_account_id="9999").status_code == 404
-    body = _post(client, content).json()
+    body = _post(client, content, bank_account_id="9999").json()
     assert [(r["row_number"], r["ignored"]) for r in body["skipped_rows"]] == [(3, False)]
     assert body["skipped_rows"][0]["reason"] and body["skipped_rows"][0]["label"] == "Bad Row"
     assert body["notes"] == []
@@ -545,3 +545,77 @@ def test_endpoint_accepts_pasted_tsv(client, db_session):
     assert by_name["BOLA EZE"] == "not_paid"
     assert resp.json()["summary"]["rows"] == 6
     assert any("amount" in n.lower() for n in resp.json()["notes"])
+
+
+# ── linking schedule rows to the staff directory ──────────────────────────────
+
+def _staff_obj(id_, name, account=None):
+    from types import SimpleNamespace
+    return SimpleNamespace(id=id_, full_name=name, account_number=account)
+
+
+def test_link_account_number_wins_over_name():
+    rows = [ScheduleRow(1, "Totally Different", 100.0, "0123456789")]
+    assert link_staff_to_rows([_staff_obj(1, "Ada Obi", "0123456789")], rows) == {1: rows[0]}
+
+
+def test_link_account_number_ignores_a_lost_leading_zero():
+    rows = [ScheduleRow(1, "Someone", 100.0, "123456789")]
+    assert link_staff_to_rows([_staff_obj(1, "Ada Obi", "0123456789")], rows) == {1: rows[0]}
+
+
+def test_link_by_reordered_titled_name():
+    rows = [ScheduleRow(1, "MRS ADA OBI", 100.0, None)]
+    assert link_staff_to_rows([_staff_obj(1, "Obi Ada")], rows) == {1: rows[0]}
+
+
+def test_link_prefers_the_identical_name_over_a_looser_one():
+    rows = [ScheduleRow(1, "John Adebayo Musa", 100.0, None), ScheduleRow(2, "John Musa", 100.0, None)]
+    links = link_staff_to_rows([_staff_obj(7, "John Musa")], rows)
+    assert links == {7: rows[1]}
+
+
+def test_link_leaves_ambiguous_matches_unlinked_and_never_reuses_a_row():
+    rows = [ScheduleRow(1, "Ada Obi", 100.0, None)]
+    both = link_staff_to_rows([_staff_obj(1, "Ada Obi Eze"), _staff_obj(2, "Ada Obi Ife")], rows)
+    assert both == {}                       # two staff could own one row: don't guess
+    assert link_staff_to_rows([_staff_obj(1, "Zed Qux")], rows) == {}
+
+
+def test_endpoint_links_rows_to_staff_and_flags_out_of_sync_salary(client, db_session):
+    from models import Staff
+    ada = Staff(full_name="Ada Obi", monthly_gross=15000.0, is_active=True)
+    bola = Staff(full_name="Bola Eze", monthly_gross=20000.0, is_active=True)
+    kemi = Staff(full_name="Kemi Ala", monthly_gross=10000.0, is_active=True)   # not on the schedule
+    db_session.add_all([ada, bola, kemi])
+    db_session.commit()
+    _tx(db_session, "ADA OBI", 15000.0)
+    _tx(db_session, "BOLA EZE", 18000.0)
+    content = _xlsx([["Name", "Amount"], ["Ada Obi", 15000], ["Bola Eze", 18000], ["Segun Ojo", 9000]])
+    body = _post(client, content).json()
+    by_name = {l["name"]: l for l in body["lines"]}
+
+    assert by_name["Ada Obi"]["staff_id"] == ada.id and by_name["Ada Obi"]["in_sync"] is True
+    assert by_name["Ada Obi"]["computed_net"] == 15000.0
+    assert by_name["Bola Eze"]["status"] == "matched"            # bank matches the schedule...
+    assert by_name["Bola Eze"]["in_sync"] is False               # ...but the directory total does not
+    assert by_name["Bola Eze"]["net_difference"] == 2000.0
+    assert by_name["Segun Ojo"]["staff_id"] is None and by_name["Segun Ojo"]["in_sync"] is None
+    assert body["unlinked_staff"] == [{"staff_id": kemi.id, "full_name": "Kemi Ala", "computed_net": 10000.0}]
+
+
+def test_reconcile_flags_a_second_payment_to_a_row_that_is_already_paid(db_session):
+    first = _tx(db_session, "NGOZI WILLIAMS", 15000.0, "2026-01-20")
+    second = _tx(db_session, "NGOZI WILLIAMS", 15000.0, "2026-01-30")
+    result = reconcile([ScheduleRow(2, "Ngozi Williams", 15000.0, None)], db_session.query(Transaction).all())
+    line = result["lines"][0]
+    assert line["status"] == "matched" and line["transaction_ids"] == [first.id]
+    assert line["extra_payment_ids"] == [second.id] and line["extra_paid_amount"] == 15000.0
+    assert result["summary"]["unmatched_payments"] == 1
+
+
+def test_reconcile_has_no_extra_payment_flag_for_unpaid_or_clean_rows(db_session):
+    _tx(db_session, "NGOZI WILLIAMS", 15000.0)
+    rows = [ScheduleRow(2, "Ngozi Williams", 15000.0, None), ScheduleRow(3, "Grace Balogun", 9000.0, None)]
+    lines = reconcile(rows, db_session.query(Transaction).all())["lines"]
+    assert [l["extra_payment_ids"] for l in lines] == [[], []]

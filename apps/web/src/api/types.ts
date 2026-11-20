@@ -1192,6 +1192,21 @@ export interface PayrollReconcileLine {
   paid_to: string | null;
   paid_date: string | null;
   note: string | null;
+  /** other bank payments that look like this person's but were not used — a possible duplicate */
+  extra_payment_ids: number[];
+  extra_paid_amount: number;
+  // Staff-directory cross-check; null when the row could not be linked to a staff member
+  staff_id: number | null;
+  staff_name: string | null;
+  computed_net: number | null;
+  net_difference: number | null;
+  in_sync: boolean | null;
+}
+
+export interface PayrollReconcileUnlinkedStaff {
+  staff_id: number;
+  full_name: string;
+  computed_net: number;
 }
 
 export interface PayrollReconcileSkippedRow {
@@ -1227,6 +1242,29 @@ export interface PayrollReconcileResult {
   lines: PayrollReconcileLine[];
   skipped_rows: PayrollReconcileSkippedRow[];
   notes: string[];
+  unlinked_staff: PayrollReconcileUnlinkedStaff[];
   unmatched_transactions: PayrollReconcileUnmatched[];
   summary: PayrollReconcileSummary;
+}
+
+export interface PayrollScheduleLineIn {
+  row_number: number;
+  name: string;
+  amount: number;
+  account_number: string | null;
+}
+
+export interface PayrollProcessIssue {
+  staff_id: number;
+  full_name: string;
+  kind: string;
+  message: string;
+  expected: number | null;
+  paid: number | null;
+  computed: number | null;
+}
+
+export interface NextPayrollMonth {
+  year: number;
+  month: number;
 }

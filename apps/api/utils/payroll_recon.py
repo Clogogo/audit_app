@@ -4,8 +4,8 @@ Parses an uploaded Excel/CSV payroll schedule (who should have been paid how
 much) and compares it with the Salary and Wages expense transactions actually
 recorded in the bank account. Pure functions — no database writes.
 
-Money is compared in integer kobo, never with a float tolerance: a one-kobo
-shortfall is a real difference.
+Money is compared in integer kobo. A payment within ₦100 of what the schedule
+says (strictly less than ₦100 apart) counts as paid in full.
 """
 import csv
 import math
@@ -17,7 +17,7 @@ from datetime import date
 from io import BytesIO, StringIO
 from typing import Any, Optional, Sequence
 
-from routers.payroll import _name_matches_text
+from routers.payroll import _name_matches_text, _normalize_name_tokens
 
 HEADER_SCAN_ROWS = 20                       # title/blank rows allowed above the header
 HEADER_CONFIRM_ROWS = 10                    # rows below a header that must hold real data
@@ -416,11 +416,16 @@ def parse_schedule(content: bytes, filename: str) -> list[ScheduleRow]:
 
 # ── Reconciliation ────────────────────────────────────────────────────────────
 
+PAID_TOLERANCE_KOBO = 10_000    # a gap under ₦100 still counts as paid in full
 AMBIGUOUS_NOTE = "Several schedule rows could match the same payment — review manually."
 
 
 def _cents(amount: float) -> int:
     return round(amount * 100)
+
+
+def within_tolerance(difference_cents: int) -> bool:
+    return abs(difference_cents) < PAID_TOLERANCE_KOBO
 
 
 def _tx_text(tx: Any) -> str:
@@ -451,12 +456,12 @@ def _candidates(row: ScheduleRow, transactions: Sequence[Any]) -> list[Any]:
 def _status(difference_cents: int, any_paid: bool) -> str:
     if not any_paid:
         return "not_paid"
-    if difference_cents == 0:
+    if within_tolerance(difference_cents):
         return "matched"
     return "underpaid" if difference_cents < 0 else "overpaid"
 
 
-def _build_line(row: ScheduleRow, chosen: Sequence[Any], note: Optional[str]) -> dict[str, Any]:
+def _build_line(row: ScheduleRow, chosen: Sequence[Any], note: Optional[str], extras: Sequence[Any] = ()) -> dict[str, Any]:
     paid_cents = sum(_cents(t.amount) for t in chosen)
     diff_cents = paid_cents - _cents(row.amount)
     return {
@@ -471,6 +476,10 @@ def _build_line(row: ScheduleRow, chosen: Sequence[Any], note: Optional[str]) ->
         "paid_to": chosen[0].vendor if chosen else None,
         "paid_date": max(t.date for t in chosen).isoformat() if chosen else None,
         "note": note,
+        # Further payments that also look like this person's but were not used: a
+        # row that is already paid and still has these may have been paid twice.
+        "extra_payment_ids": [t.id for t in extras],
+        "extra_paid_amount": sum(_cents(t.amount) for t in extras) / 100,
     }
 
 
@@ -482,11 +491,13 @@ def _tx_summary(tx: Any) -> dict[str, Any]:
     }
 
 
-def _assign(rows: Sequence[ScheduleRow], ordered: Sequence[Any]) -> tuple[dict[int, list[Any]], dict[int, str]]:
+def _assign(
+    rows: Sequence[ScheduleRow], ordered: Sequence[Any],
+) -> tuple[dict[int, list[Any]], dict[int, str], list[list[Any]]]:
     """Two passes so a loose name match can never steal another row's payment.
 
-    Pass 1 gives each row a payment that matches it by account/name AND to the
-    kobo. Pass 2 handles partial/split payments on what is left, but only
+    Pass 1 gives each row a payment that matches it by account/name AND is
+    within the ₦100 tolerance (the closest one wins). Pass 2 handles partial/split payments on what is left, but only
     gives a payment to a row when no other unresolved row could claim it; a
     contested payment is left unassigned and flagged instead of guessed."""
     candidates = [_candidates(row, ordered) for row in rows]
@@ -497,10 +508,12 @@ def _assign(rows: Sequence[ScheduleRow], ordered: Sequence[Any]) -> tuple[dict[i
     # match, so a looser name-only row can't take their payment.
     for i in sorted(range(len(rows)), key=lambda k: 0 if rows[k].account_number else 1):
         row = rows[i]
-        exact = next((t for t in candidates[i] if t.id not in used and _cents(t.amount) == _cents(row.amount)), None)
-        if exact is not None:
-            assigned[i] = [exact]
-            used.add(exact.id)
+        gap = lambda t: abs(_cents(t.amount) - _cents(row.amount))  # noqa: E731
+        near = [t for t in candidates[i] if t.id not in used and within_tolerance(_cents(t.amount) - _cents(row.amount))]
+        if near:
+            best = min(near, key=lambda t: (gap(t), t.date, t.id))
+            assigned[i] = [best]
+            used.add(best.id)
 
     unresolved = [i for i in assigned if not assigned[i]]
     open_candidates = {i: [t for t in candidates[i] if t.id not in used] for i in unresolved}
@@ -513,16 +526,18 @@ def _assign(rows: Sequence[ScheduleRow], ordered: Sequence[Any]) -> tuple[dict[i
         if len(sole) < len(open_candidates[i]):
             notes[i] = AMBIGUOUS_NOTE
         assigned[i] = sole
-    return assigned, notes
+    return assigned, notes, candidates
 
 
 def reconcile(rows: Sequence[ScheduleRow], transactions: Sequence[Any]) -> dict[str, Any]:
     """Match schedule rows to transactions; each transaction pays at most one row."""
     ordered = sorted(transactions, key=lambda t: (t.date, t.id))
-    assigned, notes = _assign(rows, ordered)
-    lines = [_build_line(row, assigned[i], notes.get(i)) for i, row in enumerate(rows)]
-
+    assigned, notes, candidates = _assign(rows, ordered)
     used = {t.id for txs in assigned.values() for t in txs}
+    lines = [
+        _build_line(row, assigned[i], notes.get(i), [t for t in candidates[i] if t.id not in used] if assigned[i] else [])
+        for i, row in enumerate(rows)
+    ]
     leftovers = [t for t in ordered if t.id not in used]
     count = lambda status: sum(1 for ln in lines if ln["status"] == status)  # noqa: E731
     summary = {
@@ -537,3 +552,58 @@ def reconcile(rows: Sequence[ScheduleRow], transactions: Sequence[Any]) -> dict[
         "unmatched_total": sum(_cents(t.amount) for t in leftovers) / 100,
     }
     return {"lines": lines, "unmatched_transactions": [_tx_summary(t) for t in leftovers], "summary": summary}
+
+
+# ── Linking schedule rows to the staff directory ──────────────────────────────
+
+def _account_key(value: Optional[str]) -> Optional[str]:
+    """Digits only, leading zeros dropped (Excel loses them), or None if too short."""
+    digits = re.sub(r"\D", "", value or "")
+    return digits.lstrip("0") if len(digits) >= MIN_ACCOUNT_DIGITS else None
+
+
+def _link_unambiguous(candidates: dict[int, list[ScheduleRow]], links: dict[int, ScheduleRow], used: set[int]) -> None:
+    """Link a staff member to a row only when it is that staff member's single
+    candidate AND no other staff member is a candidate for the same row."""
+    claims = Counter(r.row_number for rows in candidates.values() for r in rows)
+    for staff_id, rows in candidates.items():
+        if len(rows) == 1 and claims[rows[0].row_number] == 1:
+            links[staff_id] = rows[0]
+            used.add(rows[0].row_number)
+
+
+def _names_match(staff_name: str, row_name: str) -> bool:
+    return any(
+        _name_matches_text(a, b) or _name_matches_text(b, a)
+        for a in _name_variants(staff_name) for b in _name_variants(row_name)
+    )
+
+
+def link_staff_to_rows(staff: Sequence[Any], rows: Sequence[ScheduleRow]) -> dict[int, ScheduleRow]:
+    """Which schedule row belongs to which staff member (staff id -> row).
+
+    Account number first, then an identical set of name words, then a fuzzy
+    name match. Each step only links unambiguous pairs, and a row is never
+    used twice; anything unclear is left unlinked for a person to look at."""
+    links: dict[int, ScheduleRow] = {}
+    used: set[int] = set()
+
+    by_account = {
+        s.id: [r for r in rows if _account_key(r.account_number) == key]
+        for s in staff if (key := _account_key(getattr(s, "account_number", None)))
+    }
+    _link_unambiguous(by_account, links, used)
+
+    def open_rows() -> list[ScheduleRow]:
+        return [r for r in rows if r.row_number not in used]
+
+    pending = lambda: [s for s in staff if s.id not in links]  # noqa: E731
+    same_words = {
+        s.id: [r for r in open_rows() if (words := frozenset(_normalize_name_tokens(s.full_name))) and words == frozenset(_normalize_name_tokens(r.name))]
+        for s in pending()
+    }
+    _link_unambiguous(same_words, links, used)
+
+    fuzzy = {s.id: [r for r in open_rows() if _names_match(s.full_name, r.name)] for s in pending()}
+    _link_unambiguous(fuzzy, links, used)
+    return links

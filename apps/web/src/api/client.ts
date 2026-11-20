@@ -46,6 +46,8 @@ import type {
   PayrollLineIn,
   PayrollEntryOut,
   PayrollReconcileResult,
+  PayrollScheduleLineIn,
+  NextPayrollMonth,
   SchoolLoan,
   SchoolLoanIn,
   SchoolLoanPaymentOut,
@@ -579,8 +581,17 @@ export const suggestUntrackedLoanTransactions = () =>
 export const computePayroll = (year: number, month: number) =>
   api.get<PayrollLine[]>('/payroll/compute', { params: { year, month } }).then(unwrap);
 
-export const processPayroll = (year: number, month: number, lines: PayrollLineIn[], idempotencyKey?: string) =>
-  api.post<PayrollEntryOut[]>('/payroll/process', { year, month, lines }, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined).then(unwrap);
+export const processPayroll = (
+  year: number, month: number, lines: PayrollLineIn[], idempotencyKey?: string, schedule?: PayrollScheduleLineIn[],
+) =>
+  api.post<PayrollEntryOut[]>(
+    '/payroll/process',
+    schedule ? { year, month, lines, schedule } : { year, month, lines },
+    idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  ).then(unwrap);
+
+export const getNextPayrollMonth = () =>
+  api.get<NextPayrollMonth>('/payroll/next-month').then(unwrap);
 
 export const getPayrollEntries = (year: number, month: number) =>
   api.get<PayrollEntryOut[]>('/payroll/entries', { params: { year, month } }).then(unwrap);
@@ -588,12 +599,11 @@ export const getPayrollEntries = (year: number, month: number) =>
 export const resetPayroll = (year: number, month: number) =>
   api.post<{ reset: number }>('/payroll/reset', null, { params: { year, month } }).then(unwrap);
 
-export const reconcilePayroll = (file: File, year: number, month: number, bankAccountId?: number) => {
+export const reconcilePayroll = (file: File, year: number, month: number) => {
   const form = new FormData();
   form.append('file', file);
   form.append('year', String(year));
   form.append('month', String(month));
-  if (bankAccountId !== undefined) form.append('bank_account_id', String(bankAccountId));
   return api
     .post<PayrollReconcileResult>('/payroll/reconcile', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
