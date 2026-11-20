@@ -72,6 +72,7 @@ const staffSubItems = [
   { to: '/staff/advances', icon: Banknote, label: 'IOU' },
   { to: '/staff/bonuses', icon: Gift, label: 'Bonuses' },
   { to: '/staff/payroll', icon: Calculator, label: 'Payroll' },
+  { to: '/staff/payroll-reconciliation', icon: GitMerge, label: 'Payroll Reconciliation' },
   { to: '/staff/terms', icon: CalendarRange, label: 'Terms' },
 ];
 

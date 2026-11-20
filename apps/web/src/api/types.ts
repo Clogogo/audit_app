@@ -1175,3 +1175,55 @@ export interface TeacherBonusIn {
   term_id?: number | null;
   notes?: string | null;
 }
+
+// ── Payroll reconciliation ────────────────────────────────────────────────────
+
+export type ReconcileStatus = 'matched' | 'underpaid' | 'overpaid' | 'not_paid';
+
+export interface PayrollReconcileLine {
+  row_number: number;
+  name: string;
+  account_number: string | null;
+  expected_amount: number;
+  paid_amount: number;
+  difference: number;
+  status: ReconcileStatus;
+  transaction_ids: number[];
+  paid_to: string | null;
+  paid_date: string | null;
+  note: string | null;
+}
+
+export interface PayrollReconcileSkippedRow {
+  row_number: number;
+  reason: string;
+}
+
+export interface PayrollReconcileUnmatched {
+  id: number;
+  date: string;
+  amount: number;
+  description: string;
+  vendor: string | null;
+}
+
+export interface PayrollReconcileSummary {
+  rows: number;
+  matched: number;
+  underpaid: number;
+  overpaid: number;
+  not_paid: number;
+  expected_total: number;
+  paid_total: number;
+  unmatched_payments: number;
+  unmatched_total: number;
+}
+
+export interface PayrollReconcileResult {
+  year: number;
+  month: number;
+  lines: PayrollReconcileLine[];
+  skipped_rows: PayrollReconcileSkippedRow[];
+  unmatched_transactions: PayrollReconcileUnmatched[];
+  summary: PayrollReconcileSummary;
+}
