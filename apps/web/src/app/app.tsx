@@ -25,6 +25,7 @@ import { AdvancePayments } from '../pages/AdvancePayments';
 import { TeacherBonuses } from '../pages/TeacherBonuses';
 import { StaffDirectory } from '../pages/StaffDirectory';
 import { Payroll } from '../pages/Payroll';
+import { PayrollReconciliation } from '../pages/PayrollReconciliation';
 import { Terms } from '../pages/Terms';
 import { SchoolLoans } from '../pages/SchoolLoans';
 import { UserManagement } from '../pages/UserManagement';
@@ -75,6 +76,7 @@ export function App() {
                       <Route path="/staff/advances" element={<PermissionRoute permission="staff"><AdvancePayments /></PermissionRoute>} />
                       <Route path="/staff/bonuses" element={<PermissionRoute permission="staff"><TeacherBonuses /></PermissionRoute>} />
                       <Route path="/staff/payroll" element={<PermissionRoute permission="staff"><Payroll /></PermissionRoute>} />
+                      <Route path="/staff/payroll-reconciliation" element={<PermissionRoute permission="staff"><PayrollReconciliation /></PermissionRoute>} />
                       <Route path="/staff/terms" element={<PermissionRoute permission="staff"><Terms /></PermissionRoute>} />
                       <Route path="/inventory/items" element={<PermissionRoute permission="inventory"><InventoryItems /></PermissionRoute>} />
                       <Route path="/inventory/requests" element={<PermissionRoute permission="inventory"><StockRequests /></PermissionRoute>} />

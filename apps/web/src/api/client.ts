@@ -45,6 +45,7 @@ import type {
   PayrollLine,
   PayrollLineIn,
   PayrollEntryOut,
+  PayrollReconcileResult,
   SchoolLoan,
   SchoolLoanIn,
   SchoolLoanPaymentOut,
@@ -586,6 +587,19 @@ export const getPayrollEntries = (year: number, month: number) =>
 
 export const resetPayroll = (year: number, month: number) =>
   api.post<{ reset: number }>('/payroll/reset', null, { params: { year, month } }).then(unwrap);
+
+export const reconcilePayroll = (file: File, year: number, month: number, bankAccountId?: number) => {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('year', String(year));
+  form.append('month', String(month));
+  if (bankAccountId !== undefined) form.append('bank_account_id', String(bankAccountId));
+  return api
+    .post<PayrollReconcileResult>('/payroll/reconcile', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    .then(unwrap);
+};
 
 // ── Inventory ────────────────────────────────────────────────────────────────
 
