@@ -1197,6 +1197,8 @@ export interface PayrollReconcileLine {
 export interface PayrollReconcileSkippedRow {
   row_number: number;
   reason: string;
+  ignored: boolean;
+  label: string;
 }
 
 export interface PayrollReconcileUnmatched {
@@ -1224,6 +1226,7 @@ export interface PayrollReconcileResult {
   month: number;
   lines: PayrollReconcileLine[];
   skipped_rows: PayrollReconcileSkippedRow[];
+  notes: string[];
   unmatched_transactions: PayrollReconcileUnmatched[];
   summary: PayrollReconcileSummary;
 }

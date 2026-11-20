@@ -10,7 +10,7 @@ from openpyxl import Workbook
 
 from models import Transaction
 from utils.payroll_recon import (
-    ScheduleError, ScheduleRow, SkippedRow, parse_schedule, parse_schedule_with_skips, reconcile,
+    ScheduleError, ScheduleRow, SkippedRow, parse_schedule, parse_schedule_full, parse_schedule_with_skips, reconcile,
 )
 
 
@@ -367,8 +367,9 @@ def test_endpoint_unknown_bank_account_is_404_and_skipped_rows_returned(client, 
     content = _xlsx([["Name", "Amount"], ["Ngozi Williams", 15000], ["Bad Row", "n/a"]])
     assert _post(client, content, bank_account_id="9999").status_code == 404
     body = _post(client, content).json()
-    assert body["skipped_rows"] == [{"row_number": 3, "reason": body["skipped_rows"][0]["reason"]}]
-    assert body["skipped_rows"][0]["reason"]
+    assert [(r["row_number"], r["ignored"]) for r in body["skipped_rows"]] == [(3, False)]
+    assert body["skipped_rows"][0]["reason"] and body["skipped_rows"][0]["label"] == "Bad Row"
+    assert body["notes"] == []
 
 
 # ── final review fixes ────────────────────────────────────────────────────────
@@ -418,3 +419,129 @@ def test_parse_ignores_columns_beyond_the_cap():
     wide = [["Name", "Amount"] + [None] * 80 + ["junk"]]
     wide.append(["Ngozi Williams", 15000] + [None] * 80 + ["junk"])
     assert [r.name for r in parse_schedule(_xlsx(wide), "x.xlsx")] == ["Ngozi Williams"]
+
+
+# ── pasted / header-less sheets (made-up names, same layout as a real payroll sheet) ──
+
+def _row(name="", basic="", deduction="", bonus="", net="", account="", bank="", note=""):
+    """One tab-separated line: name, 2 blanks, basic, gross, deduction, bonus, blank, net, account, bank, note."""
+    return "\t".join([name, "", "", basic, basic, deduction, bonus, "", net, account, bank, note])
+
+
+PASTED_SHEET = "\n".join([
+    _row("ADA OBI", "₦25,000.00", net="₦25,000.00", account="0123456781", bank="OPAY"),
+    _row("BOLA EZE", "₦30,000.00", bonus="₦100,000.00", net="₦130,000.00", account="3012345678", bank="FIRSTBANK",
+         note="Paid Bonus Award 100,000"),
+    _row("MRS TUNDE LAW", "₦30,000.00", net="₦30,000.00", account="8112345678", bank="OPAY"),
+    _row("MRS TUNDE LAW", net="₦0.00"),
+    "",
+    _row("MRS OKE ADE", "₦50,000.00", net="₦50,000.00", bank="OPAY"),
+    "",
+    _row("TOTAL", "₦135,000.00", net="₦235,000.00"),
+    "",
+    "SENIOR SCHOOL",
+    "",
+    "FULL TIME",
+    _row("KEMI ALA", "₦50,000.00", deduction="₦10,000.00", net="₦40,000.00", account="8012345678", bank="OPAY"),
+    "PART TIME",
+    _row("SEGUN OJO", "₦35,000.00", deduction="₦10,000.00", bonus="₦2,000.00", net="₦27,000.00",
+         account="4212345678", bank="Zenith Bank", note="Additional subject Bonus"),
+    _row("", "₦85,000.00", deduction="₦20,000.00", net="₦67,000.00"),
+])
+
+
+def test_parse_pasted_sheet_without_header_uses_net_pay_and_account_columns():
+    rows, skipped = parse_schedule_with_skips(PASTED_SHEET.encode(), "pasted.tsv")
+    assert [(r.name, r.amount, r.account_number) for r in rows] == [
+        ("ADA OBI", 25000.0, "0123456781"),
+        ("BOLA EZE", 130000.0, "3012345678"),
+        ("MRS TUNDE LAW", 30000.0, "8112345678"),
+        ("MRS OKE ADE", 50000.0, None),
+        ("KEMI ALA", 40000.0, "8012345678"),
+        ("SEGUN OJO", 27000.0, "4212345678"),
+    ]
+    assert [r.row_number for r in rows] == [1, 2, 3, 6, 13, 15]
+    # nothing vanishes silently: the ₦0.00 duplicate is a problem; labels and
+    # totals rows are listed as "ignored" with their text so they can be eyeballed
+    assert [(s.row_number, s.ignored) for s in skipped] == [
+        (4, False), (8, True), (10, True), (12, True), (14, True), (16, True),
+    ]
+    assert "greater than zero" in skipped[0].reason
+    assert [s.label for s in skipped if s.ignored][:4] == ["TOTAL", "SENIOR SCHOOL", "FULL TIME", "PART TIME"]
+
+
+def test_parse_headerless_xlsx_and_csv_with_plain_numbers():
+    rows = parse_schedule(_xlsx([["Ngozi Williams", 15000, "0123456789"], ["Chidi Okoro", 20000, "0987654321"]]), "x.xlsx")
+    assert [(r.name, r.amount, r.account_number) for r in rows] == [
+        ("Ngozi Williams", 15000.0, "0123456789"), ("Chidi Okoro", 20000.0, "0987654321"),
+    ]
+    assert [r.amount for r in parse_schedule(b"Ngozi Williams,15000\nChidi Okoro,20000\n", "x.csv")] == [15000.0, 20000.0]
+
+
+def test_parse_headerless_sheet_with_no_money_is_rejected():
+    with pytest.raises(ScheduleError, match="name and amount"):
+        parse_schedule(b"ADA OBI\tOPAY\nBOLA EZE\tZENITH\n", "x.tsv")
+
+
+def test_parse_lone_name_row_is_listed_as_ignored_not_dropped_silently():
+    content = _xlsx([["Name", "Amount"], ["SENIOR SCHOOL", None], ["Ngozi Williams", 15000], ["Bola Ade", None]])
+    rows, skipped = parse_schedule_with_skips(content, "x.xlsx")
+    assert [r.name for r in rows] == ["Ngozi Williams"]
+    assert [(s.row_number, s.label, s.ignored) for s in skipped] == [(2, "SENIOR SCHOOL", True), (4, "Bola Ade", True)]
+
+
+def test_parse_nameless_row_with_two_numbers_is_listed_not_dropped_silently():
+    content = _xlsx([["Name", "Gross", "Net"], ["Ada Oko", 6000, 5000], [None, 7000, 6000]])
+    rows, skipped = parse_schedule_with_skips(content, "x.xlsx")
+    assert [r.name for r in rows] == ["Ada Oko"]
+    assert [(s.row_number, s.ignored) for s in skipped] == [(3, True)]
+
+
+def test_parse_headerless_bare_name_row_is_reported():
+    rows, skipped = parse_schedule_with_skips(b"ADA OKO,100,90\nBOLA ADE\nJOY ZED,100,80\n", "x.csv")
+    assert [r.name for r in rows] == ["ADA OKO", "JOY ZED"]
+    assert [(s.row_number, s.label) for s in skipped] == [(2, "BOLA ADE")]
+
+
+def test_parse_headerless_sheet_says_which_columns_it_used():
+    csv = b"ADA OKO,100,90\nJOY ZED,100,80\n"
+    full = parse_schedule_full(csv, "x.csv")
+    assert any("column C" in n and "amount" in n.lower() for n in full.notes)
+    with_header = parse_schedule_full(b"Name,Amount\nADA OKO,90\n", "x.csv")
+    assert with_header.notes == []
+
+
+def test_parse_headerless_warns_when_amount_column_is_sparse():
+    csv = b"ADA OKO,100,90\nBOLA ADE,100,\nJOY ZED,100,\nSEGUN OJO,100,\nKEMI ALA,100,80\n"
+    notes = parse_schedule_full(csv, "x.csv").notes
+    assert any("check" in n.lower() for n in notes)
+
+
+def test_parse_headerless_name_column_is_not_a_repeated_title_column():
+    rows = parse_schedule(b"MR,ADA OKO,100\nMR,BOLA ADE,200\nMRS,JOY ZED,300\n", "x.csv")
+    assert [r.name for r in rows] == ["ADA OKO", "BOLA ADE", "JOY ZED"]
+
+
+def test_parse_header_row_without_data_below_falls_back_to_inference():
+    rows = parse_schedule(b"Teacher,Salary,\nADA OKO,,5000\nBOLA ADE,,6000\n", "x.csv")
+    assert [(r.name, r.amount) for r in rows] == [("ADA OKO", 5000.0), ("BOLA ADE", 6000.0)]
+
+
+def test_reconcile_matches_on_the_alternate_name_in_brackets(db_session):
+    tx = _tx(db_session, "JOY ADA OKO", 15000.0)
+    rows = [ScheduleRow(1, "ACADEMY EXTRA LESSONS (JOY ADA OKO)", 15000.0, None)]
+    line = reconcile(rows, db_session.query(Transaction).all())["lines"][0]
+    assert line["status"] == "matched" and line["transaction_ids"] == [tx.id]
+
+
+def test_endpoint_accepts_pasted_tsv(client, db_session):
+    _tx(db_session, "ADA OBI", 25000.0)
+    _tx(db_session, "KEMI ALA", 35000.0)
+    resp = _post(client, PASTED_SHEET.encode(), "pasted.tsv")
+    assert resp.status_code == 200, resp.text
+    by_name = {l["name"]: l["status"] for l in resp.json()["lines"]}
+    assert by_name["ADA OBI"] == "matched"
+    assert by_name["KEMI ALA"] == "underpaid"
+    assert by_name["BOLA EZE"] == "not_paid"
+    assert resp.json()["summary"]["rows"] == 6
+    assert any("amount" in n.lower() for n in resp.json()["notes"])

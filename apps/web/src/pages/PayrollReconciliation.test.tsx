@@ -27,7 +27,11 @@ const RESULT: PayrollReconcileResult = {
       note: 'Several schedule rows could match the same payment — review manually.',
     },
   ],
-  skipped_rows: [{ row_number: 7, reason: 'Missing name' }],
+  skipped_rows: [
+    { row_number: 7, reason: 'Missing name', ignored: false, label: '' },
+    { row_number: 9, reason: 'Looks like a section label (a name with no other values)', ignored: true, label: 'FULL TIME' },
+  ],
+  notes: ['No header row found — using column I as the amount to pay (net pay).'],
   unmatched_transactions: [
     { id: 9, date: '2026-01-29', amount: 7000, description: 'Transfer to SOMEONE ELSE', vendor: 'SOMEONE ELSE' },
   ],
@@ -72,6 +76,8 @@ describe('PayrollReconciliation', () => {
     expect(screen.getByText('1 of 3')).toBeInTheDocument();
     expect(screen.getByText('Results for January 2026')).toBeInTheDocument();
     expect(screen.getByText('Row 7: Missing name')).toBeInTheDocument();
+    expect(screen.getByText(/Ignored 1 row that look like labels or totals/)).toHaveTextContent('row 9 “FULL TIME”');
+    expect(screen.getByRole('note')).toHaveTextContent('using column I as the amount to pay');
     expect(screen.getByText(/review manually/i)).toBeInTheDocument();
   });
 
@@ -101,6 +107,47 @@ describe('PayrollReconciliation', () => {
     fireEvent.click(screen.getByRole('button', { name: /reconcile/i }));
     await screen.findByText('Chidi Okoro');
     fireEvent.click(screen.getByRole('button', { name: /previous month/i }));
+    expect(screen.queryByText('Chidi Okoro')).not.toBeInTheDocument();
+  });
+});
+
+describe('PayrollReconciliation paste mode', () => {
+  beforeEach(() => {
+    vi.mocked(getBankAccounts).mockResolvedValue([]);
+    vi.mocked(reconcilePayroll).mockReset();
+  });
+
+  it('only enables Reconcile once something is pasted', () => {
+    render(<PayrollReconciliation />);
+    fireEvent.click(screen.getByRole('button', { name: /paste from excel/i }));
+    expect(screen.getByRole('button', { name: /^reconcile$/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Paste rows from Excel'), { target: { value: '   ' } });
+    expect(screen.getByRole('button', { name: /^reconcile$/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Paste rows from Excel'), { target: { value: 'ADA OBI\t\t₦25,000.00' } });
+    expect(screen.getByRole('button', { name: /^reconcile$/i })).toBeEnabled();
+  });
+
+  it('sends pasted rows as a tab-separated file and shows the results', async () => {
+    vi.mocked(reconcilePayroll).mockResolvedValue(RESULT);
+    render(<PayrollReconciliation />);
+    fireEvent.click(screen.getByRole('button', { name: /paste from excel/i }));
+    fireEvent.change(screen.getByLabelText('Paste rows from Excel'), { target: { value: 'ADA OBI\t₦25,000.00' } });
+    fireEvent.click(screen.getByRole('button', { name: /^reconcile$/i }));
+
+    expect(await screen.findByText('Chidi Okoro')).toBeInTheDocument();
+    const sent = vi.mocked(reconcilePayroll).mock.calls[0][0];
+    expect(sent.name).toBe('pasted.tsv');
+    expect(sent.size).toBeGreaterThan(0);
+  });
+
+  it('clears results when switching between upload and paste', async () => {
+    vi.mocked(reconcilePayroll).mockResolvedValue(RESULT);
+    render(<PayrollReconciliation />);
+    fireEvent.click(screen.getByRole('button', { name: /paste from excel/i }));
+    fireEvent.change(screen.getByLabelText('Paste rows from Excel'), { target: { value: 'x\t1' } });
+    fireEvent.click(screen.getByRole('button', { name: /^reconcile$/i }));
+    await screen.findByText('Chidi Okoro');
+    fireEvent.click(screen.getByRole('button', { name: /upload file/i }));
     expect(screen.queryByText('Chidi Okoro')).not.toBeInTheDocument();
   });
 });
