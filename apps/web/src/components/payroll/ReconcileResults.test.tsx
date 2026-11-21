@@ -75,7 +75,8 @@ describe('ReconcileResults', () => {
       render(<ReconcileResults result={withAccounts()} />);
       expect(screen.getByText(/Bank payment details — the bank record is the source of truth/)).toBeInTheDocument();
       expect(screen.getByText(/the directory has 0999999999/)).toBeInTheDocument();
-      expect(screen.getByText(/Jonathan Ogogo shows not paid, but/)).toHaveTextContent('7038692765');
+      expect(screen.getByText(/shows not paid, but/)).toHaveTextContent('Jonathan Ogogo');
+      expect(screen.getByText(/shows not paid, but/)).toHaveTextContent('7038692765');
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
   });
