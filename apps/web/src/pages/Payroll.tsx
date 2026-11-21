@@ -18,7 +18,7 @@ import { ReconcileResults } from '../components/payroll/ReconcileResults';
 import type { AccountUpdate } from '../components/payroll/ReconcileResults';
 import { ScheduleCells } from '../components/payroll/ScheduleCells';
 import { SchedulePanel } from '../components/payroll/SchedulePanel';
-import { checkRow, scheduleLinesFor } from '../components/payroll/scheduleCheck';
+import { checkRow, isBlocking, isNoted, scheduleLinesFor } from '../components/payroll/scheduleCheck';
 import type { RowCheck } from '../components/payroll/scheduleCheck';
 import { formatCurrency } from '../lib/utils';
 
@@ -280,7 +280,9 @@ export function Payroll() {
   // Rows still pending (not paid, not skipped)
   const pendingLines = activeLines.filter((l) => !l.is_paid);
   // Pending staff the schedule/bank check does not clear yet (the server re-validates on Process)
-  const blockers = pendingLines.filter((l) => checkFor(l)?.state !== 'ready');
+  const blockers = pendingLines.filter((l) => isBlocking(checkFor(l)));
+  // Pending staff who differ from the schedule but can still be processed: the difference is saved as a note
+  const noted = pendingLines.filter((l) => isNoted(checkFor(l)));
 
   const handleProcess = async () => {
     if (!reconcile) return;
@@ -506,6 +508,11 @@ export function Payroll() {
               {reconcile === null
                 ? 'Load the payroll schedule above to process this month.'
                 : `${blockers.length} staff need attention before processing (see the Schedule Check column) — fix them, or Skip them to process the rest.`}
+            </p>
+          )}
+          {!loading && !isProcessed && blockers.length === 0 && noted.length > 0 && (
+            <p className="mb-3 text-xs text-amber-700 dark:text-amber-400">
+              {noted.length} staff differ from the schedule ({noted.map((l) => l.full_name).join(', ')}). You can still process them: the difference is saved as a note on their entry.
             </p>
           )}
           {loading ? (

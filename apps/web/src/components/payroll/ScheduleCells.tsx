@@ -18,7 +18,7 @@ function Badge({ check }: { check: RowCheck }) {
     case 'not-on-schedule':
       return <span className={WARN}><AlertCircle className="h-3 w-3" />Not on schedule</span>;
     case 'total':
-      return <span className={WARN} title="Check the salary, bonus, loans, advances and other deductions">
+      return <span className={WARN} title="Can still be processed: the difference is saved as a note. Check the salary, bonus, loans, advances and other deductions.">
         <AlertCircle className="h-3 w-3" />Total differs by {formatCurrency(Math.abs(check.totalGap ?? 0))}
       </span>;
     case 'account':
@@ -26,7 +26,8 @@ function Badge({ check }: { check: RowCheck }) {
         <AlertCircle className="h-3 w-3" />Account differs
       </span>;
     case 'bank':
-      return <span className={check.status === 'not_paid' ? BAD : WARN} title={check.note ?? undefined}>
+      return <span className={check.status === 'not_paid' ? BAD : WARN}
+        title={check.note ?? (check.status === 'not_paid' ? undefined : 'Can still be processed: the difference is saved as a note.')}>
         <AlertCircle className="h-3 w-3" />
         {check.status ? BANK_LABEL[check.status] : 'Check'}
         {check.status && check.status !== 'not_paid' && check.paid != null ? ` (${formatCurrency(check.paid)})` : ''}
