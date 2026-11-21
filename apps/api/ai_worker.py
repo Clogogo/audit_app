@@ -55,7 +55,7 @@ def _clean_json(raw: str) -> str:
     return cleaned
 
 
-def _call_openrouter(messages: list[dict]) -> str:
+def _call_openrouter(messages: list[dict], max_tokens: int = 900) -> str:
     """
     Call OpenRouter LLM API.
     Returns raw text response or "" on failure.
@@ -64,7 +64,7 @@ def _call_openrouter(messages: list[dict]) -> str:
         client = get_llm_client()
         text = client.create_message(
             messages=messages,
-            max_tokens=900,  # Reduced to stay within free tier credits
+            max_tokens=max_tokens,  # default kept low for the free tier; reasoning models need more for long prompts
         )
         logger.info(f"OpenRouter response preview: {text[:200]}...")
         return text
@@ -110,13 +110,13 @@ def get_provider_status() -> dict:
         }
 
 
-def call_ai_text(prompt: str) -> str:
+def call_ai_text(prompt: str, max_tokens: int = 900) -> str:
     """
     Text-only AI call. Used for categorisation and other text tasks.
     Returns "" on failure — never raises.
     """
     try:
-        return _call_openrouter([{"role": "user", "content": prompt}])
+        return _call_openrouter([{"role": "user", "content": prompt}], max_tokens)
     except AIProviderError:
         logger.warning("OpenRouter not configured; text-only AI call skipped")
     except Exception as e:

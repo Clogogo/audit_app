@@ -5,6 +5,7 @@ Direction matters ("Books" bought is a cost, "Books" sold is revenue), so there 
 direction; a category missing from one direction falls back to the other (a refund posts back to
 the same account). "Other" is deliberately never guessed.
 """
+import time
 
 # Money coming in (income transactions)
 INCOME = {
@@ -70,15 +71,21 @@ def ai_suggest_accounts(rows: list[tuple[str, str]], accounts: dict[str, list[tu
     `accounts` = {"income": [(code, name)...], "expense": [...]}. Only codes from that list are accepted;
     anything else the model returns is dropped. Returns {} when the AI is unavailable."""
     out: dict[tuple[str, str], str] = {}
+    deadline = time.monotonic() + AI_BUDGET_SECONDS
     for start in range(0, len(rows), AI_BATCH):  # small batches: the model's reply is capped, one failed batch loses only itself
-        out.update(_ai_batch(rows[start:start + AI_BATCH], accounts))
+        if time.monotonic() > deadline:
+            break   # stop starting batches; what is mapped so far is kept, the rest can be done with another click
+        out.update(_ai_batch(rows[start:start + AI_BATCH], accounts, deadline))
     return out
 
 
 AI_BATCH = 20
+AI_TRIES = 2
+AI_BUDGET_SECONDS = 240   # under the browser's 300s timeout, so a slow free model can't leave work running after the page gave up
+AI_MAX_TOKENS = 4000   # the prompt lists ~90 accounts; free reasoning models spend a lot of the budget thinking
 
 
-def _ai_batch(rows: list[tuple[str, str]], accounts: dict[str, list[tuple[str, str]]]) -> dict[tuple[str, str], str]:
+def _ai_batch(rows: list[tuple[str, str]], accounts: dict[str, list[tuple[str, str]]], deadline: float) -> dict[tuple[str, str], str]:
     import json
     import re
 
@@ -94,13 +101,18 @@ def _ai_batch(rows: list[tuple[str, str]], accounts: dict[str, list[tuple[str, s
         "Items:\n" + json.dumps(items, ensure_ascii=False) + "\n\n"
         'Return ONLY a JSON array: [{"i": <index>, "code": "<account code or null>"}]'
     )
-    match = re.search(r"\[[\s\S]*\]", ai_worker._clean_json(ai_worker.call_ai_text(prompt)))
-    if not match:
-        return {}
-    try:
-        answers = json.loads(match.group())
-    except ValueError:
-        return {}
+    answers: list = []
+    for _ in range(AI_TRIES):
+        if time.monotonic() > deadline:
+            break
+        # the free router lands on a different model each call; some return nothing
+        match = re.search(r"\[[\s\S]*\]", ai_worker._clean_json(ai_worker.call_ai_text(prompt, AI_MAX_TOKENS)))
+        try:
+            answers = json.loads(match.group()) if match else []
+        except ValueError:
+            answers = []
+        if isinstance(answers, list) and answers:
+            break
     allowed = {t: {c for c, _ in accounts[t]} for t in accounts}
     out: dict[tuple[str, str], str] = {}
     for a in answers if isinstance(answers, list) else []:
@@ -108,6 +120,7 @@ def _ai_batch(rows: list[tuple[str, str]], accounts: dict[str, list[tuple[str, s
             category, tx_type = rows[int(a["i"])]
         except (KeyError, TypeError, ValueError, IndexError):
             continue
-        if a.get("code") in allowed[tx_type]:
-            out[(category, tx_type)] = a["code"]
+        code = str(a.get("code") or "").split(" ")[0]   # some models answer "4.1.1.3.2 Tuition & School Fees"
+        if code in allowed[tx_type]:
+            out[(category, tx_type)] = code
     return out

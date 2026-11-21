@@ -116,6 +116,23 @@ def test_ai_summary_unavailable_on_ai_failure(client, monkeypatch):
     assert body["narrative"] is None
 
 
+def test_ai_summary_unavailable_when_openrouter_endpoint_fails(client, monkeypatch):
+    transactions_module._AI_SUMMARY_CACHE.clear()
+    _create_expense(client, 100.0, "Fuel Expenses")
+
+    mock_client = MagicMock()
+    mock_client.create_message.side_effect = ConnectionError("OpenRouter endpoint unavailable")
+    monkeypatch.setattr(transactions_module, "get_llm_client", lambda: mock_client)
+
+    resp = client.get("/transactions/ai-summary")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is False
+    assert body["narrative"] is None
+    mock_client.create_message.assert_called_once()
+
+
 def test_ai_summary_without_term_id_has_no_forecast_block(client, db_session, monkeypatch):
     # Regression guard: omitting term_id must behave exactly as before.
     transactions_module._AI_SUMMARY_CACHE.clear()
