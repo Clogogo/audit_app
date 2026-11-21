@@ -55,12 +55,13 @@ def paye_return(db: Session, start: date, end: date) -> dict:
     acc: dict = defaultdict(lambda: {"months": 0, "gross": 0.0, "tax": 0.0})
     for e in db.query(PayrollEntry):
         if ym(start.year, start.month) <= ym(e.period_year, e.period_month) <= ym(end.year, end.month):
-            pay = (e.gross_salary or 0.0) + (e.bonus or 0.0)
-            a = acc[e.staff_member.full_name]
+            salary, bonus = (e.gross_salary or 0.0) * 12, e.bonus or 0.0
+            a = acc[(e.staff_id, e.staff_member.full_name)]
             a["months"] += 1
-            a["gross"] += pay
-            a["tax"] += pit(pay * 12) / 12   # each month taxed as one twelfth of the annualised pay
-    rows = [{"name": n, "months": v["months"], "gross": money(v["gross"]), "tax": money(v["tax"])} for n, v in sorted(acc.items())]
+            a["gross"] += (e.gross_salary or 0.0) + bonus
+            # salary taxed as one twelfth of the annual figure; a one-off bonus is taxed on top at the rate it reaches
+            a["tax"] += pit(salary) / 12 + (pit(salary + bonus) - pit(salary))
+    rows = [{"name": n[1], "months": v["months"], "gross": money(v["gross"]), "tax": money(v["tax"])} for n, v in sorted(acc.items())]
     total = {"name": "Total", "gross": money(sum(r["gross"] for r in rows)), "tax": money(sum(r["tax"] for r in rows))}
     return report("PAYE Return", f"Tax to remit on your staff's pay, {start} to {end}",
                   [("Estimated PAYE", total["tax"], MONEY), ("Gross pay", total["gross"], MONEY), ("Staff", len(rows), TEXT)],
@@ -100,16 +101,19 @@ def vat_return(db: Session, start: date, end: date) -> dict:
                   [section("VAT by category", cols, rows, {"side": "Net payable", "vat": money(output_vat - input_vat)})], estimate=True,
                   assumptions=["VAT is not recorded per transaction: amounts are treated as VAT-inclusive at 7.5% for the categories listed.",
                                "School fees, exams and books are treated as VAT-exempt (education), so they carry no output VAT.",
-                               "A negative net figure means VAT you may be able to claim back."])
+                               "Input VAT is only recoverable against taxable sales, and most of your income is exempt: do not treat a negative net figure as a refund without advice."])
 
 
 def personal_income_tax(db: Session, start: date, end: date) -> dict:
-    paid = sum(t.amount for t in _expenses(db, start, end, ["Directors Emoluments"]))
-    tax = pit(paid)
+    per_year: dict[int, float] = defaultdict(float)
+    for t in _expenses(db, start, end, ["Directors Emoluments"]):
+        per_year[t.date.year] += t.amount
+    paid = sum(per_year.values())
+    tax = sum(pit(amount) for amount in per_year.values())   # each calendar year has its own bands
     return report("Personal Income Tax", f"Tax on directors' pay, {start} to {end}",
                   [("Estimated tax", money(tax), MONEY), ("Directors' emoluments paid", money(paid), MONEY)],
                   [section("Directors' emoluments", [col("item", ""), col("amount", "Amount", MONEY)],
                            [{"item": "Emoluments paid in the period", "amount": money(paid)}, {"item": "Estimated personal income tax", "amount": money(tax)}])],
                   estimate=True,
                   assumptions=["The school pays company income tax (CIT). Personal income tax applies to individuals: staff pay is in the PAYE Return.",
-                               "Directors' emoluments are treated as one person's income, with the same bands and no reliefs as PAYE."])
+                               "Directors' emoluments are treated as one person's income, taxed one calendar year at a time with the same bands and no reliefs as PAYE (a part-year range still gets the full-year free band)."])

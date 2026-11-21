@@ -7,7 +7,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { formatCurrency, formatDate } from '../lib/utils';
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => new Date().toLocaleDateString('en-CA');   // local date (YYYY-MM-DD), not UTC
 
 function cell(value: unknown, kind: ReportColumnKind): string {
   if (value === undefined || value === null || value === '') return '';
@@ -35,7 +35,15 @@ export function FinancialReport() {
     return () => { live = false; };
   }, [slug, asAt, start]);
 
-  const setDate = (key: 'as_at' | 'start_date', value: string) => value && setParams({ as_at: asAt, start_date: start, [key]: value });
+  // Only the changed date goes in the URL, and a pinned start that would fall after the new end is dropped
+  const setDate = (key: 'as_at' | 'start_date', value: string) => {
+    if (!value) return;
+    const next = new URLSearchParams(params);
+    next.set(key, value);
+    const pinned = next.get('start_date');
+    if (pinned && pinned > (next.get('as_at') || today())) next.delete('start_date');
+    setParams(next, { replace: true });
+  };
 
   return (
     <div className="space-y-6">
@@ -48,10 +56,12 @@ export function FinancialReport() {
           {report && <p className="mt-0.5 text-sm text-muted-foreground">{report.subtitle}</p>}
         </div>
         <div className="flex flex-wrap items-end gap-3 text-sm print:hidden">
+          {!report?.current_only && (<>
           <label className="grid gap-1"><span className="text-xs text-muted-foreground">From</span>
             <input type="date" value={start} onChange={(e) => setDate('start_date', e.target.value)} className="rounded-md border bg-background px-2 py-1" /></label>
           <label className="grid gap-1"><span className="text-xs text-muted-foreground">To (as at)</span>
             <input type="date" value={asAt} onChange={(e) => setDate('as_at', e.target.value)} className="rounded-md border bg-background px-2 py-1" /></label>
+          </>)}
           <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="mr-1.5 h-4 w-4" />Print</Button>
         </div>
       </div>

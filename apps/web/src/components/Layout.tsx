@@ -52,6 +52,7 @@ const bankingSubItems = [
   { to: '/banks', icon: Building2, label: 'Bank Accounts' },
   { to: '/upload', icon: Upload, label: 'Import Statement' },
   { to: '/reconciliation', icon: GitMerge, label: 'Reconciliation' },
+  { to: '/reports', icon: BarChart3, label: 'Reports' },
   { to: '/bank-reports', icon: Wallet, label: 'Bank Reports' },
 ];
 
@@ -110,7 +111,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isTaxActive = location.pathname.startsWith('/tax');
   const isStaffActive = location.pathname.startsWith('/staff');
-  const isBankingActive = ['/banks', '/upload', '/reconciliation', '/bank-reports'].some(
+  const isBankingActive = ['/banks', '/upload', '/reconciliation', '/reports', '/bank-reports'].some(
     (p) => location.pathname === p
   );
   const isAccessActive = ['/school-profile', '/user-management', '/role-management'].includes(location.pathname);

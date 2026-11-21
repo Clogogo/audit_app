@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card } from '../components/ui/card';
+import { useAuth } from '../contexts/AuthContext';
+import { hasPermission } from '../lib/permissions';
 import { REPORT_GROUPS, recentReportKeys, rememberReport, type ReportCard } from '../lib/financialReports';
 import { formatDate } from '../lib/utils';
 
 const ALL = REPORT_GROUPS.flatMap((g) => g.reports);
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => new Date().toLocaleDateString('en-CA');   // local date (YYYY-MM-DD), not UTC
 
 function Tile({ report, asAt, small }: { report: ReportCard; asAt: string; small?: boolean }) {
   const Icon = report.icon;
@@ -25,14 +27,16 @@ function Tile({ report, asAt, small }: { report: ReportCard; asAt: string; small
 
 export function FinancialReports() {
   const [asAt, setAsAt] = useState(today());
-  const recent = recentReportKeys().map((k) => ALL.find((r) => r.key === k)).filter((r): r is ReportCard => !!r);
+  const { user } = useAuth();
+  const allowed = (r: ReportCard) => !r.permission || hasPermission(user, r.permission);
+  const recent = recentReportKeys().map((k) => ALL.find((r) => r.key === k)).filter((r): r is ReportCard => !!r && allowed(r));
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Financial Reports</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">Figures up to {formatDate(asAt)}</p>
+          <p className="mt-0.5 text-sm text-muted-foreground">Figures up to {formatDate(asAt)}. Statements and registers open on their own pages with their own date range.</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <span className="text-xs uppercase tracking-wide text-muted-foreground">As at</span>
@@ -51,13 +55,15 @@ export function FinancialReports() {
       {REPORT_GROUPS.map((g) => (
         <section key={g.title} aria-label={g.title}>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide">{g.title} <span className="ml-1 font-normal normal-case text-muted-foreground">{g.hint}</span></h2>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{g.reports.map((r) => <Tile key={r.key} report={r} asAt={asAt} />)}</div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{g.reports.filter(allowed).map((r) => <Tile key={r.key} report={r} asAt={asAt} />)}</div>
         </section>
       ))}
 
-      <p className="text-xs text-muted-foreground">
-        Looking for charts? <Link to="/reports" className="underline">Reports &amp; Analytics</Link>
-      </p>
+      {hasPermission(user, 'banking') && (
+        <p className="text-xs text-muted-foreground">
+          Looking for charts? <Link to="/reports" className="underline">Reports &amp; Analytics</Link>
+        </p>
+      )}
     </div>
   );
 }

@@ -7,6 +7,9 @@ import { getFinancialReport } from '../api/client';
 import type { FinancialReport as Report } from '../api/types';
 
 vi.mock('../api/client', () => ({ getFinancialReport: vi.fn() }));
+const ALL_PERMISSIONS = ['tax', 'staff', 'banking'];
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { role: { permissions: mockPermissions.list } } }) }));
+const mockPermissions = vi.hoisted(() => ({ list: [] as string[] }));
 
 const REPORT: Report = {
   slug: 'vat', title: 'VAT Return', subtitle: 'The VAT you owe', estimate: true, assumptions: ['Rates are assumed'],
@@ -21,7 +24,7 @@ const memoryStorage = () => {
 };
 
 describe('Financial Reports hub', () => {
-  beforeEach(() => { vi.stubGlobal('localStorage', memoryStorage()); vi.mocked(getFinancialReport).mockReset(); });
+  beforeEach(() => { mockPermissions.list = ALL_PERMISSIONS; vi.stubGlobal('localStorage', memoryStorage()); vi.mocked(getFinancialReport).mockReset(); });
 
   it('lists every report in its group, linking old reports to their existing pages and new ones to the hub', () => {
     render(<MemoryRouter><FinancialReports /></MemoryRouter>);
@@ -29,6 +32,14 @@ describe('Financial Reports hub', () => {
     expect(screen.getByRole('link', { name: /Balance Sheet/ })).toHaveAttribute('href', '/tax/financial-statements');
     expect(screen.getByRole('link', { name: /Asset Register/ })).toHaveAttribute('href', '/tax/assets');
     expect(screen.getByRole('link', { name: /VAT Return/ }).getAttribute('href')).toMatch(/^\/financial-reports\/vat\?as_at=\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('hides the reports that need the Staff permission from a user who lacks it', () => {
+    mockPermissions.list = ['tax'];
+    render(<MemoryRouter><FinancialReports /></MemoryRouter>);
+    for (const name of [/Who Owes You/, /Payroll Summary/, /PAYE Return/]) expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Sales Report/ })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Analytics/ })).not.toBeInTheDocument();
   });
 
   it('remembers the last reports opened under "Where you left off"', () => {

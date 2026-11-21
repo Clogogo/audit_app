@@ -1356,6 +1356,7 @@ export interface FinancialReport {
   title: string;
   subtitle: string;
   estimate: boolean;
+  current_only: boolean;   // shows today's balances whatever date is picked
   assumptions: string[];
   start_date: string;
   as_at: string;

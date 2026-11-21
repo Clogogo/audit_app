@@ -40,12 +40,13 @@ def test_who_owes_you_lists_loan_balances_and_unrecovered_advances(client, db_se
     assert out["summary"][0]["value"] == 900.0
 
 
-def test_who_you_owe_includes_loans_and_director_funding(client, db_session):
-    _tx(db_session, "income", 5000, "Fund from Director")
+def test_who_you_owe_lists_loans_only_and_says_balances_are_current(client, db_session):
+    _tx(db_session, "income", 5000, "Fund from Director")   # equity, not a debt
     db_session.add(SchoolLoan(lender_name="Bank A", loan_amount=2000, total_interest_due=100, collected_date=date(2026, 3, 1)))
     db_session.commit()
-    rows = {r["name"]: r for r in _get(client, "who-you-owe")["sections"][0]["rows"]}
-    assert rows["Bank A"]["outstanding"] == 2100.0 and rows["Director"]["outstanding"] == 5000.0
+    out = _get(client, "who-you-owe", as_at="2026-04-01")
+    assert [(r["name"], r["outstanding"]) for r in out["sections"][0]["rows"]] == [("Bank A", 2100.0)]
+    assert out["current_only"] is True
 
 
 def test_payroll_summary_and_paye_estimate(client, db_session):
@@ -59,6 +60,16 @@ def test_payroll_summary_and_paye_estimate(client, db_session):
     paye = _get(client, "paye")
     # 12M a year: 0 on 800k, 15% of 2.2M = 330k, 18% of 9M = 1.62M (to 12M) -> 1.95M / 12 = 162,500 a month
     assert paye["estimate"] is True and paye["sections"][0]["rows"][0]["tax"] == 162500.0
+
+
+def test_a_bonus_is_taxed_on_top_of_salary_not_annualised(client, db_session):
+    staff = Staff(full_name="Bola", monthly_gross=200000)
+    db_session.add(staff)
+    db_session.flush()
+    db_session.add(PayrollEntry(staff_id=staff.id, period_year=2026, period_month=10, gross_salary=200000, bonus=300000, net_salary=500000))
+    db_session.commit()
+    # salary 2.4M/yr: 15% of 1.6M = 240k -> 20k a month. Bonus lifts the year to 2.7M: +15% of 300k = 45k
+    assert _get(client, "paye")["sections"][0]["rows"][0]["tax"] == 65000.0
 
 
 def test_capital_allowances_follow_the_category_rates(client, db_session):
@@ -93,6 +104,25 @@ def test_personal_income_tax_uses_directors_emoluments(client, db_session):
     _tx(db_session, "expense", 3000000, "Directors Emoluments")
     out = _get(client, "personal-income-tax")
     assert out["summary"][0]["value"] == 330000.0 and out["estimate"]   # 15% of 2.2M above the free 800k
+
+
+def test_staff_reports_also_need_the_staff_permission():
+    from fastapi.testclient import TestClient
+    from main import app
+    from models import Permission, Role, User
+    from utils.auth import get_current_user
+    role = Role(id=1, name="Tax only", is_system=False)
+    role.permissions = [Permission(key="tax", label="tax")]
+    user = User(id=1, email="t@example.com", hashed_password="x", full_name="T", is_active=True)
+    user.role = role
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        tc = TestClient(app)
+        assert tc.get("/financial-reports/sales", params=AS_AT).status_code == 200
+        for slug in ("payroll-summary", "paye", "who-owes-you"):
+            assert tc.get(f"/financial-reports/{slug}", params=AS_AT).status_code == 403
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_requires_the_tax_permission(anon_client):

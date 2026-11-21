@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import get_db
-from utils.auth import require_permission
+from models import User
+from utils.auth import get_current_user, require_permission
 from utils import report_builders as rb, tax_reports as tr
 
 router = APIRouter(prefix="/financial-reports", tags=["financial-reports"], dependencies=[Depends(require_permission("tax"))])
@@ -19,11 +20,18 @@ BUILDERS: dict[str, Callable[[Session, date, date], dict]] = {
 }
 
 
+# Per-person pay, tax and loan data: the Staff permission is needed as well as Tax
+STAFF_SLUGS = {"payroll-summary", "paye", "who-owes-you"}
+
+
 @router.get("/{slug}")
-def get_report(slug: str, as_at: Optional[date] = Query(None), start_date: Optional[date] = Query(None), db: Session = Depends(get_db)):
+def get_report(slug: str, as_at: Optional[date] = Query(None), start_date: Optional[date] = Query(None),
+               db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     builder = BUILDERS.get(slug)
     if builder is None:
         raise HTTPException(404, "Unknown report.")
+    if slug in STAFF_SLUGS:
+        require_permission("staff")(current_user)
     end = as_at or date.today()
     start = start_date or date(end.year, 1, 1)
     if start > end:
