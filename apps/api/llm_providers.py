@@ -38,6 +38,7 @@ class OpenRouterLLMClient:
         self.client = OpenAI(
             api_key=api_key,
             base_url="https://openrouter.ai/api/v1",
+            max_retries=1,  # the SDK default of 2 would triple a slow call; empty replies are retried below
             timeout=REQUEST_TIMEOUT_SECONDS,  # the SDK default is 10 minutes; a stuck free model must not hang a request
         )
         logger.info(f"Initialized OpenRouter client with model: {self.model}")

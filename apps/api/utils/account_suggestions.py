@@ -6,6 +6,7 @@ direction; a category missing from one direction falls back to the other (a refu
 the same account). "Other" is deliberately never guessed.
 """
 import time
+from typing import Iterator
 
 # Money coming in (income transactions)
 INCOME = {
@@ -66,21 +67,20 @@ def all_suggested_codes() -> set[str]:
     return set(INCOME.values()) | set(EXPENSE.values())
 
 
-def ai_suggest_accounts(rows: list[tuple[str, str]], accounts: dict[str, list[tuple[str, str]]]) -> dict[tuple[str, str], str]:
-    """Ask the AI (OpenRouter) which account each (category, type) belongs to.
+def ai_suggest_batches(rows: list[tuple[str, str]], accounts: dict[str, list[tuple[str, str]]]) -> Iterator[dict[tuple[str, str], str]]:
+    """Ask the AI (OpenRouter) which account each (category, type) belongs to, a small batch at a time.
     `accounts` = {"income": [(code, name)...], "expense": [...]}. Only codes from that list are accepted;
-    anything else the model returns is dropped. Returns {} when the AI is unavailable."""
-    out: dict[tuple[str, str], str] = {}
+    anything else the model returns is dropped. Yields each batch's answers as soon as they arrive, so the
+    caller can save them: a slow or failing batch never costs the batches already done."""
     deadline = time.monotonic() + AI_BUDGET_SECONDS
-    for start in range(0, len(rows), AI_BATCH):  # small batches: the model's reply is capped, one failed batch loses only itself
+    for start in range(0, len(rows), AI_BATCH):
         if time.monotonic() > deadline:
-            break   # stop starting batches; what is mapped so far is kept, the rest can be done with another click
-        out.update(_ai_batch(rows[start:start + AI_BATCH], accounts, deadline))
-    return out
+            return   # stop starting batches; the rest can be done with another click
+        yield _ai_batch(rows[start:start + AI_BATCH], accounts, deadline)
 
 
-AI_BATCH = 20
-AI_TRIES = 2
+AI_BATCH = 10
+AI_TRIES = 1   # the client already asks again (up to 3 times) when a free model returns nothing
 AI_BUDGET_SECONDS = 240   # under the browser's 300s timeout, so a slow free model can't leave work running after the page gave up
 AI_MAX_TOKENS = 4000   # the prompt lists ~90 accounts; free reasoning models spend a lot of the budget thinking
 
