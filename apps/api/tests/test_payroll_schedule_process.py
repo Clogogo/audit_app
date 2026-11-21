@@ -71,12 +71,23 @@ def _issues(resp):
     return {(i["full_name"], i["kind"]) for i in resp.json()["detail"]["issues"]}
 
 
-def test_process_blocks_when_the_bank_paid_a_different_amount(client, db_session):
+def test_process_goes_ahead_when_the_bank_paid_a_different_amount_and_notes_it(client, db_session):
     ada = _staff(db_session, "Ada Obi")
-    _salary_tx(db_session, "ADA OBI", 12000.0)
+    tx = _salary_tx(db_session, "ADA OBI", 12000.0)
     resp = _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)])
-    assert ("Ada Obi", "underpaid") in _issues(resp)
-    assert db_session.query(PayrollEntry).count() == 0
+    assert resp.status_code == 200, resp.text
+    entry = db_session.query(PayrollEntry).one()
+    assert entry.is_paid and entry.transaction_id == tx.id
+    assert "Schedule check" in entry.notes and "less than the schedule" in entry.notes
+
+
+def test_process_goes_ahead_when_the_bank_overpaid_and_keeps_the_typed_note(client, db_session):
+    ada = _staff(db_session, "Ada Obi")
+    _salary_tx(db_session, "ADA OBI", 50018.6)
+    resp = _process(client, [_line(ada, notes="paid with arrears")], [_row(1, "ADA OBI", 15000.0)])
+    assert resp.status_code == 200, resp.text
+    notes = db_session.query(PayrollEntry).one().notes
+    assert notes.startswith("paid with arrears\n") and "more than the schedule" in notes
 
 
 def test_process_blocks_when_nothing_was_paid(client, db_session):
@@ -92,13 +103,21 @@ def test_process_blocks_staff_who_are_not_on_the_schedule(client, db_session):
     assert db_session.query(PayrollEntry).count() == 0     # all-or-nothing
 
 
-def test_process_blocks_when_the_directory_total_differs_from_the_schedule(client, db_session):
+def test_process_goes_ahead_when_the_directory_total_differs_from_the_schedule_and_notes_it(client, db_session):
     ada = _staff(db_session, "Ada Obi")                       # directory says 15,000
     _salary_tx(db_session, "ADA OBI", 14000.0)
     resp = _process(client, [_line(ada)], [_row(1, "ADA OBI", 14000.0)])   # schedule + bank say 14,000
-    issues = resp.json()["detail"]["issues"]
-    mismatch = next(i for i in issues if i["kind"] == "net_mismatch")
-    assert mismatch["computed"] == 15000.0 and mismatch["expected"] == 14000.0
+    assert resp.status_code == 200, resp.text
+    entry = db_session.query(PayrollEntry).one()
+    assert entry.net_salary == 15000.0 and "payroll total" in entry.notes
+
+
+def test_process_still_blocks_a_wrong_account_even_with_an_amount_difference(client, db_session):
+    ada = _staff(db_session, "Ada Obi", account="0123456789")
+    _salary_tx(db_session, "ADA OBI", 12000.0, account="0999999999")
+    issues = _issues(_process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)]))
+    assert ("Ada Obi", "account_differs") in issues
+    assert db_session.query(PayrollEntry).count() == 0
 
 
 def test_process_links_by_account_number_when_names_differ(client, db_session):

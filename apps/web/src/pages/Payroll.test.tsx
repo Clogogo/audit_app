@@ -133,7 +133,7 @@ describe('Payroll page', () => {
     expect(screen.queryByText(/added to Bonus/)).not.toBeInTheDocument();
   });
 
-  it('blocks processing while a teacher is underpaid, or the payroll total differs from the schedule', async () => {
+  it('still allows processing when a payment or the payroll total differs, and says it will be noted', async () => {
     vi.mocked(reconcilePayroll).mockResolvedValue(result([
       scheduleLine(1, 'Ada Obi', 15000, { status: 'underpaid', paid_amount: 12000 }),
       scheduleLine(2, 'Bola Eze', 18000),   // bank agrees with the schedule, the directory says 20,000
@@ -144,7 +144,18 @@ describe('Payroll page', () => {
 
     expect(await screen.findByText('Underpaid (₦12,000.00)')).toBeInTheDocument();
     expect(screen.getByText(/Total differs by/)).toBeInTheDocument();
-    expect(screen.getByText(/2 staff need attention before processing/)).toBeInTheDocument();
+    expect(screen.getByText(/2 staff differ from the schedule .* saved as a note/)).toBeInTheDocument();
+    expect(await processButton()).toBeEnabled();
+  });
+
+  it('still blocks processing when nobody was paid', async () => {
+    vi.mocked(reconcilePayroll).mockResolvedValue(result([
+      scheduleLine(1, 'Ada Obi', 15000, { status: 'not_paid', paid_amount: 0 }), scheduleLine(2, 'Bola Eze', 20000),
+    ]));
+    render(<Payroll />);
+    await screen.findByText('March 2026 Payroll');
+    await loadSchedule();
+    expect(await screen.findByText(/1 staff need attention before processing/)).toBeInTheDocument();
     expect(await processButton()).toBeDisabled();
   });
 
