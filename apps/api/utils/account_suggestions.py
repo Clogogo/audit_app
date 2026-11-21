@@ -63,3 +63,43 @@ def suggest_account(category: str, tx_type: str) -> str | None:
 
 def all_suggested_codes() -> set[str]:
     return set(INCOME.values()) | set(EXPENSE.values())
+
+
+def ai_suggest_accounts(rows: list[tuple[str, str]], accounts: dict[str, list[tuple[str, str]]]) -> dict[tuple[str, str], str]:
+    """Ask the AI (OpenRouter) which account each (category, type) belongs to.
+    `accounts` = {"income": [(code, name)...], "expense": [...]}. Only codes from that list are accepted;
+    anything else the model returns is dropped. Returns {} when the AI is unavailable."""
+    import json
+    import re
+
+    import ai_worker
+
+    if not rows:
+        return {}
+    items = [{"i": i, "category": c, "type": t} for i, (c, t) in enumerate(rows)]
+    prompt = (
+        "You map a Nigerian school's transaction categories to its chart of accounts.\n"
+        "For each item choose ONE account code from the list for its type (income items -> income accounts, "
+        "expense items -> expense accounts). Use the code exactly as written. If nothing fits, use null.\n\n"
+        "Income accounts:\n" + "\n".join(f"{c} {n}" for c, n in accounts["income"]) + "\n\n"
+        "Expense accounts:\n" + "\n".join(f"{c} {n}" for c, n in accounts["expense"]) + "\n\n"
+        "Items:\n" + json.dumps(items, ensure_ascii=False) + "\n\n"
+        'Return ONLY a JSON array: [{"i": <index>, "code": "<account code or null>"}]'
+    )
+    match = re.search(r"\[[\s\S]*\]", ai_worker._clean_json(ai_worker.call_ai_text(prompt)))
+    if not match:
+        return {}
+    try:
+        answers = json.loads(match.group())
+    except ValueError:
+        return {}
+    allowed = {t: {c for c, _ in accounts[t]} for t in accounts}
+    out: dict[tuple[str, str], str] = {}
+    for a in answers if isinstance(answers, list) else []:
+        try:
+            category, tx_type = rows[int(a["i"])]
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        if a.get("code") in allowed[tx_type]:
+            out[(category, tx_type)] = a["code"]
+    return out

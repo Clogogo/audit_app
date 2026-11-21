@@ -165,3 +165,32 @@ def test_transfers_to_other_accounts_count_like_the_dashboard_and_vault_moves_do
     db_session.commit()
     pl = client.get("/accounting/profit-and-loss", params=PERIOD).json()
     assert pl["unmapped_income"] + pl["unmapped_expense"] in (700.0,)   # only the supplier transfer, either direction
+
+
+def test_ai_suggest_maps_only_unmapped_rows_with_valid_codes(client, db_session, monkeypatch):
+    import ai_worker
+    _import(client)
+    _tx(db_session, "income", 100, "Zzz Fees"); _tx(db_session, "expense", 50, "Zzz Stuff"); _tx(db_session, "expense", 20, "Zzz Done")
+    client.put("/accounting/mappings", json={"category": "Zzz Done", "type": "expense", "account_code": "5.1.1.1.2"})
+    rows = {(r["category"], r["type"]): i for i, r in enumerate(client.get("/accounting/mappings").json()["rows"])}
+    seen = {}
+    def fake(prompt):
+        import json, re
+        items = json.loads(re.search(r"Items:\n(\[.*\])", prompt).group(1))
+        seen["n"] = len(items)
+        by = {(x["category"], x["type"]): x["i"] for x in items}
+        return json.dumps([{"i": by[("Zzz Fees", "income")], "code": "4.1.1.3.2"},
+                           {"i": by[("Zzz Stuff", "expense")], "code": "1.2.4.1"}])   # cash is not allowed
+    monkeypatch.setattr(ai_worker, "call_ai_text", fake)
+    out = client.post("/accounting/mappings/ai-suggest")
+    assert out.status_code == 200 and out.json()["applied"] == 1
+    assert db_session.query(AccountMapping).filter_by(category="Zzz Fees", tx_type="income").one().account_code == "4.1.1.3.2"
+    assert db_session.query(AccountMapping).filter_by(category="Zzz Stuff").count() == 0
+
+
+def test_ai_suggest_reports_an_unavailable_ai(client, db_session, monkeypatch):
+    import ai_worker
+    _import(client)
+    _tx(db_session, "expense", 50, "Zzz Stuff")
+    monkeypatch.setattr(ai_worker, "call_ai_text", lambda p: "")
+    assert client.post("/accounting/mappings/ai-suggest").status_code == 503

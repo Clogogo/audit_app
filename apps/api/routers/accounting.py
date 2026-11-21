@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import AccountMapping, BankAccount, ChartAccount, Transaction
-from utils.account_suggestions import suggest_account
+from utils.account_suggestions import ai_suggest_accounts, suggest_account
 from utils.accounting import CASH_CODE, Account, Entry, ledger, profit_and_loss, trial_balance
 from routers.bank_statements import _is_intra_account_transfer, _transfer_is_income
 from utils.auth import require_permission
@@ -151,6 +151,27 @@ def apply_suggestions(db: Session = Depends(get_db)):
             without += 1
     db.commit()
     return {"applied": applied, "without_suggestion": without}
+
+
+@router.post("/mappings/ai-suggest")
+def ai_suggest(db: Session = Depends(get_db)):
+    """Let the AI map every category that has no account yet (never overwrites a choice you made)."""
+    mapped = _mapping(db)
+    todo = [(r.category, r.type) for r in _combos(db) if (r.category, r.type) not in mapped]
+    postable = _postable_codes(db) - {CASH_CODE}
+    leaves = sorted((a.code, a.name, a.category) for a in db.query(ChartAccount) if a.code in postable)
+    accounts = {"income": [(c, n) for c, n, k in leaves if k == "Income"], "expense": [(c, n) for c, n, k in leaves if k == "Expenses"]}
+    if not todo:
+        return {"applied": 0, "without_suggestion": 0}
+    if not accounts["income"] and not accounts["expense"]:
+        raise HTTPException(400, "Import the chart of accounts first.")
+    found = ai_suggest_accounts(todo, accounts)
+    if not found:
+        raise HTTPException(503, "The AI did not return usable suggestions. Try again in a moment.")
+    for (category, tx_type), code in found.items():
+        db.add(AccountMapping(category=category, tx_type=tx_type, account_code=code))
+    db.commit()
+    return {"applied": len(found), "without_suggestion": len(todo) - len(found)}
 
 
 # ── reports ───────────────────────────────────────────────────────────────────

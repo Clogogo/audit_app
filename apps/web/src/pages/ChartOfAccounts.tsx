@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, BookOpen, CheckCircle2, Loader2, Upload } from 'lucide-react';
+import { AlertCircle, BookOpen, CheckCircle2, Loader2, Sparkles, Upload } from 'lucide-react';
 import {
-  applyMappingSuggestions, getAccountMappings, getChartOfAccounts, importChartOfAccounts, setAccountMapping,
+  aiSuggestMappings, applyMappingSuggestions, getAccountMappings, getChartOfAccounts, importChartOfAccounts, setAccountMapping,
 } from '../api/client';
 import type { CategoryMappingRow, ChartAccount } from '../api/types';
 import { AccountSelect } from '../components/accounting/AccountSelect';
@@ -62,6 +62,11 @@ export function ChartOfAccounts() {
   const applySuggestions = () => run(async () => {
     const r = await applyMappingSuggestions();
     return `${r.applied} categor${r.applied === 1 ? 'y' : 'ies'} mapped to their suggested account; ${r.without_suggestion} still need your choice.`;
+  });
+
+  const aiSuggest = () => run(async () => {
+    const r = await aiSuggestMappings();
+    return `AI mapped ${r.applied} categor${r.applied === 1 ? 'y' : 'ies'}; ${r.without_suggestion} still need your choice. Review them below.`;
   });
 
   const choose = async (row: CategoryMappingRow, code: string | null) => {
@@ -133,9 +138,14 @@ export function ChartOfAccounts() {
                 {rows.length - unmapped.length} of {rows.length} categories mapped
                 {unmapped.length > 0 && <span className="text-amber-700 dark:text-amber-400"> · {unmappedTx} transactions still unmapped</span>}
               </p>
-              <Button type="button" size="sm" disabled={busy || !imported || unmapped.length === 0} onClick={applySuggestions}>
-                Apply suggested accounts
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="outline" disabled={busy || !imported || unmapped.length === 0} onClick={aiSuggest}>
+                  <Sparkles className="h-4 w-4 mr-2" /> Suggest General Ledger
+                </Button>
+                <Button type="button" size="sm" disabled={busy || !imported || unmapped.length === 0} onClick={applySuggestions}>
+                  Apply suggested accounts
+                </Button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
