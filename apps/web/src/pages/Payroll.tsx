@@ -9,8 +9,8 @@ import {
   Loader2,
   Pencil,
 } from 'lucide-react';
-import { addOtherDeduction, computePayroll, getBonusTypes, getNextPayrollMonth, getSavedReconciliation, getTerms, listStaffMembers, processPayroll, resetPayroll, updateStaffMember } from '../api/client';
-import type { BonusType, PayrollEntryOut, PayrollLine, PayrollLineIn, PayrollProcessIssue, PayrollReconcileResult, StaffMember, Term } from '../api/types';
+import { addOtherDeduction, computePayroll, createStaffMember, getBonusTypes, getNextPayrollMonth, getSavedReconciliation, getTerms, listStaffMembers, processPayroll, resetPayroll, updateStaffMember } from '../api/client';
+import type { BonusType, PayrollEntryOut, PayrollLine, PayrollLineIn, PayrollProcessIssue, PayrollReconcileResult, StaffMember, StaffMemberIn, Term } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { BonusFormModal } from '../components/BonusFormModal';
@@ -25,6 +25,9 @@ const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+
+const staffNameKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  .split(/\s+/).filter((word) => word && !['mr', 'mrs', 'ms', 'miss', 'dr', 'prof'].includes(word)).sort().join(' ');
 
 function NumCell({
   value, onChange, disabled,
@@ -137,6 +140,17 @@ export function Payroll() {
   }, [year, month, startResolved]);
 
   const refreshReconcile = () => getSavedReconciliation(year, month).then(setReconcile).catch(() => undefined);
+
+  const addMatchedStaffToDirectory = async (member: StaffMemberIn) => {
+    const existing = (await listStaffMembers()).find((staff) => staffNameKey(staff.full_name) === staffNameKey(member.full_name));
+    if (existing) {
+      throw new Error(`${existing.full_name} already has a Staff Directory record. Reactivate or edit that record instead of adding a duplicate.`);
+    }
+    await createStaffMember(member);
+    load(true);
+    setSuccess(`${member.full_name} was added to the Staff Directory.`);
+    await refreshReconcile();
+  };
 
   // Heads-up when an entry's real bank amount differs from the computed net. Nothing is
   // adjusted automatically, in either direction: the user adjusts the figures themselves.
@@ -348,7 +362,7 @@ export function Payroll() {
       </div>
 
       <SchedulePanel year={year} month={month} monthLabel={`${MONTHS[month - 1]} ${year}`} onResult={setReconcile} />
-      {reconcile && <ReconcileResults result={reconcile} onAddBonus={openBonusForm} onAddDeduction={deductFromReconcile} />}
+      {reconcile && <ReconcileResults result={reconcile} onAddStaff={addMatchedStaffToDirectory} onAddBonus={openBonusForm} onAddDeduction={deductFromReconcile} />}
 
       {error && (
         <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-2">
