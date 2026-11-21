@@ -69,13 +69,21 @@ def ai_suggest_accounts(rows: list[tuple[str, str]], accounts: dict[str, list[tu
     """Ask the AI (OpenRouter) which account each (category, type) belongs to.
     `accounts` = {"income": [(code, name)...], "expense": [...]}. Only codes from that list are accepted;
     anything else the model returns is dropped. Returns {} when the AI is unavailable."""
+    out: dict[tuple[str, str], str] = {}
+    for start in range(0, len(rows), AI_BATCH):  # small batches: the model's reply is capped, one failed batch loses only itself
+        out.update(_ai_batch(rows[start:start + AI_BATCH], accounts))
+    return out
+
+
+AI_BATCH = 20
+
+
+def _ai_batch(rows: list[tuple[str, str]], accounts: dict[str, list[tuple[str, str]]]) -> dict[tuple[str, str], str]:
     import json
     import re
 
     import ai_worker
 
-    if not rows:
-        return {}
     items = [{"i": i, "category": c, "type": t} for i, (c, t) in enumerate(rows)]
     prompt = (
         "You map a Nigerian school's transaction categories to its chart of accounts.\n"

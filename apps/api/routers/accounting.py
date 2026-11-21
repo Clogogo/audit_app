@@ -135,22 +135,32 @@ def set_mapping(body: MappingIn, db: Session = Depends(get_db)):
     return {"category": body.category, "type": body.type, "account_code": account.code}
 
 
+def _save_mappings(db: Session, found: dict[tuple[str, str], str]) -> None:
+    """Insert or update (a stale row for the same category may still exist), so the unique key never trips."""
+    existing = {(m.category, m.tx_type): m for m in db.query(AccountMapping)}
+    for key, code in found.items():
+        if key in existing:
+            existing[key].account_code = code
+        else:
+            db.add(AccountMapping(category=key[0], tx_type=key[1], account_code=code))
+    db.commit()
+
+
 @router.post("/mappings/apply-suggestions")
 def apply_suggestions(db: Session = Depends(get_db)):
     """Fill the rows that have no mapping yet with the suggested account (never overwrites a choice)."""
     mapped, postable = _mapping(db), _postable_codes(db)
-    applied = without = 0
+    found, without = {}, 0
     for r in _combos(db):
         if (r.category, r.type) in mapped:
             continue
         code = suggest_account(r.category, r.type)
         if code in postable:
-            db.add(AccountMapping(category=r.category, tx_type=r.type, account_code=code))
-            applied += 1
+            found[(r.category, r.type)] = code
         else:
             without += 1
-    db.commit()
-    return {"applied": applied, "without_suggestion": without}
+    _save_mappings(db, found)
+    return {"applied": len(found), "without_suggestion": without}
 
 
 @router.post("/mappings/ai-suggest")
@@ -168,9 +178,7 @@ def ai_suggest(db: Session = Depends(get_db)):
     found = ai_suggest_accounts(todo, accounts)
     if not found:
         raise HTTPException(503, "The AI did not return usable suggestions. Try again in a moment.")
-    for (category, tx_type), code in found.items():
-        db.add(AccountMapping(category=category, tx_type=tx_type, account_code=code))
-    db.commit()
+    _save_mappings(db, found)
     return {"applied": len(found), "without_suggestion": len(todo) - len(found)}
 
 

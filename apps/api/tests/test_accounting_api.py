@@ -194,3 +194,29 @@ def test_ai_suggest_reports_an_unavailable_ai(client, db_session, monkeypatch):
     _tx(db_session, "expense", 50, "Zzz Stuff")
     monkeypatch.setattr(ai_worker, "call_ai_text", lambda p: "")
     assert client.post("/accounting/mappings/ai-suggest").status_code == 503
+
+
+def test_ai_suggest_replaces_a_stale_mapping_instead_of_failing(client, db_session, monkeypatch):
+    import ai_worker
+    _import(client)
+    _tx(db_session, "expense", 50, "Zzz Stuff")
+    client.put("/accounting/mappings", json={"category": "Zzz Stuff", "type": "expense", "account_code": "5.1.1.1.2"})
+    db_session.query(ChartAccount).filter_by(code="5.1.1.1.2").update({"status": "Inactive"})
+    db_session.commit()
+    monkeypatch.setattr(ai_worker, "call_ai_text", lambda p: '[{"i": 0, "code": "5.1.1.1.1"}]')
+    out = client.post("/accounting/mappings/ai-suggest")
+    assert out.status_code == 200 and out.json()["applied"] == 1
+    assert db_session.query(AccountMapping).filter_by(category="Zzz Stuff").one().account_code == "5.1.1.1.1"
+
+
+def test_ai_suggest_works_in_batches_and_keeps_what_succeeded(client, db_session, monkeypatch):
+    import ai_worker
+    import utils.account_suggestions as sug
+    _import(client)
+    for n in range(5):
+        _tx(db_session, "expense", 10, f"Zzz {n}")
+    monkeypatch.setattr(sug, "AI_BATCH", 2)
+    calls = iter(['[{"i": 0, "code": "5.1.1.1.1"}, {"i": 1, "code": "5.1.1.1.1"}]', "", "not json"])
+    monkeypatch.setattr(ai_worker, "call_ai_text", lambda p: next(calls))   # batch 2 and 3 fail
+    out = client.post("/accounting/mappings/ai-suggest")
+    assert out.status_code == 200 and out.json() == {"applied": 2, "without_suggestion": 3}
