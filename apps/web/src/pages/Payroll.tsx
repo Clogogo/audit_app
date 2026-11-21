@@ -145,7 +145,9 @@ export function Payroll() {
       setStaffDirectory([]);
       return;
     }
-    listStaffMembers().then(setStaffDirectory).catch(() => setStaffDirectory([]));
+    Promise.resolve(listStaffMembers())
+      .then((members) => setStaffDirectory(members ?? []))
+      .catch(() => setStaffDirectory([]));
   }, [reconcile]);
 
   // Heads-up when an entry's real bank amount differs from the computed net. Nothing is
