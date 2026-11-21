@@ -11,8 +11,8 @@ from database import engine, Base, initialize_database
 import models  # noqa: ensure all models are registered before create_all
 from utils.rate_limit import limiter
 
-from routers import transactions, upload, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates, auth
-from routers import tax, financial_statements, assets, staff_loans, staff_directory, payroll, payroll_reconciliation, payroll_schedule, terms, school_loans, advance_payments, users, roles, inventory, school_profile, teacher_bonuses
+from routers import transactions, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates, auth
+from routers import accounting, tax, financial_statements, assets, staff_loans, staff_directory, payroll, payroll_reconciliation, payroll_schedule, terms, school_loans, advance_payments, users, roles, inventory, school_profile, teacher_bonuses
 
 if __name__ != "__pytest_main__":
     # Ensure local SQLite DB is initialized when running the app normally.
@@ -24,7 +24,7 @@ if __name__ != "__pytest_main__":
 
 app = FastAPI(
     title="FinanceAudit API",
-    description="Personal finance management with AI receipt parsing and bank statement reconciliation",
+    description="School finance management with AI statement parsing and bank statement reconciliation",
     version="1.0.0",
 )
 
@@ -65,7 +65,6 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(transactions.router)
-app.include_router(upload.router)
 app.include_router(bank_statements.router)
 app.include_router(llm_bank_statements.router)
 app.include_router(bank_accounts.router)
@@ -78,6 +77,7 @@ app.include_router(financial_statements.router)
 app.include_router(assets.router)
 app.include_router(staff_loans.router)
 app.include_router(staff_directory.router)
+app.include_router(accounting.router)
 app.include_router(payroll.router)
 app.include_router(payroll_reconciliation.router)
 app.include_router(payroll_schedule.router)
@@ -116,7 +116,6 @@ def health():
             "note": "Install tesseract for scanned PDF support: brew install tesseract" if not ocr_available else "OCR ready"
         },
         "supported_formats": {
-            "receipts": ["JPG", "PNG", "WebP", "GIF", "PDF"],
             "statements": ["CSV", "Excel (.xlsx/.xls)", "PDF"],
             "max_file_size": "50MB"
         }

@@ -95,24 +95,6 @@ export interface TransactionAISummary {
   available: boolean;
 }
 
-export interface UploadedFile {
-  id: number;
-  original_name: string;
-  stored_path: string;
-  mime_type: string;
-  ocr_text?: string;
-  ai_result?: {
-    amount?: number;
-    currency?: string;
-    date?: string;
-    vendor?: string;
-    category?: string;
-    type?: TransactionType;
-    description?: string;
-  };
-  created_at: string;
-}
-
 export interface BankStatement {
   id: number;
   bank_name: string;
@@ -197,37 +179,6 @@ export interface AuditLogEntry {
 }
 
 // ── Batch Upload ──────────────────────────────────────────────────────────────
-
-export interface BatchItem {
-  amount?: number;
-  currency?: string;
-  date?: string;
-  vendor?: string;
-  category?: string;
-  type?: TransactionType;
-  description?: string;
-  reference?: string;
-}
-
-export interface BatchUploadResult {
-  file_id: number;
-  original_name: string;
-  mime_type: string;
-  item_count: number;
-  items: BatchItem[];
-}
-
-export interface BatchConfirmItem {
-  amount: number;
-  currency: string;
-  category: string;
-  description: string;
-  date: string;
-  vendor?: string;
-  bank?: string;
-  type: TransactionType;
-  file_id?: number;
-}
 
 // ── Statement Import ──────────────────────────────────────────────────────────
 
@@ -904,7 +855,6 @@ export interface PayrollEntryOut {
   /** Actual amount of the linked bank transaction */
   paid_amount?: number | null;
   /** Amount added to bonus because the bank paid more than computed net */
-  bonus_excess?: number;
 }
 
 // ── School Assets ─────────────────────────────────────────────────────────────
@@ -1284,4 +1234,115 @@ export interface PayrollProcessIssue {
 export interface NextPayrollMonth {
   year: number;
   month: number;
+}
+
+// ── Chart of Accounts and accounting reports ─────────────────────────────────
+
+export interface ChartAccount {
+  code: string;
+  name: string;
+  description: string | null;
+  category: 'Assets' | 'Liabilities' | 'Equity' | 'Income' | 'Expenses';
+  statement_section: string;
+  normal_balance: 'Debit' | 'Credit';
+  scope: string | null;
+  is_postable: boolean;
+  status: string;
+}
+
+export interface ChartResponse {
+  imported: boolean;
+  accounts: ChartAccount[];
+}
+
+export interface ChartImportResult {
+  created: number;
+  updated: number;
+  total: number;
+}
+
+export interface CategoryMappingRow {
+  category: string;
+  type: 'income' | 'expense';
+  tx_count: number;
+  total: number;
+  account_code: string | null;
+  suggested_code: string | null;
+}
+
+export interface MappingsResponse {
+  chart_imported: boolean;
+  rows: CategoryMappingRow[];
+}
+
+export interface UnmappedItem {
+  category: string;
+  type: 'income' | 'expense';
+  count: number;
+  amount: number;
+}
+
+export interface PLAccountLine {
+  code: string;
+  name: string;
+  amount: number;
+}
+
+export interface PLSection {
+  section: string;
+  total: number;
+  accounts: PLAccountLine[];
+}
+
+export interface ProfitAndLoss {
+  start_date: string;
+  end_date: string;
+  sections: PLSection[];
+  gross_profit: number;
+  operating_profit: number;
+  profit_before_tax: number;
+  net_profit: number;
+  unmapped_income: number;
+  unmapped_expense: number;
+  unmapped: UnmappedItem[];
+}
+
+export interface TrialBalanceRow {
+  code: string;
+  name: string;
+  category: string;
+  debit: number;
+  credit: number;
+}
+
+export interface TrialBalance {
+  start_date: string;
+  end_date: string;
+  rows: TrialBalanceRow[];
+  total_debit: number;
+  total_credit: number;
+  balanced: boolean;
+  unmapped: UnmappedItem[];
+}
+
+export interface LedgerRow {
+  id: number;
+  date: string;
+  type: 'income' | 'expense';
+  category: string;
+  debit: number;
+  credit: number;
+  description: string | null;
+  vendor: string | null;
+}
+
+export interface Ledger {
+  code: string;
+  name: string;
+  category: string;
+  rows: LedgerRow[];
+  total_debit: number;
+  total_credit: number;
+  start_date: string;
+  end_date: string;
 }

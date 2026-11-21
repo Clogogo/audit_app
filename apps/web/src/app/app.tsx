@@ -25,6 +25,8 @@ import { AdvancePayments } from '../pages/AdvancePayments';
 import { TeacherBonuses } from '../pages/TeacherBonuses';
 import { StaffDirectory } from '../pages/StaffDirectory';
 import { Payroll } from '../pages/Payroll';
+import { ChartOfAccounts } from '../pages/ChartOfAccounts';
+import { AccountingReports } from '../pages/AccountingReports';
 import { Terms } from '../pages/Terms';
 import { SchoolLoans } from '../pages/SchoolLoans';
 import { UserManagement } from '../pages/UserManagement';
@@ -66,6 +68,8 @@ export function App() {
                       <Route path="/bank-reports" element={<PermissionRoute permission="banking"><BankAccountReports /></PermissionRoute>} />
                       <Route path="/banks" element={<PermissionRoute permission="banking"><Banks /></PermissionRoute>} />
                       <Route path="/tax" element={<PermissionRoute permission="tax"><Tax /></PermissionRoute>} />
+                      <Route path="/tax/chart-of-accounts" element={<PermissionRoute permission="tax"><ChartOfAccounts /></PermissionRoute>} />
+                      <Route path="/tax/accounting-reports" element={<PermissionRoute permission="tax"><AccountingReports /></PermissionRoute>} />
                       <Route path="/tax/financial-statements" element={<PermissionRoute permission="tax"><FinancialStatements /></PermissionRoute>} />
                       <Route path="/tax/assets" element={<PermissionRoute permission="tax"><Assets /></PermissionRoute>} />
                       <Route path="/tax/calendar" element={<PermissionRoute permission="tax"><TaxCalendar /></PermissionRoute>} />

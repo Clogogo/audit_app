@@ -10,15 +10,12 @@ import type {
   TransactionSummary,
   TransactionAISummary,
   PaginatedTransactions,
-  UploadedFile,
   BankStatement,
   BankTransaction,
   BankAccount,
   BankAccountCreate,
   ReconciliationStatus,
   AuditLogEntry,
-  BatchUploadResult,
-  BatchConfirmItem,
   StatementImportItem,
   StatementImportResult,
   ValidationReport,
@@ -46,6 +43,12 @@ import type {
   PayrollLineIn,
   PayrollEntryOut,
   PayrollReconcileResult,
+  ChartResponse,
+  ChartImportResult,
+  MappingsResponse,
+  ProfitAndLoss,
+  TrialBalance,
+  Ledger,
   PayrollScheduleLineIn,
   NextPayrollMonth,
   SchoolLoan,
@@ -133,35 +136,6 @@ export const deleteTransaction = (id: number) =>
 
 export const batchUpdateCategory = (ids: number[], category: string) =>
   api.patch<{ updated: number }>('/transactions/batch-category', { ids, category }).then(unwrap);
-
-// File Upload + AI
-export const uploadFile = (file: File) => {
-  const form = new FormData();
-  form.append('file', file);
-  return api
-    .post<UploadedFile>('/upload', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    .then(unwrap);
-};
-
-export const confirmUpload = (uploadId: number, body: TransactionCreate) =>
-  api.post<Transaction>(`/upload/${uploadId}/confirm`, body).then(unwrap);
-
-export const uploadBatch = (file: File) => {
-  const form = new FormData();
-  form.append('file', file);
-  return api
-    .post<BatchUploadResult>('/upload/batch', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    .then(unwrap);
-};
-
-export const confirmBatch = (fileId: number, items: BatchConfirmItem[]) =>
-  api.post<{ saved: number }>(`/upload/batch/${fileId}/confirm`, { items }).then(unwrap);
-
-export const getFilePreviewUrl = (fileId: number) => `/api/upload/${fileId}/preview`;
 
 // Bank Statements
 export const uploadBankStatement = (file: File, bankName: string, accountHolderName?: string) => {
@@ -708,3 +682,33 @@ export const updateTeacherBonus = (id: number, body: TeacherBonusIn) =>
 
 export const deleteTeacherBonus = (id: number) =>
   api.delete<void>(`/teacher-bonuses/${id}`).then(unwrap);
+
+// ── Chart of Accounts and accounting reports ─────────────────────────────────
+
+export const getChartOfAccounts = () => api.get<ChartResponse>('/accounting/chart').then(unwrap);
+
+/** Import the chart bundled with the app, or the CSV file given. */
+export const importChartOfAccounts = (file?: File) => {
+  const form = new FormData();
+  if (file) form.append('file', file);
+  return api
+    .post<ChartImportResult>('/accounting/chart/import', file ? form : null, file ? { headers: { 'Content-Type': 'multipart/form-data' } } : undefined)
+    .then(unwrap);
+};
+
+export const getAccountMappings = () => api.get<MappingsResponse>('/accounting/mappings').then(unwrap);
+
+export const setAccountMapping = (category: string, type: 'income' | 'expense', accountCode: string | null) =>
+  api.put('/accounting/mappings', { category, type, account_code: accountCode }).then(unwrap);
+
+export const applyMappingSuggestions = () =>
+  api.post<{ applied: number; without_suggestion: number }>('/accounting/mappings/apply-suggestions').then(unwrap);
+
+export const getProfitAndLoss = (startDate: string, endDate: string) =>
+  api.get<ProfitAndLoss>('/accounting/profit-and-loss', { params: { start_date: startDate, end_date: endDate } }).then(unwrap);
+
+export const getTrialBalance = (startDate: string, endDate: string) =>
+  api.get<TrialBalance>('/accounting/trial-balance', { params: { start_date: startDate, end_date: endDate } }).then(unwrap);
+
+export const getLedger = (account: string, startDate: string, endDate: string) =>
+  api.get<Ledger>('/accounting/ledger', { params: { account, start_date: startDate, end_date: endDate } }).then(unwrap);

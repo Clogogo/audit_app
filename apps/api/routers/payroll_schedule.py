@@ -143,7 +143,7 @@ def _entry_out(db: Session, entry: PayrollEntry, paid_amount: Optional[float]) -
         bonus=entry.bonus, loan_deduction=entry.loan_deduction, advance_deduction=entry.advance_deduction,
         other_deductions=entry.other_deductions, net_salary=entry.net_salary, is_paid=bool(entry.is_paid),
         paid_date=entry.paid_date, transaction_id=entry.transaction_id, notes=entry.notes,
-        created_at=entry.created_at, updated_at=entry.updated_at, paid_amount=paid_amount, bonus_excess=0.0,
+        created_at=entry.created_at, updated_at=entry.updated_at, paid_amount=paid_amount,
     )
 
 
@@ -198,7 +198,7 @@ def process_with_schedule(req: ProcessRequest, db: Session) -> list[PayrollEntry
     return [_entry_out(db, entry, paid) for entry, paid in entries]
 
 
-# ── First month whose payroll is not complete ─────────────────────────────────
+# ── Latest month whose payroll is not complete ────────────────────────────────
 
 class NextMonthOut(BaseModel):
     year: int
@@ -220,9 +220,10 @@ def _eligible_staff_ids(staff: list[Staff], year: int, month: int, first_entry: 
 
 @router.get("/next-month", response_model=NextMonthOut)
 def next_incomplete_month(db: Session = Depends(get_db)):
-    """The earliest month (from the first processed month up to today) in which
-    some active staff member has no paid payroll entry; today's month if every
-    month is complete or nothing was ever processed."""
+    """The LATEST month (up to today) that is not fully processed, i.e. some active staff
+    member has no paid payroll entry; today's month if every month is complete or nothing
+    was ever processed. Older unfinished months are not forced on the user: they can step
+    back to them with the month arrows."""
     today = date.today()
     current = NextMonthOut(year=today.year, month=today.month)
     earliest = db.query(PayrollEntry.period_year, PayrollEntry.period_month).order_by(
@@ -236,10 +237,10 @@ def next_incomplete_month(db: Session = Depends(get_db)):
     for sid, y, m, _paid in entries:
         first_entry[sid] = min(first_entry.get(sid, y * 12 + m - 1), y * 12 + m - 1)
     paid = {(y, m, sid) for sid, y, m, is_paid in entries if is_paid}
-    index, last = earliest[0] * 12 + earliest[1] - 1, today.year * 12 + today.month - 1
-    while index <= last:
+    first, index = earliest[0] * 12 + earliest[1] - 1, today.year * 12 + today.month - 1
+    while index >= first:                                   # newest month first
         year, month = index // 12, index % 12 + 1
         if any((year, month, sid) not in paid for sid in _eligible_staff_ids(staff, year, month, first_entry)):
             return NextMonthOut(year=year, month=month)
-        index += 1
+        index -= 1
     return current

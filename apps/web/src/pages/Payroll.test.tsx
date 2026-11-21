@@ -65,7 +65,7 @@ describe('Payroll page', () => {
     vi.mocked(reconcilePayroll).mockReset();
   });
 
-  it('opens on the first month whose payroll is not complete', async () => {
+  it('opens on the latest month whose payroll is not fully processed', async () => {
     render(<Payroll />);
     expect(await screen.findByText('March 2026 Payroll')).toBeInTheDocument();
     expect(computePayroll).toHaveBeenCalledTimes(1);
@@ -108,6 +108,25 @@ describe('Payroll page', () => {
     // the month is reloaded after a successful process, and no error is shown
     await waitFor(() => expect(computePayroll).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('tells the user when the bank paid a different amount, without adjusting anything', async () => {
+    vi.mocked(reconcilePayroll).mockResolvedValue(result([scheduleLine(1, 'Ada Obi', 15000), scheduleLine(2, 'Bola Eze', 20000)]));
+    vi.mocked(processPayroll).mockResolvedValue([
+      { id: 1, staff_id: 1, full_name: 'Ada Obi', net_salary: 15000, paid_amount: 15018.6, bonus: 0 },
+      { id: 2, staff_id: 2, full_name: 'Bola Eze', net_salary: 20000, paid_amount: 20000, bonus: 0 },
+    ] as never);
+    render(<Payroll />);
+    await screen.findByText('March 2026 Payroll');
+    await loadSchedule();
+    const button = await processButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+
+    const notice = await screen.findByText(/Ada Obi: bank paid/);
+    expect(notice).toHaveTextContent('18.60 more than the computed net');
+    expect(screen.queryByText(/Bola Eze: bank paid/)).not.toBeInTheDocument();   // exact payment: no notice
+    expect(screen.queryByText(/added to Bonus/)).not.toBeInTheDocument();
   });
 
   it('blocks processing while a teacher is underpaid, or the payroll total differs from the schedule', async () => {

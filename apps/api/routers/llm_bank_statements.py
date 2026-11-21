@@ -30,7 +30,6 @@ from llm_statement_parser import (
     NigerianBankClassifier,
     StatementValidator,
 )
-import ai_worker
 import os as _os
 
 logger = logging.getLogger(__name__)

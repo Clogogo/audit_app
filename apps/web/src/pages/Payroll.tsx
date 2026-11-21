@@ -65,12 +65,12 @@ export function Payroll() {
   const [processIssues, setProcessIssues] = useState<PayrollProcessIssue[]>([]);
   // The month's payroll schedule reconciled with the bank payments; processing is validated against it
   const [reconcile, setReconcile] = useState<PayrollReconcileResult | null>(null);
-  // The page opens on the first month whose payroll is not complete; nothing loads until that is known
+  // The page opens on the latest month whose payroll is not fully processed; nothing loads until that is known
   const [startResolved, setStartResolved] = useState(false);
   // bumped after the directory's account changes, so the schedule is re-reconciled with it
   const [rerunSchedule, setRerunSchedule] = useState(0);
   const [success, setSuccess] = useState<string | null>(null);
-  // Notices about real paid amounts (excess folded into bonus / underpayment)
+  // Notices about real paid amounts that differ from the computed net
   // — survives the post-process reload, cleared when the month changes.
   const [payNotices, setPayNotices] = useState<string[]>([]);
 
@@ -135,25 +135,18 @@ export function Payroll() {
     load();
   }, [year, month, startResolved]);
 
-  // Notify how each entry's real bank amount compared to the computed net:
-  // excess payments were captured into Bonus; underpayments are flagged only.
+  // Heads-up when an entry's real bank amount differs from the computed net. Nothing is
+  // adjusted automatically, in either direction: the user adjusts the figures themselves.
   const buildPayNotices = (entries: PayrollEntryOut[]) => {
-    const notices: string[] = [];
-    for (const e of entries) {
-      const excess = e.bonus_excess ?? 0;
-      if (excess > 0.009) {
-        notices.push(
-          `${e.full_name}: bank paid ${formatCurrency(e.paid_amount ?? 0)} — ` +
-          `${formatCurrency(excess)} above the computed net was added to Bonus.`
-        );
-      } else if (e.paid_amount != null && e.paid_amount < e.net_salary - 0.009) {
-        notices.push(
-          `${e.full_name}: bank paid ${formatCurrency(e.paid_amount)}, which is ` +
-          `${formatCurrency(e.net_salary - e.paid_amount)} less than the computed net of ${formatCurrency(e.net_salary)}.`
-        );
-      }
-    }
-    setPayNotices(notices);
+    setPayNotices(entries.flatMap((e) => {
+      if (e.paid_amount == null) return [];
+      const gap = Math.round((e.paid_amount - e.net_salary) * 100) / 100;
+      if (Math.abs(gap) < 0.01) return [];
+      return [
+        `${e.full_name}: bank paid ${formatCurrency(e.paid_amount)}, ${formatCurrency(Math.abs(gap))} ` +
+        `${gap > 0 ? 'more' : 'less'} than the computed net of ${formatCurrency(e.net_salary)}. Adjust it yourself if needed.`,
+      ];
+    }));
   };
 
   const isSkipped = (l: PayrollLine) => !l.is_paid && !!skipped[l.staff_id];
