@@ -1,19 +1,20 @@
-"""Payroll reconciliation endpoint — upload a payroll schedule (Excel/CSV) and
-compare it with what was actually paid out of the bank account. Read-only:
-nothing is written to the database."""
+"""Payroll reconciliation — upload a payroll schedule (Excel/CSV) and compare it with what was
+actually paid out of the bank account. The schedule is kept for the month (so it can be reopened);
+the comparison itself is recomputed each time, so it always reflects the current bank and directory."""
 import calendar
+import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Staff, Transaction
+from models import PayrollEntry, PayrollReconciliation, Staff, Transaction
 from utils.auth import require_permission
-from utils.payroll_recon import ScheduleError, check_account, link_and_fill, parse_schedule_full, reconcile, within_tolerance
+from utils.payroll_recon import ScheduleError, ScheduleRow, check_account, link_and_fill, parse_schedule_full, reconcile, within_tolerance
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ class ReconcileOut(BaseModel):
     unlinked_staff: list[UnlinkedStaff]
     unmatched_transactions: list[UnmatchedTransaction]
     summary: ReconcileSummary
+    saved_at: Optional[datetime] = None
 
 
 def _read_limited(file: UploadFile) -> bytes:
@@ -151,6 +153,21 @@ def _reconcile_with_directory(rows: list, payments: list, year: int, month: int,
     }
 
 
+def _bank_payments(year: int, month: int, db: Session) -> list:
+    month_start = date(year, month, 1)
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+    return db.query(Transaction).filter(
+        Transaction.type == "expense", Transaction.category == SALARY_CATEGORY,
+        Transaction.date >= month_start, Transaction.date <= month_end,
+    ).all()
+
+
+def _output(year: int, month: int, rows: list, skipped: list, notes: list, saved_at: Optional[datetime], db: Session) -> dict:
+    result = _reconcile_with_directory(rows, _bank_payments(year, month, db), year, month, db)
+    logger.info("Payroll reconcile %04d-%02d: %s", year, month, result["summary"])
+    return {"year": year, "month": month, "skipped_rows": skipped, "notes": notes, "saved_at": saved_at, **result}
+
+
 @router.post("/reconcile", response_model=ReconcileOut)
 def reconcile_payroll(
     file: UploadFile = File(...),
@@ -158,23 +175,61 @@ def reconcile_payroll(
     month: int = Form(..., ge=1, le=12),
     db: Session = Depends(get_db),
 ):
-    """Compare a payroll schedule (uploaded or pasted) with the month's Salary
-    and Wages bank payments, and cross-check each row against the staff
-    directory's computed net pay."""
-    content = _read_limited(file)
+    """Compare a payroll schedule (uploaded or pasted) with the month's Salary and Wages bank payments,
+    cross-check each row against the staff directory's computed net pay, and keep the schedule for the month."""
     try:
-        parsed = parse_schedule_full(content, file.filename or "")
+        parsed = parse_schedule_full(_read_limited(file), file.filename or "")
     except ScheduleError as exc:
         raise HTTPException(400, str(exc)) from exc
+    skipped = [vars(r) for r in parsed.skipped]
+    payload = json.dumps({"rows": [vars(r) for r in parsed.rows], "skipped": skipped, "notes": parsed.notes})
+    saved = db.query(PayrollReconciliation).filter_by(period_year=year, period_month=month).first()
+    if saved:
+        saved.schedule_json = payload
+    else:
+        saved = PayrollReconciliation(period_year=year, period_month=month, schedule_json=payload)
+        db.add(saved)
+    db.commit()
+    db.refresh(saved)
+    return _output(year, month, parsed.rows, skipped, parsed.notes, saved.saved_at, db)
 
-    month_start = date(year, month, 1)
-    month_end = date(year, month, calendar.monthrange(year, month)[1])
-    query = db.query(Transaction).filter(
-        Transaction.type == "expense",
-        Transaction.category == SALARY_CATEGORY,
-        Transaction.date >= month_start,
-        Transaction.date <= month_end,
-    )
-    result = _reconcile_with_directory(parsed.rows, query.all(), year, month, db)
-    logger.info("Payroll reconcile %04d-%02d: %s", year, month, result["summary"])
-    return {"year": year, "month": month, "skipped_rows": [vars(r) for r in parsed.skipped], "notes": parsed.notes, **result}
+
+@router.get("/reconcile/saved", response_model=Optional[ReconcileOut])
+def saved_reconciliation(year: int, month: int, db: Session = Depends(get_db)):
+    """The month's saved schedule, compared with the bank and the staff directory as they are now (null if none)."""
+    saved = db.query(PayrollReconciliation).filter_by(period_year=year, period_month=month).first()
+    if saved is None:
+        return None
+    data = json.loads(saved.schedule_json)
+    return _output(year, month, [ScheduleRow(**r) for r in data["rows"]], data["skipped"], data["notes"], saved.saved_at, db)
+
+
+class DeductionIn(BaseModel):
+    year: int = Field(ge=2000, le=2100)
+    month: int = Field(ge=1, le=12)
+    staff_id: int
+    amount: float = Field(gt=0, le=100_000_000)
+
+
+@router.post("/other-deduction")
+def add_other_deduction(body: DeductionIn, db: Session = Depends(get_db)):
+    """Add an amount to a staff member's 'other deductions' for a month that is not processed yet
+    (used when the schedule pays less than the staff directory expects)."""
+    from routers.payroll import compute_payroll
+
+    line = next((p for p in compute_payroll(body.year, body.month, db) if p.staff_id == body.staff_id), None)
+    if line is None:
+        raise HTTPException(404, "That staff member is not on the payroll for this month.")
+    if line.is_paid:
+        raise HTTPException(409, "This month is already processed for that staff member.")
+    other = round(line.other_deductions + body.amount, 2)
+    net = max(0.0, round(line.gross_salary + line.bonus - line.loan_deduction - line.advance_deduction - other, 2))
+    entry = db.query(PayrollEntry).filter_by(staff_id=body.staff_id, period_year=body.year, period_month=body.month).first()
+    if entry is None:
+        entry = PayrollEntry(staff_id=body.staff_id, period_year=body.year, period_month=body.month, is_paid=False)
+        db.add(entry)
+    entry.gross_salary, entry.bonus = line.gross_salary, line.bonus
+    entry.loan_deduction, entry.advance_deduction = line.loan_deduction, line.advance_deduction
+    entry.other_deductions, entry.net_salary = other, net
+    db.commit()
+    return {"staff_id": body.staff_id, "other_deductions": other, "net_salary": net}

@@ -374,10 +374,13 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
             # stored loan_deduction/advance_deduction is a stale snapshot
             # from whenever this row was last touched, which can predate
             # loan payments or advances recorded since. Recompute it live;
-            # keep the user's own gross/bonus/other overrides rather than
-            # discarding their draft edits.
+            # keep the user's own gross/other overrides rather than
+            # discarding their draft edits. The bonus is never typed on the
+            # payroll page (it comes from the Bonuses records), so it is read
+            # live too — a stored value would hide bonuses added after the draft.
+            bonus = bonus_totals.get(s.id, 0.0)
             loan_ded, advance_ded = _capped_deductions(
-                s, year, month, existing.gross_salary, existing.bonus, existing.other_deductions, db,
+                s, year, month, existing.gross_salary, bonus, existing.other_deductions, db,
             )
             # loan_ded/advance_ded are already capped against this line's
             # earnings, but other_deductions isn't — clamp the result so a
@@ -385,13 +388,13 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
             # can't drive net negative (which would also make the
             # salary-transaction fallback matcher's amount >= net check
             # too permissive).
-            net = max(0.0, round(existing.gross_salary + existing.bonus - loan_ded - advance_ded - existing.other_deductions, 2))
+            net = max(0.0, round(existing.gross_salary + bonus - loan_ded - advance_ded - existing.other_deductions, 2))
             result.append(PayrollLineOut(
                 staff_id=s.id,
                 full_name=s.full_name,
                 role=s.role,
                 gross_salary=existing.gross_salary,
-                bonus=existing.bonus,
+                bonus=bonus,
                 loan_deduction=loan_ded,
                 advance_deduction=advance_ded,
                 other_deductions=existing.other_deductions,

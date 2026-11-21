@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Calculator,
   ChevronLeft,
@@ -9,7 +9,7 @@ import {
   Loader2,
   Pencil,
 } from 'lucide-react';
-import { computePayroll, getBonusTypes, getNextPayrollMonth, getTerms, listStaffMembers, processPayroll, resetPayroll, updateStaffMember } from '../api/client';
+import { addOtherDeduction, computePayroll, getBonusTypes, getNextPayrollMonth, getSavedReconciliation, getTerms, listStaffMembers, processPayroll, resetPayroll, updateStaffMember } from '../api/client';
 import type { BonusType, PayrollEntryOut, PayrollLine, PayrollLineIn, PayrollProcessIssue, PayrollReconcileResult, StaffMember, Term } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -67,8 +67,6 @@ export function Payroll() {
   const [reconcile, setReconcile] = useState<PayrollReconcileResult | null>(null);
   // The page opens on the latest month whose payroll is not fully processed; nothing loads until that is known
   const [startResolved, setStartResolved] = useState(false);
-  // bumped after the directory's account changes, so the schedule is re-reconciled with it
-  const [rerunSchedule, setRerunSchedule] = useState(0);
   const [success, setSuccess] = useState<string | null>(null);
   // Notices about real paid amounts that differ from the computed net
   // — survives the post-process reload, cleared when the month changes.
@@ -77,7 +75,7 @@ export function Payroll() {
   // Per-row overrides for gross and other_deductions (bonuses are added through the Bonuses form, not typed here)
   const [overrides, setOverrides] = useState<Record<number, { gross: number; other: number }>>({});
   // The shared Bonuses form, opened for one staff member of this month
-  const [bonusForm, setBonusForm] = useState<{ staffId: number; staff: StaffMember[]; types: BonusType[]; terms: Term[] } | null>(null);
+  const [bonusForm, setBonusForm] = useState<{ staffId: number; amount?: number; staff: StaffMember[]; types: BonusType[]; terms: Term[] } | null>(null);
   // Per-row skip flag — skipped rows are excluded from totals and from processing
   const [skipped, setSkipped] = useState<Record<number, boolean>>({});
 
@@ -133,7 +131,13 @@ export function Payroll() {
     setPayNotices([]);
     setReconcile(null);
     load();
+    // reopen the schedule saved for this month, compared with the bank and directory as they are now
+    let current = true;
+    getSavedReconciliation(year, month).then((r) => { if (current) setReconcile(r); }).catch(() => undefined);
+    return () => { current = false; };
   }, [year, month, startResolved]);
+
+  const refreshReconcile = () => getSavedReconciliation(year, month).then(setReconcile).catch(() => undefined);
 
   // Heads-up when an entry's real bank amount differs from the computed net. Nothing is
   // adjusted automatically, in either direction: the user adjusts the figures themselves.
@@ -200,7 +204,7 @@ export function Payroll() {
       if (!window.confirm(message)) return;
       await updateStaffMember(member.id, { ...member, account_number: u.account, bank_name: u.bank ?? member.bank_name });
       setSuccess(`${u.staffName}'s account was updated to ${u.account}.`);
-      setRerunSchedule((n) => n + 1);
+      await refreshReconcile();
     } catch {
       setError(`Could not update ${u.staffName}'s account.`);
     }
@@ -208,12 +212,34 @@ export function Payroll() {
 
   // Bonuses are records, not typed amounts: open the Bonuses form for this staff member and month,
   // then reload so the saved bonus flows into the payroll line.
-  const openBonusForm = async (staffId: number) => {
+  const openBonusForm = async (staffId: number, amount?: number) => {
     try {
       const [staff, types, terms] = await Promise.all([listStaffMembers(true), getBonusTypes(), getTerms()]);
-      setBonusForm({ staffId, staff, types, terms });
+      setBonusForm({ staffId, amount, staff, types, terms });
     } catch {
       setError('Could not load the bonus form.');
+    }
+  };
+
+  // The schedule pays less than the directory expects: record the gap as an other deduction (saved), then re-compare.
+  const deducting = useRef(false);
+  const deductFromReconcile = async (staffId: number, amount: number) => {
+    const name = reconcile?.lines.find((l) => l.staff_id === staffId)?.staff_name ?? 'this staff member';
+    if (!window.confirm(`Deduct ${formatCurrency(amount)} from ${name}'s ${MONTHS[month - 1]} ${year} pay as an other deduction?`)) return;
+    if (deducting.current) return; // a second click while the first is saving would deduct twice
+    deducting.current = true;
+    setError(null);
+    try {
+      const saved = await addOtherDeduction(year, month, staffId, amount);
+      // the row's typed override would otherwise keep the old value and be what Process sends
+      setOverrides((o) => (o[staffId] ? { ...o, [staffId]: { ...o[staffId], other: saved.other_deductions } } : o));
+      setSuccess(`${formatCurrency(amount)} was added to ${name}'s other deductions.`);
+      await Promise.all([load(true), refreshReconcile()]);
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      setError(typeof detail === 'string' ? detail : `Could not add the deduction for ${name}.`);
+    } finally {
+      deducting.current = false;
     }
   };
 
@@ -351,8 +377,8 @@ export function Payroll() {
         </div>
       </div>
 
-      <SchedulePanel year={year} month={month} monthLabel={`${MONTHS[month - 1]} ${year}`} onResult={setReconcile} rerunToken={rerunSchedule} />
-      {reconcile && <ReconcileResults result={reconcile} onUseAccount={useBankAccount} />}
+      <SchedulePanel year={year} month={month} monthLabel={`${MONTHS[month - 1]} ${year}`} onResult={setReconcile} />
+      {reconcile && <ReconcileResults result={reconcile} onUseAccount={useBankAccount} onAddBonus={openBonusForm} onAddDeduction={deductFromReconcile} />}
 
       {error && (
         <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-2">
@@ -690,9 +716,9 @@ export function Payroll() {
           staffList={bonusForm.staff}
           bonusTypes={bonusForm.types}
           terms={bonusForm.terms}
-          defaults={{ staffId: bonusForm.staffId, year, month }}
+          defaults={{ staffId: bonusForm.staffId, year, month, amount: bonusForm.amount }}
           onClose={() => setBonusForm(null)}
-          onSaved={() => { setBonusForm(null); load(true); }}
+          onSaved={() => { setBonusForm(null); load(true); void refreshReconcile(); }}
         />
       )}
 

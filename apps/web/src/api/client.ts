@@ -573,6 +573,12 @@ export const getPayrollEntries = (year: number, month: number) =>
 export const resetPayroll = (year: number, month: number) =>
   api.post<{ reset: number }>('/payroll/reset', null, { params: { year, month } }).then(unwrap);
 
+export const getSavedReconciliation = (year: number, month: number) =>
+  api.get<PayrollReconcileResult | null>('/payroll/reconcile/saved', { params: { year, month } }).then(unwrap);
+
+export const addOtherDeduction = (year: number, month: number, staffId: number, amount: number) =>
+  api.post<{ staff_id: number; other_deductions: number; net_salary: number }>('/payroll/other-deduction', { year, month, staff_id: staffId, amount }).then(unwrap);
+
 export const reconcilePayroll = (file: File, year: number, month: number) => {
   const form = new FormData();
   form.append('file', file);

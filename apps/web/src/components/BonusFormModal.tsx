@@ -13,7 +13,7 @@ const MONTHS = [
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-export interface BonusDefaults { staffId?: number; year?: number; month?: number }
+export interface BonusDefaults { staffId?: number; year?: number; month?: number; /** prefill a flat bonus amount */ amount?: number }
 
 interface BonusFormModalProps {
   staffList: StaffMember[];
@@ -82,7 +82,7 @@ export function BonusFormModal({ staffList, bonusTypes, terms, editing, defaults
       const prevType = bonusTypes.find((t) => t.key === f.bonus_type);
       const sameCategory = basisCategory(prevType) === basisCategory(type);
       if (type.calculation_method === 'flat_amount') {
-        const carriedAmount = sameCategory ? round2((f.percentage / 100) * f.basis_amount) : 0;
+        const carriedAmount = sameCategory ? round2((f.percentage / 100) * f.basis_amount) : (defaults?.amount ?? 0);
         return { ...f, bonus_type: typeKey, ...flatFieldsFor(carriedAmount, staff?.monthly_gross ?? 0) };
       }
       const carried = sameCategory ? f.basis_amount : 0;

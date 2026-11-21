@@ -1212,6 +1212,8 @@ export interface PayrollReconcileResult {
   unlinked_staff: PayrollReconcileUnlinkedStaff[];
   unmatched_transactions: PayrollReconcileUnmatched[];
   summary: PayrollReconcileSummary;
+  /** when this schedule was saved for the month */
+  saved_at?: string | null;
 }
 
 export interface PayrollScheduleLineIn {

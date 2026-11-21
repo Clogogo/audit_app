@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Payroll } from './Payroll';
-import { computePayroll, createTeacherBonus, getBonusTypes, getNextPayrollMonth, getTerms, listStaffMembers, processPayroll, reconcilePayroll, updateStaffMember } from '../api/client';
+import { addOtherDeduction, computePayroll, createTeacherBonus, getSavedReconciliation, getBonusTypes, getNextPayrollMonth, getTerms, listStaffMembers, processPayroll, reconcilePayroll, updateStaffMember } from '../api/client';
 import type { BonusType, PayrollLine, PayrollReconcileLine, PayrollReconcileResult, StaffMember } from '../api/types';
 
 vi.mock('../api/client', () => ({
   computePayroll: vi.fn(),
+  getSavedReconciliation: vi.fn(),
+  addOtherDeduction: vi.fn(),
   getNextPayrollMonth: vi.fn(),
   processPayroll: vi.fn(),
   resetPayroll: vi.fn(),
@@ -63,6 +65,8 @@ describe('Payroll page', () => {
     vi.mocked(computePayroll).mockResolvedValue([staffLine(1, 'Ada Obi', 15000), staffLine(2, 'Bola Eze', 20000)]);
     vi.mocked(processPayroll).mockReset();
     vi.mocked(reconcilePayroll).mockReset();
+    vi.mocked(getSavedReconciliation).mockReset().mockResolvedValue(null);
+    vi.mocked(addOtherDeduction).mockReset().mockResolvedValue({ staff_id: 1, other_deductions: 2000, net_salary: 13000 });
   });
 
   it('opens on the latest month whose payroll is not fully processed', async () => {
@@ -215,6 +219,43 @@ describe('Payroll page', () => {
     });
   });
 
+  describe('saved schedule and adjustments', () => {
+    const gap = (net_difference: number) => result([scheduleLine(1, 'Ada Obi', 15000 - net_difference, {
+      computed_net: 15000, net_difference, in_sync: false, status: 'matched',
+    })]);
+
+    it('reopens the schedule saved for the month without uploading anything', async () => {
+      vi.mocked(getSavedReconciliation).mockResolvedValue({ ...gap(0), saved_at: '2026-03-30T10:00:00' });
+      render(<Payroll />);
+      expect(await screen.findByText(/Schedule vs bank — March 2026/)).toHaveTextContent('saved');
+      expect(getSavedReconciliation).toHaveBeenCalledWith(2026, 3);
+      expect(reconcilePayroll).not.toHaveBeenCalled();
+    });
+
+    it('adds the gap as an other deduction after confirming, then re-compares', async () => {
+      vi.mocked(getSavedReconciliation).mockResolvedValue(gap(2000));
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      render(<Payroll />);
+      fireEvent.click(await screen.findByRole('button', { name: /Deduct ₦2,000/ }));
+      await waitFor(() => expect(addOtherDeduction).toHaveBeenCalledWith(2026, 3, 1, 2000));
+      expect(confirm.mock.calls[0][0]).toContain('Ada Obi');
+      await waitFor(() => expect(getSavedReconciliation).toHaveBeenCalledTimes(2));
+      expect(computePayroll).toHaveBeenCalledTimes(2);
+    });
+
+    it('does nothing when the deduction is not confirmed, and reports a failure', async () => {
+      vi.mocked(getSavedReconciliation).mockResolvedValue(gap(2000));
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      render(<Payroll />);
+      fireEvent.click(await screen.findByRole('button', { name: /Deduct ₦2,000/ }));
+      expect(addOtherDeduction).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true);
+      vi.mocked(addOtherDeduction).mockRejectedValue(new Error('boom'));
+      fireEvent.click(screen.getByRole('button', { name: /Deduct ₦2,000/ }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not add the deduction for Ada Obi');
+    });
+  });
+
   describe('using the bank\'s account', () => {
     const jonathan = { id: 1, full_name: 'Ada Obi', role: null, bank_name: null, account_number: null, monthly_gross: 15000,
       start_date: null, end_date: null, is_active: true, notes: null, created_at: '', updated_at: '' } as StaffMember;
@@ -242,7 +283,7 @@ describe('Payroll page', () => {
       expect(message).toContain('Account: none → 7038692765');
       expect(message).toContain('Bank: none → OPay');
       expect(message).toContain('WARNING: that name does not look like Ada Obi');
-      await waitFor(() => expect(reconcilePayroll).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(getSavedReconciliation).toHaveBeenCalledTimes(2)); // opening the month, then after the update
     });
 
     it('warns when the account is already saved for another staff member', async () => {
