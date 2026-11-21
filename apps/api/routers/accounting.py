@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import AccountMapping, BankAccount, ChartAccount, Transaction
-from utils.account_suggestions import ai_suggest_accounts, suggest_account
+from utils.account_suggestions import ai_suggest_batches, suggest_account
 from utils.accounting import CASH_CODE, Account, Entry, ledger, profit_and_loss, trial_balance
 from routers.bank_statements import _is_intra_account_transfer, _transfer_is_income
 from utils.auth import require_permission
@@ -175,11 +175,13 @@ def ai_suggest(db: Session = Depends(get_db)):
         return {"applied": 0, "without_suggestion": 0}
     if not accounts["income"] and not accounts["expense"]:
         raise HTTPException(400, "Import the chart of accounts first.")
-    found = ai_suggest_accounts(todo, accounts)
-    if not found:
+    applied = 0
+    for found in ai_suggest_batches(todo, accounts):
+        _save_mappings(db, found)   # saved batch by batch: progress survives a slow or dropped request
+        applied += len(found)
+    if applied == 0:
         raise HTTPException(503, "The AI did not return usable suggestions. Try again in a moment.")
-    _save_mappings(db, found)
-    return {"applied": len(found), "without_suggestion": len(todo) - len(found)}
+    return {"applied": applied, "without_suggestion": len(todo) - applied}
 
 
 # ── reports ───────────────────────────────────────────────────────────────────

@@ -223,16 +223,31 @@ def test_ai_suggest_works_in_batches_and_keeps_what_succeeded(client, db_session
     assert out.status_code == 200 and out.json() == {"applied": 2, "without_suggestion": 3}
 
 
-def test_ai_suggest_retries_an_empty_reply_and_accepts_a_code_followed_by_its_name(client, db_session, monkeypatch):
+def test_ai_suggest_accepts_a_code_followed_by_its_name_and_uses_a_big_token_budget(client, db_session, monkeypatch):
     import ai_worker
     _import(client)
     _tx(db_session, "expense", 50, "Zzz Stuff")
-    replies = iter(["", '[{"i": 0, "code": "5.1.1.1.1 Some account name"}]'])
     seen = []
-    monkeypatch.setattr(ai_worker, "call_ai_text", lambda p, *a: (seen.append(a), next(replies))[1])
+    monkeypatch.setattr(ai_worker, "call_ai_text", lambda p, *a: (seen.append(a), '[{"i": 0, "code": "5.1.1.1.1 Some account name"}]')[1])
     out = client.post("/accounting/mappings/ai-suggest")
     assert out.status_code == 200 and out.json()["applied"] == 1
     assert seen[0][0] >= 2000                                      # a budget big enough for reasoning models
+
+
+def test_ai_suggest_saves_each_batch_as_it_arrives(client, db_session, monkeypatch):
+    import ai_worker
+    import utils.account_suggestions as sug
+    _import(client)
+    for n in range(3):
+        _tx(db_session, "expense", 10, f"Zzz {n}")
+    monkeypatch.setattr(sug, "AI_BATCH", 1)
+    saved_before_second_call = []
+    def fake(prompt, *_):
+        saved_before_second_call.append(db_session.query(AccountMapping).filter(AccountMapping.category.like("Zzz%")).count())
+        return '[{"i": 0, "code": "5.1.1.1.1"}]'
+    monkeypatch.setattr(ai_worker, "call_ai_text", fake)
+    assert client.post("/accounting/mappings/ai-suggest").json()["applied"] == 3
+    assert saved_before_second_call == [0, 1, 2]                   # earlier batches were already committed
 
 
 def test_ai_suggest_stops_starting_batches_when_the_time_budget_is_spent(client, db_session, monkeypatch):
