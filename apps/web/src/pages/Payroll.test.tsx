@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Payroll } from './Payroll';
-import { computePayroll, getNextPayrollMonth, listStaffMembers, processPayroll, reconcilePayroll, updateStaffMember } from '../api/client';
-import type { PayrollLine, PayrollReconcileLine, PayrollReconcileResult, StaffMember } from '../api/types';
+import { computePayroll, createTeacherBonus, getBonusTypes, getNextPayrollMonth, getTerms, listStaffMembers, processPayroll, reconcilePayroll, updateStaffMember } from '../api/client';
+import type { BonusType, PayrollLine, PayrollReconcileLine, PayrollReconcileResult, StaffMember } from '../api/types';
 
 vi.mock('../api/client', () => ({
   computePayroll: vi.fn(),
@@ -11,6 +11,10 @@ vi.mock('../api/client', () => ({
   resetPayroll: vi.fn(),
   listStaffMembers: vi.fn(),
   updateStaffMember: vi.fn(),
+  getBonusTypes: vi.fn(),
+  getTerms: vi.fn(),
+  createTeacherBonus: vi.fn(),
+  updateTeacherBonus: vi.fn(),
   reconcilePayroll: vi.fn(),
 }));
 
@@ -242,6 +246,63 @@ describe('Payroll page', () => {
       fireEvent.click(await screen.findByRole('button', { name: /Use the bank's account for Ada Obi/ }));
       expect(updateStaffMember).not.toHaveBeenCalled();
       expect(reconcilePayroll).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('adding a bonus from the payroll', () => {
+    const ada = { id: 1, full_name: 'Ada Obi', role: null, bank_name: null, account_number: null, monthly_gross: 15000,
+      start_date: null, end_date: null, is_active: true, notes: null, created_at: '', updated_at: '' } as StaffMember;
+    const oneTime = { id: 1, key: 'one_time', label: 'One time Bonus', description: 'A single award', calculation_method: 'flat_amount',
+      basis_is_salary: true, default_percentage: 0, is_active: true } as BonusType;
+
+    beforeEach(() => {
+      vi.mocked(listStaffMembers).mockReset().mockResolvedValue([ada]);
+      vi.mocked(getBonusTypes).mockReset().mockResolvedValue([oneTime]);
+      vi.mocked(getTerms).mockReset().mockResolvedValue([]);
+      vi.mocked(createTeacherBonus).mockReset().mockResolvedValue({} as never);
+    });
+
+    it('no longer lets a bonus be typed into the payroll row', async () => {
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      await screen.findAllByRole('button', { name: /Add bonus for/ });
+      // gross and other deductions are still editable amount boxes; the bonus is not one
+      expect(screen.getAllByTitle('Amount')).toHaveLength(4);   // 2 staff x (gross, other)
+    });
+
+    it('opens the Bonuses form for that staff member and month, saves a bonus record, and reloads', async () => {
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      fireEvent.click((await screen.findAllByRole('button', { name: 'Add bonus for Ada Obi' }))[0]);
+
+      const dialog = await screen.findByRole('dialog', { name: 'Add Bonus' });
+      expect((screen.getByTitle('Select staff member') as HTMLSelectElement).value).toBe('1');
+      expect((screen.getByTitle('Payroll month') as HTMLSelectElement).value).toBe('3');
+      fireEvent.change(screen.getByTitle('Select bonus type'), { target: { value: 'one_time' } });
+      const amount = screen.getByText('Bonus Amount (₦)').parentElement!.querySelector('input')!;
+      fireEvent.change(amount, { target: { value: '5000' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add Bonus' }));
+
+      await waitFor(() => expect(createTeacherBonus).toHaveBeenCalled());
+      expect(vi.mocked(createTeacherBonus).mock.calls[0][0]).toMatchObject({
+        staff_id: 1, bonus_type: 'one_time', frequency: 'onetime', period_year: 2026, period_month: 3,
+        basis_amount: 15000,
+      });
+      expect(vi.mocked(createTeacherBonus).mock.calls[0][0].percentage).toBeCloseTo(33.33, 1);
+      await waitFor(() => expect(computePayroll).toHaveBeenCalledTimes(2));
+      expect(dialog).not.toBeInTheDocument();
+    });
+
+    it('keeps the form open and shows the reason when saving fails', async () => {
+      vi.mocked(createTeacherBonus).mockRejectedValue({ response: { data: { detail: 'Bonus type is not active' } } });
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      fireEvent.click((await screen.findAllByRole('button', { name: 'Add bonus for Ada Obi' }))[0]);
+      await screen.findByRole('dialog', { name: 'Add Bonus' });
+      fireEvent.change(screen.getByTitle('Select bonus type'), { target: { value: 'one_time' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add Bonus' }));
+      expect(await screen.findByText('Bonus type is not active')).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: 'Add Bonus' })).toBeInTheDocument();
     });
   });
 });

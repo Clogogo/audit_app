@@ -9,10 +9,11 @@ import {
   Loader2,
   Pencil,
 } from 'lucide-react';
-import { computePayroll, getNextPayrollMonth, listStaffMembers, processPayroll, resetPayroll, updateStaffMember } from '../api/client';
-import type { PayrollEntryOut, PayrollLine, PayrollLineIn, PayrollProcessIssue, PayrollReconcileResult } from '../api/types';
+import { computePayroll, getBonusTypes, getNextPayrollMonth, getTerms, listStaffMembers, processPayroll, resetPayroll, updateStaffMember } from '../api/client';
+import type { BonusType, PayrollEntryOut, PayrollLine, PayrollLineIn, PayrollProcessIssue, PayrollReconcileResult, StaffMember, Term } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { BonusFormModal } from '../components/BonusFormModal';
 import { ReconcileResults } from '../components/payroll/ReconcileResults';
 import type { AccountUpdate } from '../components/payroll/ReconcileResults';
 import { ScheduleCells } from '../components/payroll/ScheduleCells';
@@ -73,8 +74,10 @@ export function Payroll() {
   // — survives the post-process reload, cleared when the month changes.
   const [payNotices, setPayNotices] = useState<string[]>([]);
 
-  // Per-row overrides for gross, bonus, and other_deductions
-  const [overrides, setOverrides] = useState<Record<number, { gross: number; bonus: number; other: number }>>({});
+  // Per-row overrides for gross and other_deductions (bonuses are added through the Bonuses form, not typed here)
+  const [overrides, setOverrides] = useState<Record<number, { gross: number; other: number }>>({});
+  // The shared Bonuses form, opened for one staff member of this month
+  const [bonusForm, setBonusForm] = useState<{ staffId: number; staff: StaffMember[]; types: BonusType[]; terms: Term[] } | null>(null);
   // Per-row skip flag — skipped rows are excluded from totals and from processing
   const [skipped, setSkipped] = useState<Record<number, boolean>>({});
 
@@ -96,8 +99,8 @@ export function Payroll() {
         setLines(data);
         if (!preserveEdits) {
           // Fresh month load — initialise overrides from server values
-          const init: Record<number, { gross: number; bonus: number; other: number }> = {};
-          data.forEach((l) => { init[l.staff_id] = { gross: l.gross_salary, bonus: l.bonus, other: l.other_deductions }; });
+          const init: Record<number, { gross: number; other: number }> = {};
+          data.forEach((l) => { init[l.staff_id] = { gross: l.gross_salary, other: l.other_deductions }; });
           setOverrides(init);
         } else {
           // After reset — keep existing overrides; only fill in any new staff
@@ -105,7 +108,7 @@ export function Payroll() {
             const updated = { ...prev };
             data.forEach((l) => {
               if (!updated[l.staff_id]) {
-                updated[l.staff_id] = { gross: l.gross_salary, bonus: l.bonus, other: l.other_deductions };
+                updated[l.staff_id] = { gross: l.gross_salary, other: l.other_deductions };
               }
             });
             return updated;
@@ -210,8 +213,19 @@ export function Payroll() {
     }
   };
 
+  // Bonuses are records, not typed amounts: open the Bonuses form for this staff member and month,
+  // then reload so the saved bonus flows into the payroll line.
+  const openBonusForm = async (staffId: number) => {
+    try {
+      const [staff, types, terms] = await Promise.all([listStaffMembers(true), getBonusTypes(), getTerms()]);
+      setBonusForm({ staffId, staff, types, terms });
+    } catch {
+      setError('Could not load the bonus form.');
+    }
+  };
+
   const getGross = (l: PayrollLine) => overrides[l.staff_id]?.gross ?? l.gross_salary;
-  const getBonus = (l: PayrollLine) => overrides[l.staff_id]?.bonus ?? l.bonus;
+  const getBonus = (l: PayrollLine) => l.bonus;
   const getOther = (l: PayrollLine) => overrides[l.staff_id]?.other ?? l.other_deductions;
   const getNet   = (l: PayrollLine) => Math.max(0, getGross(l) + getBonus(l) - l.loan_deduction - l.advance_deduction - getOther(l));
 
@@ -532,16 +546,19 @@ export function Payroll() {
                           )}
                         </td>
                         <td className="py-3 pr-3 text-right">
-                          {rowDisabled ? (
-                            <span className={skippedRow ? 'line-through text-muted-foreground' : (getBonus(l) > 0 ? 'text-income font-medium' : 'text-muted-foreground')}>
-                              {getBonus(l) > 0 ? formatCurrency(getBonus(l)) : '—'}
-                            </span>
-                          ) : (
-                            <NumCell
-                              value={getBonus(l)}
-                              onChange={(n) => setOverrides((o) => ({ ...o, [l.staff_id]: { ...o[l.staff_id], bonus: n } }))}
-                              disabled={false}
-                            />
+                          <span className={skippedRow ? 'line-through text-muted-foreground' : (getBonus(l) > 0 ? 'text-income font-medium' : 'text-muted-foreground')}>
+                            {getBonus(l) > 0 ? formatCurrency(getBonus(l)) : '—'}
+                          </span>
+                          {!rowDisabled && (
+                            <button
+                              type="button"
+                              aria-label={`Add bonus for ${l.full_name}`}
+                              title="Add a bonus — it is saved under Bonuses"
+                              onClick={() => openBonusForm(l.staff_id)}
+                              className="ml-2 text-xs text-primary underline hover:no-underline"
+                            >
+                              + Bonus
+                            </button>
                           )}
                         </td>
                         <td className="py-3 pr-3 text-right text-expense font-medium">
@@ -662,7 +679,7 @@ export function Payroll() {
             <div className="mt-4 flex items-start gap-2 rounded-lg bg-muted/30 border border-border px-4 py-3 text-xs text-muted-foreground">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>
-                Adjust gross salary and bonuses before processing. Loan and IOU deductions are calculated
+                Adjust gross salary before processing, and add bonuses with + Bonus (they are saved under Bonuses). Loan and IOU deductions are calculated
                 automatically — record them under Staff → Loans or Staff → IOU, not here.{' '}
                 <strong className="text-foreground">Other Deductions</strong> is only for one-off charges
                 (uniform, fines, etc.) that don't belong to a loan or IOU.{' '}
@@ -674,6 +691,17 @@ export function Payroll() {
           )}
         </CardContent>
       </Card>
+
+      {bonusForm && (
+        <BonusFormModal
+          staffList={bonusForm.staff}
+          bonusTypes={bonusForm.types}
+          terms={bonusForm.terms}
+          defaults={{ staffId: bonusForm.staffId, year, month }}
+          onClose={() => setBonusForm(null)}
+          onSaved={() => { setBonusForm(null); load(true); }}
+        />
+      )}
 
       {/* Reset confirmation */}
       {showResetConfirm && (
