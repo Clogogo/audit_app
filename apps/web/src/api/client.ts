@@ -704,6 +704,9 @@ export const setAccountMapping = (category: string, type: 'income' | 'expense', 
 export const applyMappingSuggestions = () =>
   api.post<{ applied: number; without_suggestion: number }>('/accounting/mappings/apply-suggestions').then(unwrap);
 
+export const aiSuggestMappings = () =>
+  api.post<{ applied: number; without_suggestion: number }>('/accounting/mappings/ai-suggest', null, { timeout: 120000 }).then(unwrap);
+
 export const getProfitAndLoss = (startDate: string, endDate: string) =>
   api.get<ProfitAndLoss>('/accounting/profit-and-loss', { params: { start_date: startDate, end_date: endDate } }).then(unwrap);
 

@@ -2,13 +2,13 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChartOfAccounts } from './ChartOfAccounts';
 import {
-  applyMappingSuggestions, getAccountMappings, getChartOfAccounts, importChartOfAccounts, setAccountMapping,
+  aiSuggestMappings, applyMappingSuggestions, getAccountMappings, getChartOfAccounts, importChartOfAccounts, setAccountMapping,
 } from '../api/client';
 import type { CategoryMappingRow, ChartAccount, ChartResponse } from '../api/types';
 
 vi.mock('../api/client', () => ({
   getChartOfAccounts: vi.fn(), getAccountMappings: vi.fn(), importChartOfAccounts: vi.fn(),
-  setAccountMapping: vi.fn(), applyMappingSuggestions: vi.fn(),
+  setAccountMapping: vi.fn(), applyMappingSuggestions: vi.fn(), aiSuggestMappings: vi.fn(),
 }));
 
 const acct = (code: string, name: string, category: ChartAccount['category'], section: string, postable = true): ChartAccount => ({
@@ -35,7 +35,7 @@ const load = (chart: ChartResponse = CHART, rows = ROWS) => {
 
 describe('ChartOfAccounts page', () => {
   beforeEach(() => {
-    [getChartOfAccounts, getAccountMappings, importChartOfAccounts, setAccountMapping, applyMappingSuggestions].forEach((f) => vi.mocked(f).mockReset());
+    [getChartOfAccounts, getAccountMappings, importChartOfAccounts, setAccountMapping, applyMappingSuggestions, aiSuggestMappings].forEach((f) => vi.mocked(f).mockReset());
     vi.mocked(setAccountMapping).mockResolvedValue({});
     load();
   });
@@ -84,6 +84,14 @@ describe('ChartOfAccounts page', () => {
     render(<ChartOfAccounts />);
     fireEvent.click(await screen.findByRole('button', { name: 'Apply suggested accounts' }));
     expect(await screen.findByRole('status')).toHaveTextContent('1 category mapped to their suggested account; 1 still need your choice.');
+    expect(getAccountMappings).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets the AI suggest accounts and says what it did', async () => {
+    vi.mocked(aiSuggestMappings).mockResolvedValue({ applied: 2, without_suggestion: 0 });
+    render(<ChartOfAccounts />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Suggest General Ledger' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('AI mapped 2 categories; 0 still need your choice.');
     expect(getAccountMappings).toHaveBeenCalledTimes(2);
   });
 
