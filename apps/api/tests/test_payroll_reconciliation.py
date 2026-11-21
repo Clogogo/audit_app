@@ -10,8 +10,8 @@ from openpyxl import Workbook
 
 from models import Transaction
 from utils.payroll_recon import (
-    ScheduleError, ScheduleRow, SkippedRow, link_staff_to_rows, parse_schedule, parse_schedule_full,
-    parse_schedule_with_skips, reconcile,
+    ScheduleError, ScheduleRow, SkippedRow, link_staff_to_rows, parse_payment_recipient, parse_schedule,
+    parse_schedule_full, parse_schedule_with_skips, reconcile,
 )
 
 
@@ -619,3 +619,113 @@ def test_reconcile_has_no_extra_payment_flag_for_unpaid_or_clean_rows(db_session
     rows = [ScheduleRow(2, "Ngozi Williams", 15000.0, None), ScheduleRow(3, "Grace Balogun", 9000.0, None)]
     lines = reconcile(rows, db_session.query(Transaction).all())["lines"]
     assert [l["extra_payment_ids"] for l in lines] == [[], []]
+
+
+# ── account details: directory fills blanks, the bank is the truth ───────────
+
+def _acct_tx(db, vendor, amount, account, bank="OPay", day="2026-01-30"):
+    tx = Transaction(
+        type="expense", amount=amount, currency="NGN", category="Salary and Wages",
+        description=f"Transfer to {vendor} | {bank} | {account} | January 2026", date=date.fromisoformat(day), vendor=vendor,
+    )
+    db.add(tx)
+    db.commit()
+    return tx
+
+
+def test_parse_payment_recipient_reads_name_bank_and_account():
+    assert parse_payment_recipient("Transfer to PATRICIA OGOGO | OPay | 7038692765 | August Salary") == ("PATRICIA OGOGO", "OPay", "7038692765")
+
+
+def test_parse_payment_recipient_ignores_masked_dummy_and_non_transfer_accounts():
+    assert parse_payment_recipient("Transfer to X | OPay | 955****234 | note") == ("X", "OPay", None)
+    assert parse_payment_recipient("Transfer to X | OPay | 0000000000 | note") == ("X", "OPay", None)
+    assert parse_payment_recipient("Transfer from X | OPay | 7038692765") == (None, None, None)
+    assert parse_payment_recipient("something else") == (None, None, None)
+
+
+def test_endpoint_uses_the_directory_account_when_the_sheet_has_none(client, db_session):
+    from models import Staff
+    jon = Staff(full_name="MRS JONATHAN OGOGO", monthly_gross=50000.0, account_number="7038692765", is_active=True)
+    db_session.add(jon)
+    db_session.commit()
+    tx = _acct_tx(db_session, "PATRICIA NKECHI OGOGO", 50000.0, "7038692765")     # paid to another name
+    line = _post(client, _xlsx([["Name", "Amount"], ["MRS JONATHAN OGOGO", 50000]])).json()["lines"][0]
+    assert line["status"] == "matched" and line["transaction_ids"] == [tx.id]
+    assert line["staff_id"] == jon.id and line["account_source"] == "directory"
+    assert line["account_check"] == "ok" and line["paid_account"] == "7038692765" and line["paid_to"] == "PATRICIA NKECHI OGOGO"
+
+
+def test_endpoint_prefers_the_sheet_account_and_flags_a_different_directory_account(client, db_session):
+    from models import Staff
+    db_session.add(Staff(full_name="Ada Obi", monthly_gross=15000.0, account_number="0999999999", is_active=True))
+    db_session.commit()
+    _acct_tx(db_session, "ADA OBI", 15000.0, "0123456789")
+    sheet = _xlsx([["Name", "Account Number", "Amount"], ["Ada Obi", "0123456789", 15000]])
+    line = _post(client, sheet).json()["lines"][0]
+    assert line["status"] == "matched" and line["account_source"] == "sheet"
+    assert line["account_check"] == "differs" and line["directory_account"] == "0999999999"
+    assert line["paid_account"] == "0123456789" and line["paid_bank"] == "OPay"
+
+
+def test_endpoint_asks_for_an_account_when_the_directory_has_none(client, db_session):
+    from models import Staff
+    db_session.add(Staff(full_name="Ada Obi", monthly_gross=15000.0, is_active=True))
+    db_session.commit()
+    _acct_tx(db_session, "ADA OBI", 15000.0, "0123456789")
+    line = _post(client, _xlsx([["Name", "Amount"], ["Ada Obi", 15000]])).json()["lines"][0]
+    assert line["account_check"] == "missing" and line["directory_account"] is None
+
+
+def test_endpoint_does_not_judge_accounts_it_cannot_read(client, db_session):
+    from models import Staff
+    db_session.add(Staff(full_name="Ada Obi", monthly_gross=15000.0, account_number="0999999999", is_active=True))
+    db_session.commit()
+    _tx(db_session, "ADA OBI", 15000.0)                       # narration account is a dummy 0000000000
+    assert _post(client, _xlsx([["Name", "Amount"], ["Ada Obi", 15000]])).json()["lines"][0]["account_check"] is None
+
+
+def test_unpaid_row_suggests_the_unclaimed_payment_of_the_same_amount(db_session):
+    big = _acct_tx(db_session, "PATRICIA NKECHI OGOGO", 50000.0, "7038692765", day="2026-01-28")
+    _acct_tx(db_session, "PATRICIA NKECHI OGOGO", 5000.0, "7038692765", day="2026-01-29")
+    result = reconcile([ScheduleRow(1, "MRS JONATHAN OGOGO", 50000.0, None)], db_session.query(Transaction).all())
+    line = result["lines"][0]
+    assert line["status"] == "not_paid"
+    assert line["suggested_payments"] == [{
+        "id": big.id, "date": "2026-01-28", "amount": 50000.0, "vendor": "PATRICIA NKECHI OGOGO",
+        "account": "7038692765", "bank": "OPay",
+    }]
+
+
+def test_no_suggestion_when_nothing_is_close_in_amount(db_session):
+    _acct_tx(db_session, "PATRICIA NKECHI OGOGO", 5000.0, "7038692765")
+    line = reconcile([ScheduleRow(1, "MRS JONATHAN OGOGO", 50000.0, None)], db_session.query(Transaction).all())["lines"][0]
+    assert line["suggested_payments"] == []
+
+
+# ── review hardening: stale / shared accounts and suggestions ─────────────────
+
+def test_stale_directory_account_does_not_hide_the_real_payment(client, db_session):
+    from models import Staff
+    db_session.add(Staff(full_name="Alice Ade", monthly_gross=50000.0, account_number="7038692765", is_active=True))
+    db_session.commit()
+    _acct_tx(db_session, "ALICE ADE", 10000.0, "7038692765", day="2026-01-10")        # an advance to her old account
+    real = _acct_tx(db_session, "ALICE ADE", 50000.0, "0123456789", bank="GTB")      # salary to her new bank
+    line = _post(client, _xlsx([["Name", "Amount"], ["Alice Ade", 50000]])).json()["lines"][0]
+    assert line["status"] == "matched" and line["transaction_ids"] == [real.id]
+    assert line["account_check"] == "differs" and line["paid_account"] == "0123456789"
+
+
+def test_shared_account_does_not_let_one_person_take_anothers_payment(db_session):
+    bob = _acct_tx(db_session, "BOB BELLO", 50000.0, "7038692765")
+    rows = [ScheduleRow(1, "Alice Ade", 50000.0, "7038692765"), ScheduleRow(2, "Bob Bello", 50000.0, "7038692765")]
+    lines = {l["row_number"]: l for l in reconcile(rows, db_session.query(Transaction).all())["lines"]}
+    assert lines[2]["transaction_ids"] == [bob.id] and lines[2]["status"] == "matched"
+    assert lines[1]["status"] == "not_paid"
+
+
+def test_a_payment_is_not_suggested_to_two_unpaid_rows(db_session):
+    _acct_tx(db_session, "ZED KING", 50000.0, "7038692765")
+    rows = [ScheduleRow(1, "Alice Ade", 50000.0, None), ScheduleRow(2, "Bob Bello", 50000.0, None)]
+    lines = reconcile(rows, db_session.query(Transaction).all())["lines"]
+    assert [l["suggested_payments"] for l in lines] == [[], []]

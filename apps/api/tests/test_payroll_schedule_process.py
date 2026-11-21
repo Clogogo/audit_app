@@ -15,10 +15,10 @@ def _staff(db, name, gross=15000.0, account=None, **extra):
     return s
 
 
-def _salary_tx(db, vendor, amount, day="2026-01-30"):
+def _salary_tx(db, vendor, amount, day="2026-01-30", account="0000000000"):
     tx = Transaction(
         type="expense", amount=amount, currency="NGN", category="Salary and Wages",
-        description=f"Transfer to {vendor} | OPay | 0000000000 | January 2026",
+        description=f"Transfer to {vendor} | OPay | {account} | January 2026",
         date=date.fromisoformat(day), vendor=vendor,
     )
     db.add(tx)
@@ -252,3 +252,27 @@ def test_next_month_does_not_require_staff_before_their_first_entry(client, db_s
     _paid_entry(db_session, bola, 1)                        # Bola first appears one month ago
     _paid_entry(db_session, ada, 1)
     assert _next(client) == _months_ago(0)                  # months 3 and 2 never needed Bola
+
+
+# ── account details: directory fills blanks, the bank is the truth ───────────
+
+def test_process_uses_the_directory_account_when_the_schedule_has_none(client, db_session):
+    jon = _staff(db_session, "MRS JONATHAN OGOGO", gross=50000.0, account="7038692765")
+    tx = _salary_tx(db_session, "PATRICIA NKECHI OGOGO", 50000.0, account="7038692765")   # paid to someone else's name
+    resp = _process(client, [_line(jon, gross=50000.0)], [_row(1, "MRS JONATHAN OGOGO", 50000.0)])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["transaction_id"] == tx.id
+
+
+def test_process_blocks_when_the_bank_paid_a_different_account_than_the_directory_has(client, db_session):
+    ada = _staff(db_session, "Ada Obi", account="0999999999")
+    _salary_tx(db_session, "ADA OBI", 15000.0, account="0123456789")
+    resp = _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)])
+    assert ("Ada Obi", "account_differs") in _issues(resp)
+    assert db_session.query(PayrollEntry).count() == 0
+
+
+def test_process_allows_a_directory_with_no_account_yet(client, db_session):
+    ada = _staff(db_session, "Ada Obi")
+    _salary_tx(db_session, "ADA OBI", 15000.0, account="0123456789")
+    assert _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)]).status_code == 200

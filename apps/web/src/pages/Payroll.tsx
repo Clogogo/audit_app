@@ -9,11 +9,12 @@ import {
   Loader2,
   Pencil,
 } from 'lucide-react';
-import { computePayroll, getNextPayrollMonth, processPayroll, resetPayroll } from '../api/client';
+import { computePayroll, getNextPayrollMonth, listStaffMembers, processPayroll, resetPayroll, updateStaffMember } from '../api/client';
 import type { PayrollEntryOut, PayrollLine, PayrollLineIn, PayrollProcessIssue, PayrollReconcileResult } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { ReconcileResults } from '../components/payroll/ReconcileResults';
+import type { AccountUpdate } from '../components/payroll/ReconcileResults';
 import { ScheduleCells } from '../components/payroll/ScheduleCells';
 import { SchedulePanel } from '../components/payroll/SchedulePanel';
 import { checkRow, scheduleLinesFor } from '../components/payroll/scheduleCheck';
@@ -65,6 +66,8 @@ export function Payroll() {
   const [reconcile, setReconcile] = useState<PayrollReconcileResult | null>(null);
   // The page opens on the first month whose payroll is not complete; nothing loads until that is known
   const [startResolved, setStartResolved] = useState(false);
+  // bumped after the directory's account changes, so the schedule is re-reconciled with it
+  const [rerunSchedule, setRerunSchedule] = useState(0);
   const [success, setSuccess] = useState<string | null>(null);
   // Notices about real paid amounts (excess folded into bonus / underpayment)
   // — survives the post-process reload, cleared when the month changes.
@@ -160,6 +163,51 @@ export function Payroll() {
     });
     setError(null);
     setProcessIssues([]);
+  };
+
+  // For staff still in the directory who are no longer employed: they drop off payroll (past entries are kept)
+  const deactivate = async (l: PayrollLine) => {
+    if (!window.confirm(`Deactivate ${l.full_name}? They will no longer appear in payroll until reactivated in the Staff Directory. Past payroll is kept.`)) return;
+    try {
+      const member = (await listStaffMembers()).find((m) => m.id === l.staff_id);
+      if (!member) throw new Error('not found');
+      await updateStaffMember(member.id, { ...member, is_active: false });
+      setSuccess(`${l.full_name} was deactivated.`);
+      load(true);
+    } catch {
+      setError(`Could not deactivate ${l.full_name}.`);
+    }
+  };
+
+  // The bank is the truth for account number and bank: after showing exactly what changes (and any
+  // warning signs), save what it paid to the staff directory.
+  const useBankAccount = async (u: AccountUpdate) => {
+    try {
+      const members = await listStaffMembers();
+      const member = members.find((m) => m.id === u.staffId);
+      if (!member) throw new Error('not found');
+      const digits = (v: string | null) => (v ?? '').replace(/\D/g, '');
+      const sharedWith = members
+        .filter((m) => m.id !== member.id && digits(m.account_number) !== '' && digits(m.account_number) === digits(u.account))
+        .map((m) => m.full_name);
+      const nameWords = member.full_name.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+      const holder = u.holder?.toLowerCase() ?? '';
+      const unrelated = holder !== '' && !nameWords.some((w) => holder.includes(w));
+      const message = [
+        `Update ${member.full_name} in the Staff Directory?`,
+        `Account: ${member.account_number || 'none'} → ${u.account}`,
+        u.bank ? `Bank: ${member.bank_name || 'none'} → ${u.bank}` : `Bank: ${member.bank_name || 'none'} (unchanged, the bank statement did not name it)`,
+        u.holder ? `The bank shows the account holder as ${u.holder}.` : '',
+        unrelated ? `WARNING: that name does not look like ${member.full_name}. Continue only if this is really their account.` : '',
+        sharedWith.length ? `WARNING: this account is already saved for ${sharedWith.join(', ')}.` : '',
+      ].filter(Boolean).join('\n');
+      if (!window.confirm(message)) return;
+      await updateStaffMember(member.id, { ...member, account_number: u.account, bank_name: u.bank ?? member.bank_name });
+      setSuccess(`${u.staffName}'s account was updated to ${u.account}.`);
+      setRerunSchedule((n) => n + 1);
+    } catch {
+      setError(`Could not update ${u.staffName}'s account.`);
+    }
   };
 
   const getGross = (l: PayrollLine) => overrides[l.staff_id]?.gross ?? l.gross_salary;
@@ -296,8 +344,8 @@ export function Payroll() {
         </div>
       </div>
 
-      <SchedulePanel year={year} month={month} monthLabel={`${MONTHS[month - 1]} ${year}`} onResult={setReconcile} />
-      {reconcile && <ReconcileResults result={reconcile} />}
+      <SchedulePanel year={year} month={month} monthLabel={`${MONTHS[month - 1]} ${year}`} onResult={setReconcile} rerunToken={rerunSchedule} />
+      {reconcile && <ReconcileResults result={reconcile} onUseAccount={useBankAccount} />}
 
       {error && (
         <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-2">
@@ -552,6 +600,13 @@ export function Payroll() {
                               >
                                 Undo
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => deactivate(l)}
+                                className="text-xs text-destructive underline hover:no-underline"
+                              >
+                                Deactivate
+                              </button>
                             </div>
                           ) : (
                             <div className="flex flex-col items-center gap-1">
@@ -562,6 +617,13 @@ export function Payroll() {
                                 className="text-xs text-orange-600 underline hover:no-underline"
                               >
                                 Skip
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deactivate(l)}
+                                className="text-xs text-destructive underline hover:no-underline"
+                              >
+                                Deactivate
                               </button>
                             </div>
                           )}

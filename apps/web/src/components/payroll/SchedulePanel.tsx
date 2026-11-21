@@ -22,10 +22,12 @@ interface SchedulePanelProps {
   month: number;
   monthLabel: string;
   onResult: (result: PayrollReconcileResult | null) => void;
+  /** bump to re-run the reconciliation with the same file/paste (e.g. after the directory was updated) */
+  rerunToken?: number;
 }
 
 /** Upload or paste the month's payroll schedule and reconcile it with the bank payments. */
-export function SchedulePanel({ year, month, monthLabel, onResult }: SchedulePanelProps) {
+export function SchedulePanel({ year, month, monthLabel, onResult, rerunToken = 0 }: SchedulePanelProps) {
   const [mode, setMode] = useState<InputMode>('file');
   const [file, setFile] = useState<File | null>(null);
   const [pasted, setPasted] = useState('');
@@ -67,6 +69,10 @@ export function SchedulePanel({ year, month, monthLabel, onResult }: SchedulePan
       if (id === requestId.current) setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (rerunToken > 0) void run();
+  }, [rerunToken]);
 
   return (
     <Card>

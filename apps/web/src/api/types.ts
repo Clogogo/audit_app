@@ -1195,12 +1195,29 @@ export interface PayrollReconcileLine {
   /** other bank payments that look like this person's but were not used — a possible duplicate */
   extra_payment_ids: number[];
   extra_paid_amount: number;
+  /** what the bank actually paid: the truth for account number and bank */
+  paid_account: string | null;
+  paid_bank: string | null;
+  /** unpaid row + an unclaimed payment of about the same amount */
+  suggested_payments: PayrollSuggestedPayment[];
+  account_source: 'sheet' | 'directory' | null;
+  directory_account: string | null;
+  account_check: 'ok' | 'missing' | 'differs' | null;
   // Staff-directory cross-check; null when the row could not be linked to a staff member
   staff_id: number | null;
   staff_name: string | null;
   computed_net: number | null;
   net_difference: number | null;
   in_sync: boolean | null;
+}
+
+export interface PayrollSuggestedPayment {
+  id: number;
+  date: string;
+  amount: number;
+  vendor: string | null;
+  account: string | null;
+  bank: string | null;
 }
 
 export interface PayrollReconcileUnlinkedStaff {

@@ -76,6 +76,18 @@ describe('SchedulePanel', () => {
   });
 });
 
+describe('SchedulePanel re-run', () => {
+  it('re-reconciles with the same file when the re-run token is bumped, and not before', async () => {
+    vi.mocked(reconcilePayroll).mockReset().mockResolvedValue(RESULT);
+    const onResult = vi.fn();
+    const { rerender } = render(<SchedulePanel year={2026} month={1} monthLabel="M1" onResult={onResult} rerunToken={0} />);
+    const file = chooseFile();
+    expect(reconcilePayroll).not.toHaveBeenCalled();
+    rerender(<SchedulePanel year={2026} month={1} monthLabel="M1" onResult={onResult} rerunToken={1} />);
+    await waitFor(() => expect(reconcilePayroll).toHaveBeenCalledWith(file, 2026, 1));
+  });
+});
+
 describe('extractErrorMessage', () => {
   it('prefers a string detail and falls back to generic messages', () => {
     expect(extractErrorMessage({ response: { data: { detail: 'Bad file' } } })).toBe('Bad file');

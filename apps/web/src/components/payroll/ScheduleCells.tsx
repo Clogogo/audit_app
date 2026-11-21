@@ -21,6 +21,10 @@ function Badge({ check }: { check: RowCheck }) {
       return <span className={WARN} title="Check the salary, bonus, loans, advances and other deductions">
         <AlertCircle className="h-3 w-3" />Total differs by {formatCurrency(Math.abs(check.totalGap ?? 0))}
       </span>;
+    case 'account':
+      return <span className={WARN} title={`Bank paid ${check.paidAccount}; directory has ${check.directoryAccount}`}>
+        <AlertCircle className="h-3 w-3" />Account differs
+      </span>;
     case 'bank':
       return <span className={check.status === 'not_paid' ? BAD : WARN} title={check.note ?? undefined}>
         <AlertCircle className="h-3 w-3" />

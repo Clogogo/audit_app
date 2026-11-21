@@ -28,7 +28,7 @@ from routers.payroll import (
     PayrollEntryOut, PayrollLineIn, ProcessRequest, _capped_deductions, compute_payroll, upsert_payroll_entry,
 )
 from utils.auth import require_permission
-from utils.payroll_recon import ScheduleRow, link_staff_to_rows, reconcile, within_tolerance
+from utils.payroll_recon import ScheduleRow, check_account, link_and_fill, reconcile, within_tolerance
 
 router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(require_permission("staff"))])
 
@@ -108,6 +108,13 @@ def _plan_line(
 
     rline = recon[row.row_number]
     issues = _row_issues(staff, rline)
+    if check_account(staff.account_number, rline.get("paid_account")) == "differs":
+        issues.append(_issue(
+            staff, "account_differs",
+            f"The bank paid account {rline['paid_account']} ({rline['paid_to']}) but the staff directory has "
+            f"{staff.account_number}. Confirm the bank's account and update the directory.",
+            expected=row.amount, paid=rline["paid_amount"],
+        ))
     if not within_tolerance(_cents(net) - _cents(row.amount)):
         issues.append(_issue(
             staff, "net_mismatch",
@@ -142,7 +149,6 @@ def _entry_out(db: Session, entry: PayrollEntry, paid_amount: Optional[float]) -
 
 def process_with_schedule(req: ProcessRequest, db: Session) -> list[PayrollEntryOut]:
     rows = [ScheduleRow(r.row_number, r.name.strip(), round(r.amount, 2), r.account_number) for r in req.schedule or []]
-    recon = {ln["row_number"]: ln for ln in reconcile(rows, _month_salary_payments(db, req.year, req.month))["lines"]}
 
     line_ids = [l.staff_id for l in req.lines]
     if len(line_ids) != len(set(line_ids)):
@@ -161,7 +167,8 @@ def process_with_schedule(req: ProcessRequest, db: Session) -> list[PayrollEntry
     for payroll_line in compute_payroll(req.year, req.month, db):
         if payroll_line.staff_id not in population and (other := db.get(Staff, payroll_line.staff_id)):
             population[other.id] = other
-    links = link_staff_to_rows(list(population.values()), rows)
+    filled, links, _ = link_and_fill(rows, list(population.values()))
+    recon = {ln["row_number"]: ln for ln in reconcile(filled, _month_salary_payments(db, req.year, req.month))["lines"]}
 
     plans: list[_Plan] = []
     issues: list[dict[str, Any]] = []

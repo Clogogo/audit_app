@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Staff, Transaction
 from utils.auth import require_permission
-from utils.payroll_recon import ScheduleError, link_staff_to_rows, parse_schedule_full, reconcile, within_tolerance
+from utils.payroll_recon import ScheduleError, check_account, link_and_fill, parse_schedule_full, reconcile, within_tolerance
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,15 @@ router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(re
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 SALARY_CATEGORY = "Salary and Wages"
+
+
+class SuggestedPayment(BaseModel):
+    id: int
+    date: date
+    amount: float
+    vendor: Optional[str] = None
+    account: Optional[str] = None
+    bank: Optional[str] = None
 
 
 class ReconcileLine(BaseModel):
@@ -37,6 +46,12 @@ class ReconcileLine(BaseModel):
     note: Optional[str] = None
     extra_payment_ids: list[int] = []   # other payments that look like this person's: possible duplicate
     extra_paid_amount: float = 0.0
+    paid_account: Optional[str] = None       # account/bank the bank actually paid (the truth)
+    paid_bank: Optional[str] = None
+    suggested_payments: list[SuggestedPayment] = []
+    account_source: Optional[str] = None     # 'sheet' | 'directory': where the row's account number came from
+    directory_account: Optional[str] = None
+    account_check: Optional[str] = None      # 'ok' | 'missing' | 'differs' (directory vs the paid account)
     # Staff-directory cross-check (filled when the row can be linked to a staff member)
     staff_id: Optional[int] = None
     staff_name: Optional[str] = None
@@ -64,6 +79,8 @@ class UnmatchedTransaction(BaseModel):
     amount: float
     description: str
     vendor: Optional[str]
+    account: Optional[str] = None
+    bank: Optional[str] = None
 
 
 class ReconcileSummary(BaseModel):
@@ -96,26 +113,33 @@ def _read_limited(file: UploadFile) -> bytes:
     return content
 
 
-def _with_directory_check(result: dict, rows: list, year: int, month: int, db: Session) -> dict:
-    """Attach, to each reconciled row, the staff member it belongs to and
-    whether the directory's computed net pay agrees with the schedule."""
+def _reconcile_with_directory(rows: list, payments: list, year: int, month: int, db: Session) -> dict:
+    """Reconcile the schedule, filling a blank account number from the staff
+    directory first, then attach to each row the staff member it belongs to,
+    whether the directory's computed net agrees, and whether the directory's
+    account matches the account the bank actually paid."""
     from routers.payroll import compute_payroll
 
     payroll = compute_payroll(year, month, db)
     staff = db.query(Staff).filter(Staff.id.in_([p.staff_id for p in payroll])).all() if payroll else []
-    links = link_staff_to_rows(staff, rows)
+    filled, links, sources = link_and_fill(rows, staff)
+    result = reconcile(filled, payments)
+
     net_by_staff = {p.staff_id: p.net_salary for p in payroll}
-    names = {s.id: s.full_name for s in staff}
+    staff_by_id = {s.id: s for s in staff}
     staff_by_row = {row.row_number: sid for sid, row in links.items()}
 
     def enrich(line: dict) -> dict:
+        line = {**line, "account_source": sources.get(line["row_number"])}
         sid = staff_by_row.get(line["row_number"])
         if sid is None:
             return line
         computed = round(net_by_staff[sid], 2)
         gap = round(computed - line["expected_amount"], 2)
-        return {**line, "staff_id": sid, "staff_name": names[sid], "computed_net": computed,
-                "net_difference": gap, "in_sync": within_tolerance(round(gap * 100))}
+        directory = staff_by_id[sid].account_number or None
+        return {**line, "staff_id": sid, "staff_name": staff_by_id[sid].full_name, "computed_net": computed,
+                "net_difference": gap, "in_sync": within_tolerance(round(gap * 100)),
+                "directory_account": directory, "account_check": check_account(directory, line["paid_account"])}
 
     return {
         **result,
@@ -151,6 +175,6 @@ def reconcile_payroll(
         Transaction.date >= month_start,
         Transaction.date <= month_end,
     )
-    result = _with_directory_check(reconcile(parsed.rows, query.all()), parsed.rows, year, month, db)
+    result = _reconcile_with_directory(parsed.rows, query.all(), year, month, db)
     logger.info("Payroll reconcile %04d-%02d: %s", year, month, result["summary"])
     return {"year": year, "month": month, "skipped_rows": [vars(r) for r in parsed.skipped], "notes": parsed.notes, **result}
