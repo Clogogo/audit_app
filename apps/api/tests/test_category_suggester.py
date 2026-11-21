@@ -138,6 +138,17 @@ def test_ai_pass_works_in_batches_and_rejects_a_category_of_the_wrong_direction(
     assert [r["suggested_category"] for r in out] == ["Other", "Telephone", "Other"]   # School Fees is income-only
 
 
+def test_ai_transfer_guess_cannot_smuggle_in_an_income_category_on_a_debit(monkeypatch):
+    import json as _json
+    import ai_worker
+    from parsers import category_suggester as cs
+    monkeypatch.setenv("ENABLE_AI_CATEGORIZATION", "true")
+    monkeypatch.setattr(ai_worker, "_call_ai_text", lambda *_: _json.dumps([{"i": 0, "category": "School Fees", "type": "transfer"}]))
+    rows = [{"description": "PAYMENT TO SUPPLIER", "suggested_category": "Other", "suggested_type": "expense", "transaction_type": "debit"}]
+    out = cs.ai_suggest_categories_batch(rows)
+    assert (out[0]["suggested_category"], out[0]["suggested_type"]) == ("Other", "expense")
+
+
 def test_ai_pass_is_on_by_default(monkeypatch):
     from parsers.category_suggester import ai_categorization_enabled
     monkeypatch.delenv("ENABLE_AI_CATEGORIZATION", raising=False)

@@ -48,6 +48,14 @@ def test_alerts_when_the_statement_disagrees_with_its_rows_and_the_account_recor
     assert checks["Account Record"]["status"] == "warn" and "900.00" in checks["Account Record"]["message"]
 
 
+def test_no_account_record_check_when_the_app_balance_starts_after_the_statement(client, db_session):
+    from datetime import date
+    db_session.add(BankAccount(bank_name="Moniepoint", opening_balance=5.0, opening_balance_date=date(2026, 12, 1)))
+    db_session.commit()
+    checks = _checks(client, _upload(client, _statement(1000.0, 1500.0, 100.0, 600.0)).json()["id"])
+    assert "Account Record" not in checks
+
+
 def test_no_balance_checks_when_the_file_has_no_summary(client, db_session):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf) as w:

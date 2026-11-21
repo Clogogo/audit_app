@@ -485,13 +485,6 @@ def _ai_suggest_chunk(rows: list[dict]) -> list[dict]:
                 continue
             cat = str(s.get("category", "Other")).strip()
             typ = str(s.get("type", "")).strip().lower()
-            # Validate category against known list to reject malformed values
-            # like "Bills & Utilities / expense" that the AI sometimes returns
-            # The category must suit the direction: an income-only one on an expense row would break its account mapping
-            final_type = typ if typ in ("expense", "income", "transfer") else rows[idx].get("suggested_type")
-            allowed = {"income": _INCOME_CATEGORIES, "expense": _EXPENSE_CATEGORIES}.get(final_type)
-            if cat in VALID_CATEGORIES and cat != "Other" and (allowed is None or cat in allowed):
-                rows[idx]["suggested_category"] = cat
             if typ in ("expense", "income", "transfer"):
                 # Guard: don't let AI reclassify a received-from-person credit as
                 # "transfer". Only honour type=transfer when the description clearly
@@ -501,6 +494,13 @@ def _ai_suggest_chunk(rows: list[dict]) -> list[dict]:
                     if not any(p in desc_lower for p in OWN_ACCOUNT_PATTERNS):
                         # Fall back to direction-based default
                         typ = "income" if rows[idx]["transaction_type"] == "credit" else "expense"
+            final_type = typ if typ in ("expense", "income", "transfer") else rows[idx].get("suggested_type")
+            # Validate category against known list to reject malformed values like "Bills & Utilities / expense",
+            # and it must suit the FINAL direction: an income-only one on an expense row would break its account mapping
+            allowed = {"income": _INCOME_CATEGORIES, "expense": _EXPENSE_CATEGORIES}.get(final_type)
+            if cat in VALID_CATEGORIES and cat != "Other" and (allowed is None or cat in allowed):
+                rows[idx]["suggested_category"] = cat
+            if typ in ("expense", "income", "transfer"):
                 rows[idx]["suggested_type"] = typ
     except Exception as e:
         logger.warning(f"AI batch categorization failed: {e}")

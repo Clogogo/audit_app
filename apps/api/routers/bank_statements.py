@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from utils.auth import require_permission
 from sqlalchemy import func
@@ -257,7 +258,7 @@ async def upload_bank_statement(
 
     # Pass 2 (optional): AI refinement for rows still marked "Other".
     # No-op unless ENABLE_AI_CATEGORIZATION=true, so upload stays AI-free by default.
-    rows = ai_suggest_categories_batch(rows)
+    rows = await run_in_threadpool(ai_suggest_categories_batch, rows)   # blocking AI calls: keep the event loop free
 
     # Find or create bank account
     from sqlalchemy import func
@@ -418,7 +419,9 @@ def _balance_checks(stmt: BankStatement, txs: list[BankTransaction], db: Session
                          f"but the statement closes at ₦{stmt.closing_balance:,.2f}.")))
 
     account, dates = stmt.bank_account, [t.date for t in txs if t.date]
-    if stmt.opening_balance is not None and account is not None and dates:
+    # The app's balance is only known from its anchor date, so a statement starting before it can't be compared
+    anchored_after = account is not None and account.opening_balance_date is not None and bool(dates) and account.opening_balance_date >= min(dates)
+    if stmt.opening_balance is not None and account is not None and dates and not anchored_after:
         if account.opening_balance is None:
             checks.append(_ValidationCheck(
                 name="Account Record", status="warn",
@@ -427,7 +430,7 @@ def _balance_checks(stmt: BankStatement, txs: list[BankTransaction], db: Session
             before = (
                 TransactionQueryBuilder(db).filter_bank_account(account.id)
                 .filter_date_range(account.opening_balance_date, min(dates) - timedelta(days=1)).build().all()
-            ) if (account.opening_balance_date is None or account.opening_balance_date < min(dates)) else []
+            )
             income, expense = _sum_income_expense(before, account.bank_name, db)
             book = round(account.opening_balance + income - expense, 2)
             if abs(book - stmt.opening_balance) <= _BALANCE_TOLERANCE:

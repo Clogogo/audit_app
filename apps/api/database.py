@@ -90,10 +90,10 @@ def initialize_database() -> None:
             "transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL",
         ],
         "bank_statements": [
-            "opening_balance REAL",
-            "closing_balance REAL",
-            "total_debit REAL",
-            "total_credit REAL",
+            "opening_balance DOUBLE PRECISION",   # not REAL: that is 4-byte on Postgres and would blur kobo
+            "closing_balance DOUBLE PRECISION",
+            "total_debit DOUBLE PRECISION",
+            "total_credit DOUBLE PRECISION",
         ],
         "bank_accounts": [
             "opening_balance REAL",
