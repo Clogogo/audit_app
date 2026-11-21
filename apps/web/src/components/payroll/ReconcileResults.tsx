@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { PayrollReconcileResult, ReconcileStatus } from '../../api/types';
+import type { StaffMemberIn } from '../../api/types';
 import { formatCurrency } from '../../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 
@@ -28,43 +30,72 @@ function SummaryTile({ label, value, tone }: { label: string; value: string; ton
   );
 }
 
-/** The reconciliation of a payroll schedule with the bank payments; collapsed to a one-line summary. */
-export interface AccountUpdate {
-  staffId: number;
-  staffName: string;
-  account: string;
-  bank: string | null;
-  /** the name the bank paid (the account holder as the bank shows it) */
-  holder: string | null;
-}
-
 interface ReconcileResultsProps {
   result: PayrollReconcileResult;
-  /** when given, account problems get a button that saves the bank's account to the staff directory */
-  onUseAccount?: (update: AccountUpdate) => void;
+  /** Create a staff record for a matched schedule row that is not linked to the directory. */
+  onAddStaff?: (staff: StaffMemberIn) => Promise<void>;
+  /** the schedule pays more than the directory expects: record the difference as a bonus */
+  onAddBonus?: (staffId: number, amount: number) => void;
+  /** the schedule pays less than the directory expects: record the difference as an other deduction */
+  onAddDeduction?: (staffId: number, amount: number) => void;
 }
 
-export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps) {
+export function ReconcileResults({ result, onAddStaff, onAddBonus, onAddDeduction }: ReconcileResultsProps) {
+  const [staffToAdd, setStaffToAdd] = useState<StaffMemberIn | null>(null);
+  const [scheduleName, setScheduleName] = useState('');
+  const [staffError, setStaffError] = useState<string | null>(null);
+  const [savingStaff, setSavingStaff] = useState(false);
   const { summary, lines } = result;
   const problemRows = result.skipped_rows.filter((r) => !r.ignored);
   const ignoredRows = result.skipped_rows.filter((r) => r.ignored);
   const attention = summary.underpaid + summary.overpaid + summary.not_paid;
   const outOfSync = lines.filter((l) => l.in_sync === false).length;
   const accountFixes = lines.filter((l) => l.staff_id != null && l.paid_account && (l.account_check === 'missing' || l.account_check === 'differs'));
-  const suggestions = lines.filter((l) => l.staff_id != null && l.status === 'not_paid' && l.suggested_payments.some((p) => p.account));
-  const toConfirm = accountFixes.length + suggestions.length;
+  const suggestions = lines.filter((l) => l.status === 'not_paid' && l.suggested_payments.length > 0);
   const duplicates = lines.filter((l) => l.extra_payment_ids.length > 0).length;
   const gap = summary.paid_total - summary.expected_total;
 
+  const prepareStaff = (line: PayrollReconcileResult['lines'][number]) => {
+    setScheduleName(line.name);
+    setStaffError(null);
+    setStaffToAdd({
+      full_name: line.paid_to?.trim() || line.name,
+      role: '',
+      bank_name: line.paid_bank ?? '',
+      account_number: line.paid_account ?? '',
+      monthly_gross: 0,
+      start_date: null,
+      end_date: null,
+      is_active: true,
+      notes: '',
+    });
+  };
+
+  const saveStaff = async () => {
+    if (!staffToAdd || !onAddStaff || !staffToAdd.full_name.trim() || (staffToAdd.monthly_gross ?? 0) <= 0) return;
+    setSavingStaff(true);
+    setStaffError(null);
+    try {
+      await onAddStaff({ ...staffToAdd, full_name: staffToAdd.full_name.trim() });
+      setStaffToAdd(null);
+    } catch (error) {
+      setStaffError(error instanceof Error ? error.message : 'Could not add staff member.');
+    } finally {
+      setSavingStaff(false);
+    }
+  };
+
   return (
+    <>
     <details className="rounded-lg border bg-card">
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
         Schedule vs bank — {MONTHS[result.month - 1]} {result.year}: {summary.matched} of {summary.rows} matched
         {attention > 0 && ` · ${attention} need attention`}
-        {toConfirm > 0 && ` · ${toConfirm} account${toConfirm === 1 ? '' : 's'} to confirm`}
+        {accountFixes.length > 0 && ` · ${accountFixes.length} bank account${accountFixes.length === 1 ? '' : 's'} differ from the directory`}
         {duplicates > 0 && ` · ${duplicates} possible duplicate payment${duplicates === 1 ? '' : 's'}`}
         {outOfSync > 0 && ` · ${outOfSync} total${outOfSync === 1 ? '' : 's'} differ from the staff directory`}
         {result.unlinked_staff.length > 0 && ` · ${result.unlinked_staff.length} staff not on the schedule`}
+        {result.saved_at && <span className="font-normal text-muted-foreground"> · saved {new Date(result.saved_at + 'Z').toLocaleString()}</span>}
       </summary>
       <div className="space-y-4 px-4 pb-4">
         {result.notes.length > 0 && (
@@ -94,9 +125,9 @@ export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps
           </p>
         )}
 
-        {toConfirm > 0 && (
+        {(accountFixes.length > 0 || suggestions.length > 0) && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200 space-y-2">
-            <p className="font-medium">Confirm account details — the bank's account is treated as the truth:</p>
+            <p className="font-medium">Bank payment details — the bank record is the source of truth:</p>
             <ul className="space-y-2 text-xs">
               {accountFixes.map((l) => (
                 <li key={`fix-${l.row_number}`} className="flex flex-wrap items-center gap-2">
@@ -104,25 +135,13 @@ export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps
                     <strong>{l.staff_name}</strong>: the bank paid {l.paid_to} ({l.paid_bank ?? 'bank'} {l.paid_account});
                     the directory has {l.directory_account ?? 'no account number'}.
                   </span>
-                  {onUseAccount && (
-                    <button type="button" className="underline text-primary"
-                      onClick={() => onUseAccount({ staffId: l.staff_id as number, staffName: l.staff_name ?? '', account: l.paid_account as string, bank: l.paid_bank, holder: l.paid_to })}>
-                      Use the bank's account for {l.staff_name}
-                    </button>
-                  )}
                 </li>
               ))}
-              {suggestions.map((l) => l.suggested_payments.filter((p) => p.account).map((p) => (
+              {suggestions.map((l) => l.suggested_payments.map((p) => (
                 <li key={`sug-${l.row_number}-${p.id}`} className="flex flex-wrap items-center gap-2">
                   <span>
-                    <strong>{l.staff_name}</strong> shows not paid, but {formatCurrency(p.amount)} on {p.date} went to {p.vendor ?? 'someone'} ({p.bank ?? 'bank'} {p.account}) and is unclaimed.
+                    <strong>{l.staff_name ?? l.name}</strong> shows not paid, but {formatCurrency(p.amount)} on {p.date} went to {p.vendor ?? 'someone'} ({p.bank ?? 'bank'}{p.account ? ` ${p.account}` : ''}) and is unclaimed.
                   </span>
-                  {onUseAccount && (
-                    <button type="button" className="underline text-primary"
-                      onClick={() => onUseAccount({ staffId: l.staff_id as number, staffName: l.staff_name ?? '', account: p.account as string, bank: p.bank, holder: p.vendor })}>
-                      That is {l.staff_name}'s account
-                    </button>
-                  )}
                 </li>
               )))}
             </ul>
@@ -172,12 +191,31 @@ export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps
                     <td className="py-2 pr-3"><StatusBadge status={l.status} /></td>
                     <td className="py-2 pr-3 text-xs">
                       {l.staff_id == null ? (
-                        <span className="text-amber-600">Not in staff directory</span>
+                        <div className="space-y-1">
+                          <span className="text-amber-600">Not in staff directory</span>
+                          {l.status === 'matched' && onAddStaff && (
+                            <button type="button" className="block underline text-primary" onClick={() => prepareStaff(l)}>
+                              Add to Staff Directory
+                            </button>
+                          )}
+                        </div>
                       ) : l.in_sync ? (
                         <span className="text-green-700">In sync</span>
                       ) : (
                         <span className="text-amber-600">
                           Total {formatCurrency(l.computed_net ?? 0)} ({l.net_difference && l.net_difference > 0 ? '+' : ''}{formatCurrency(l.net_difference ?? 0)})
+                          {l.net_difference != null && l.net_difference < 0 && onAddBonus && (
+                            <button type="button" className="ml-2 underline text-primary"
+                              onClick={() => onAddBonus(l.staff_id as number, Math.abs(l.net_difference as number))}>
+                              Add {formatCurrency(Math.abs(l.net_difference))} as bonus
+                            </button>
+                          )}
+                          {l.net_difference != null && l.net_difference > 0 && onAddDeduction && (
+                            <button type="button" className="ml-2 underline text-primary"
+                              onClick={() => onAddDeduction(l.staff_id as number, l.net_difference as number)}>
+                              Deduct {formatCurrency(l.net_difference)}
+                            </button>
+                          )}
                         </span>
                       )}
                     </td>
@@ -234,5 +272,68 @@ export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps
         )}
       </div>
     </details>
+    {staffToAdd && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <section role="dialog" aria-modal="true" aria-labelledby="add-matched-staff-title" className="w-full max-w-md space-y-4 rounded-xl border border-border bg-card p-6 shadow-xl">
+          <div>
+            <h2 id="add-matched-staff-title" className="text-lg font-semibold">Add Staff Directory Record</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Bank payment matched schedule row “{scheduleName}”. Confirm the bank name and enter the staff member’s monthly gross salary.
+            </p>
+          </div>
+          {staffError && <p role="alert" className="text-sm text-destructive">{staffError}</p>}
+          <div className="space-y-3">
+            <label className="block text-xs font-medium">Name in the bank payment
+              <input
+                autoFocus
+                value={staffToAdd.full_name}
+                onChange={(e) => setStaffToAdd((current) => current ? { ...current, full_name: e.target.value } : current)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block text-xs font-medium">Role / Designation
+              <input
+                value={staffToAdd.role ?? ''}
+                onChange={(e) => setStaffToAdd((current) => current ? { ...current, role: e.target.value } : current)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block text-xs font-medium">Monthly Gross Salary *
+              <input
+                type="number"
+                min="1"
+                step="0.01"
+                value={staffToAdd.monthly_gross || ''}
+                onChange={(e) => setStaffToAdd((current) => current ? { ...current, monthly_gross: Number(e.target.value) || 0 } : current)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs font-medium">Bank Name
+                <input
+                  value={staffToAdd.bank_name ?? ''}
+                  onChange={(e) => setStaffToAdd((current) => current ? { ...current, bank_name: e.target.value } : current)}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="block text-xs font-medium">Account Number
+                <input
+                  value={staffToAdd.account_number ?? ''}
+                  onChange={(e) => setStaffToAdd((current) => current ? { ...current, account_number: e.target.value } : current)}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" disabled={savingStaff} onClick={() => setStaffToAdd(null)} className="rounded-md border border-input px-3 py-2 text-sm disabled:opacity-50">Cancel</button>
+            <button type="button" disabled={savingStaff || !staffToAdd.full_name.trim() || (staffToAdd.monthly_gross ?? 0) <= 0} onClick={() => void saveStaff()} className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">
+              {savingStaff ? 'Saving…' : 'Add Staff'}
+            </button>
+          </div>
+        </section>
+      </div>
+    )}
+    </>
   );
 }

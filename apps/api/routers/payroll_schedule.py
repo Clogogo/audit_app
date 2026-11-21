@@ -1,11 +1,13 @@
 """Process Payroll validated by the reconciliation, and "which month is next".
 
 When the request carries the payroll schedule, a teacher is only marked paid if
-  1. the schedule row for them is matched by the bank payment (within ₦100), and
-  2. the total the app computes (gross + bonus - loans - advances - other
-     deductions) agrees with the schedule's net pay (within ₦100),
-so the staff directory is cross-checked against the schedule instead of being
-the sole source of truth. Everything is all-or-nothing.
+  1. the schedule row for them is found and the bank paid it to the right account, and
+  2. a bank payment exists for them.
+If the bank amount or the app's computed total (gross + bonus - loans - advances -
+other deductions) differs from the schedule by ₦100 or more, they are still processed
+and the difference is saved as a note on their entry (SOFT_KINDS). Everything else is
+all-or-nothing, so the staff directory is cross-checked against the schedule instead
+of being the sole source of truth.
 
 Trust boundary: the schedule itself is typed/uploaded by the user and echoed back
 in the request, so it is NOT independent evidence. What the server does verify
@@ -33,6 +35,8 @@ from utils.payroll_recon import ScheduleRow, check_account, link_and_fill, recon
 router = APIRouter(prefix="/payroll", tags=["payroll"], dependencies=[Depends(require_permission("staff"))])
 
 SALARY_CATEGORY = "Salary and Wages"
+# Differences that do not stop processing: they are recorded in the entry's notes instead.
+SOFT_KINDS = {"underpaid", "overpaid", "net_mismatch"}
 
 
 def _cents(amount: float) -> int:
@@ -52,6 +56,7 @@ class _Plan:
     net: float
     transaction_id: int
     paid_amount: float
+    note: Optional[str] = None
 
 
 def _issue(staff: Staff, kind: str, message: str, **numbers: Optional[float]) -> dict[str, Any]:
@@ -85,6 +90,11 @@ def _row_issues(staff: Staff, rline: dict[str, Any]) -> list[dict[str, Any]]:
         "overpaid": f"Bank paid {_money(paid)}, {_money(paid - expected)} more than the schedule ({_money(expected)}).",
     }[status]
     return [_issue(staff, status, text, expected=expected, paid=paid)]
+
+
+def _hard(issues: list[dict[str, Any]], has_payment: bool) -> list[dict[str, Any]]:
+    """The issues that stop processing: everything except SOFT_KINDS, and a bank difference with no payment to link."""
+    return [i for i in issues if i["kind"] not in SOFT_KINDS or (i["kind"] != "net_mismatch" and not has_payment)]
 
 
 def _plan_line(
@@ -124,15 +134,18 @@ def _plan_line(
         ))
     tx_ids = rline["transaction_ids"]
     tx_id = tx_ids[0] if tx_ids else None   # a split payment links its first part; paid_amount is the sum
-    if tx_ids and issues == [] and (
+    hard = _hard(issues, bool(tx_ids))
+    if tx_ids and hard == [] and (
         db.query(PayrollEntry).filter(PayrollEntry.transaction_id.in_(tx_ids), PayrollEntry.staff_id != staff.id).first()
     ):
         issues.append(_issue(staff, "payment_already_linked",
                              "This bank payment is already linked to another staff member's payroll entry.",
                              expected=row.amount, paid=rline["paid_amount"]))
-    if issues:
+    hard = _hard(issues, bool(tx_ids))
+    if hard:
         return None, issues
-    return _Plan(line, staff, loan_ded, advance_ded, net, tx_id, rline["paid_amount"]), []
+    note = "Schedule check: " + " ".join(i["message"] for i in issues) if issues else None
+    return _Plan(line, staff, loan_ded, advance_ded, net, tx_id, rline["paid_amount"], note), []
 
 
 def _entry_out(db: Session, entry: PayrollEntry, paid_amount: Optional[float]) -> PayrollEntryOut:
@@ -143,7 +156,7 @@ def _entry_out(db: Session, entry: PayrollEntry, paid_amount: Optional[float]) -
         bonus=entry.bonus, loan_deduction=entry.loan_deduction, advance_deduction=entry.advance_deduction,
         other_deductions=entry.other_deductions, net_salary=entry.net_salary, is_paid=bool(entry.is_paid),
         paid_date=entry.paid_date, transaction_id=entry.transaction_id, notes=entry.notes,
-        created_at=entry.created_at, updated_at=entry.updated_at, paid_amount=paid_amount, bonus_excess=0.0,
+        created_at=entry.created_at, updated_at=entry.updated_at, paid_amount=paid_amount,
     )
 
 
@@ -186,7 +199,7 @@ def process_with_schedule(req: ProcessRequest, db: Session) -> list[PayrollEntry
 
     entries = [
         (upsert_payroll_entry(
-            db, p.line, p.staff, req.year, req.month, bonus=p.line.bonus, loan_ded=p.loan_ded,
+            db, p.line.model_copy(update={"notes": "\n".join(filter(None, [p.line.notes, p.note])) or None}), p.staff, req.year, req.month, bonus=p.line.bonus, loan_ded=p.loan_ded,
             advance_ded=p.advance_ded, net=p.net, transaction_id=p.transaction_id,
         ), p.paid_amount)
         for p in plans
@@ -198,7 +211,7 @@ def process_with_schedule(req: ProcessRequest, db: Session) -> list[PayrollEntry
     return [_entry_out(db, entry, paid) for entry, paid in entries]
 
 
-# ── First month whose payroll is not complete ─────────────────────────────────
+# ── Latest month whose payroll is not complete ────────────────────────────────
 
 class NextMonthOut(BaseModel):
     year: int
@@ -220,9 +233,10 @@ def _eligible_staff_ids(staff: list[Staff], year: int, month: int, first_entry: 
 
 @router.get("/next-month", response_model=NextMonthOut)
 def next_incomplete_month(db: Session = Depends(get_db)):
-    """The earliest month (from the first processed month up to today) in which
-    some active staff member has no paid payroll entry; today's month if every
-    month is complete or nothing was ever processed."""
+    """The LATEST month (up to today) that is not fully processed, i.e. some active staff
+    member has no paid payroll entry; today's month if every month is complete or nothing
+    was ever processed. Older unfinished months are not forced on the user: they can step
+    back to them with the month arrows."""
     today = date.today()
     current = NextMonthOut(year=today.year, month=today.month)
     earliest = db.query(PayrollEntry.period_year, PayrollEntry.period_month).order_by(
@@ -236,10 +250,10 @@ def next_incomplete_month(db: Session = Depends(get_db)):
     for sid, y, m, _paid in entries:
         first_entry[sid] = min(first_entry.get(sid, y * 12 + m - 1), y * 12 + m - 1)
     paid = {(y, m, sid) for sid, y, m, is_paid in entries if is_paid}
-    index, last = earliest[0] * 12 + earliest[1] - 1, today.year * 12 + today.month - 1
-    while index <= last:
+    first, index = earliest[0] * 12 + earliest[1] - 1, today.year * 12 + today.month - 1
+    while index >= first:                                   # newest month first
         year, month = index // 12, index % 12 + 1
         if any((year, month, sid) not in paid for sid in _eligible_staff_ids(staff, year, month, first_entry)):
             return NextMonthOut(year=year, month=month)
-        index += 1
+        index -= 1
     return current

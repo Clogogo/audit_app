@@ -181,67 +181,6 @@ class TransactionAISummary(BaseModel):
     available: bool
 
 
-# ── Uploaded Files ────────────────────────────────────────────────────────────
-
-class AIResult(BaseModel):
-    amount: Optional[float] = None
-    currency: Optional[str] = None
-    date: Optional[str] = None
-    vendor: Optional[str] = None
-    category: Optional[str] = None
-    type: Optional[str] = None
-    description: Optional[str] = None
-
-
-class UploadedFileOut(BaseModel):
-    id: int
-    original_name: str
-    stored_path: str
-    mime_type: str
-    ocr_text: Optional[str]
-    ai_result: Optional[AIResult]
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-# ── Batch extraction ───────────────────────────────────────────────────────────
-
-class BatchItem(BaseModel):
-    amount: Optional[float] = None
-    currency: Optional[str] = "USD"
-    date: Optional[str] = None
-    vendor: Optional[str] = None
-    category: Optional[str] = None
-    type: Optional[str] = "expense"
-    description: Optional[str] = None
-    reference: Optional[str] = None
-
-
-class BatchUploadResult(BaseModel):
-    file_id: int
-    original_name: str
-    mime_type: str
-    item_count: int
-    items: list[BatchItem]
-
-
-class BatchConfirmItem(BaseModel):
-    amount: float
-    currency: str = "NGN"
-    category: str
-    description: str
-    date: date
-    vendor: Optional[str] = None
-    bank: Optional[str] = None
-    type: str = "expense"
-    file_id: Optional[int] = None
-
-
-class BatchConfirmRequest(BaseModel):
-    items: list[BatchConfirmItem]
-
-
 # ── Statement Import ───────────────────────────────────────────────────────────
 
 class StatementImportItem(BaseModel):

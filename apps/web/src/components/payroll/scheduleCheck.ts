@@ -41,6 +41,22 @@ export function checkRow(net: number, line: PayrollReconcileLine | undefined, ha
   return { state: 'ready', ...base };
 }
 
+/**
+ * Does this row stop processing? A missing schedule row, a missing payment, an ambiguous payment or a wrong
+ * account does. A different bank amount or payroll total does not: it is saved as a note on the entry.
+ */
+export const isBlocking = (c: RowCheck | null): boolean => {
+  if (!c) return true;
+  switch (c.state) {
+    case 'ready': case 'total': return false;
+    case 'bank': return c.status === 'not_paid' || !!c.note;
+    default: return true;
+  }
+};
+
+/** Processing is allowed, but the difference will be written into the entry's notes. */
+export const isNoted = (c: RowCheck | null): boolean => !!c && !isBlocking(c) && c.state !== 'ready';
+
 export const scheduleLinesFor = (result: PayrollReconcileResult): PayrollScheduleLineIn[] =>
   result.lines.map((l) => ({
     row_number: l.row_number, name: l.name, amount: l.expected_amount, account_number: l.account_number,

@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import Optional
 from sqlalchemy import (
-    Integer, String, Float, Date, DateTime, ForeignKey, Text, Enum, Index, Boolean
+    Integer, String, Float, Date, DateTime, ForeignKey, Text, Enum, Index, Boolean, UniqueConstraint
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -93,6 +93,8 @@ class PasswordResetToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+# Legacy: the receipt-upload feature was removed. The table stays so existing attachments and
+# Transaction.file_id keep working (dropping it would be a destructive migration).
 class UploadedFile(Base):
     __tablename__ = "uploaded_files"
 
@@ -587,3 +589,50 @@ class IdempotencyKey(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     key: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ChartAccount(Base):
+    """One account of the Chart of Accounts (imported from CSV). Only accounts with no
+    children (`is_postable`) can receive transactions."""
+    __tablename__ = "chart_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    code: Mapped[str] = mapped_column(String(30), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    level: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    parent_code: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    category: Mapped[str] = mapped_column(String(20))              # Assets | Liabilities | Equity | Income | Expenses
+    statement_type: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    statement_section: Mapped[str] = mapped_column(String(120))
+    normal_balance: Mapped[str] = mapped_column(String(10))        # Debit | Credit
+    cash_flow_category: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    fsli: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    scope: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="Active")
+    is_postable: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AccountMapping(Base):
+    """Which chart account a transaction category posts to, per direction (income / expense)."""
+    __tablename__ = "account_mappings"
+    __table_args__ = (UniqueConstraint("category", "tx_type", name="uq_account_mapping_category_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    category: Mapped[str] = mapped_column(String(100))
+    tx_type: Mapped[str] = mapped_column(String(10))               # income | expense
+    account_code: Mapped[str] = mapped_column(String(30))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PayrollReconciliation(Base):
+    """The payroll schedule last reconciled for a month, kept for reference. Only the schedule is stored
+    (rows as JSON); the comparison with the bank and the staff directory is recomputed whenever it is opened."""
+    __tablename__ = "payroll_reconciliations"
+    __table_args__ = (UniqueConstraint("period_year", "period_month", name="uq_payroll_reconciliation_period"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    period_year: Mapped[int] = mapped_column(Integer)
+    period_month: Mapped[int] = mapped_column(Integer)
+    schedule_json: Mapped[str] = mapped_column(Text)   # {"rows": [...], "skipped": [...], "notes": [...]}
+    saved_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -33,6 +33,8 @@ import {
   History,
   FileBarChart,
   Gift,
+  BookOpen,
+  Scale,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
@@ -61,6 +63,8 @@ const bottomNavItems = [
 const taxSubItems = [
   { to: '/tax', icon: Calculator, label: 'CIT (Nigeria)' },
   { to: '/tax/financial-statements', icon: Building, label: 'Financial Statements' },
+  { to: '/tax/chart-of-accounts', icon: BookOpen, label: 'Chart of Accounts' },
+  { to: '/tax/accounting-reports', icon: Scale, label: 'Accounting Reports' },
   { to: '/tax/assets', icon: Package, label: 'Asset Register' },
   { to: '/tax/school-loans', icon: HandCoins, label: 'School Loans' },
   { to: '/tax/calendar', icon: CalendarClock, label: 'Tax Calendar' },

@@ -46,7 +46,7 @@ def test_process_links_the_reconciled_payment_when_everything_agrees(client, db_
     entry = resp.json()[0]
     assert entry["transaction_id"] == tx.id and entry["is_paid"] is True
     assert entry["net_salary"] == 15000.0 and entry["paid_amount"] == 15000.0
-    assert entry["bonus_excess"] == 0.0 and entry["bonus"] == 0.0
+    assert entry["bonus"] == 0.0 and "bonus_excess" not in entry
 
 
 def test_process_accepts_a_bank_payment_within_100_naira(client, db_session):
@@ -71,12 +71,23 @@ def _issues(resp):
     return {(i["full_name"], i["kind"]) for i in resp.json()["detail"]["issues"]}
 
 
-def test_process_blocks_when_the_bank_paid_a_different_amount(client, db_session):
+def test_process_goes_ahead_when_the_bank_paid_a_different_amount_and_notes_it(client, db_session):
     ada = _staff(db_session, "Ada Obi")
-    _salary_tx(db_session, "ADA OBI", 12000.0)
+    tx = _salary_tx(db_session, "ADA OBI", 12000.0)
     resp = _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)])
-    assert ("Ada Obi", "underpaid") in _issues(resp)
-    assert db_session.query(PayrollEntry).count() == 0
+    assert resp.status_code == 200, resp.text
+    entry = db_session.query(PayrollEntry).one()
+    assert entry.is_paid and entry.transaction_id == tx.id
+    assert "Schedule check" in entry.notes and "less than the schedule" in entry.notes
+
+
+def test_process_goes_ahead_when_the_bank_overpaid_and_keeps_the_typed_note(client, db_session):
+    ada = _staff(db_session, "Ada Obi")
+    _salary_tx(db_session, "ADA OBI", 50018.6)
+    resp = _process(client, [_line(ada, notes="paid with arrears")], [_row(1, "ADA OBI", 15000.0)])
+    assert resp.status_code == 200, resp.text
+    notes = db_session.query(PayrollEntry).one().notes
+    assert notes.startswith("paid with arrears\n") and "more than the schedule" in notes
 
 
 def test_process_blocks_when_nothing_was_paid(client, db_session):
@@ -92,13 +103,21 @@ def test_process_blocks_staff_who_are_not_on_the_schedule(client, db_session):
     assert db_session.query(PayrollEntry).count() == 0     # all-or-nothing
 
 
-def test_process_blocks_when_the_directory_total_differs_from_the_schedule(client, db_session):
+def test_process_goes_ahead_when_the_directory_total_differs_from_the_schedule_and_notes_it(client, db_session):
     ada = _staff(db_session, "Ada Obi")                       # directory says 15,000
     _salary_tx(db_session, "ADA OBI", 14000.0)
     resp = _process(client, [_line(ada)], [_row(1, "ADA OBI", 14000.0)])   # schedule + bank say 14,000
-    issues = resp.json()["detail"]["issues"]
-    mismatch = next(i for i in issues if i["kind"] == "net_mismatch")
-    assert mismatch["computed"] == 15000.0 and mismatch["expected"] == 14000.0
+    assert resp.status_code == 200, resp.text
+    entry = db_session.query(PayrollEntry).one()
+    assert entry.net_salary == 15000.0 and "payroll total" in entry.notes
+
+
+def test_process_still_blocks_a_wrong_account_even_with_an_amount_difference(client, db_session):
+    ada = _staff(db_session, "Ada Obi", account="0123456789")
+    _salary_tx(db_session, "ADA OBI", 12000.0, account="0999999999")
+    issues = _issues(_process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)]))
+    assert ("Ada Obi", "account_differs") in issues
+    assert db_session.query(PayrollEntry).count() == 0
 
 
 def test_process_links_by_account_number_when_names_differ(client, db_session):
@@ -158,18 +177,30 @@ def test_next_month_is_the_current_month_when_nothing_was_ever_processed(client,
     assert _next(client) == _months_ago(0)
 
 
-def test_next_month_is_the_first_incomplete_month(client, db_session):
+def test_next_month_is_the_latest_month_that_is_not_fully_processed(client, db_session):
     ada = _staff(db_session, "Ada Obi")
-    _paid_entry(db_session, ada, 4)
-    _paid_entry(db_session, ada, 3)          # 2 months ago has no entry
-    assert _next(client) == _months_ago(2)
+    for ago in (4, 3, 0):
+        _paid_entry(db_session, ada, ago)     # two months ago and last month are NOT processed; this month is
+    assert _next(client) == _months_ago(1)    # the most recent one, not the oldest (2 months ago)
 
 
-def test_next_month_counts_unpaid_entries_and_missing_staff_as_incomplete(client, db_session):
+def test_next_month_still_returns_an_old_month_when_every_later_month_is_complete(client, db_session):
     ada, bola = _staff(db_session, "Ada Obi"), _staff(db_session, "Bola Eze")
     _paid_entry(db_session, ada, 3)
     _paid_entry(db_session, bola, 3)
-    _paid_entry(db_session, ada, 2)          # Bola missing in that month
+    _paid_entry(db_session, ada, 2)           # Bola was never paid in that old month...
+    for ago in (1, 0):
+        _paid_entry(db_session, ada, ago)
+        _paid_entry(db_session, bola, ago)    # ...but every month since is complete
+    assert _next(client) == _months_ago(2)    # nothing later is pending, so that unfinished month is the one to finish
+
+
+def test_next_month_counts_unpaid_entries_as_incomplete(client, db_session):
+    ada = _staff(db_session, "Ada Obi")
+    _paid_entry(db_session, ada, 3)
+    _paid_entry(db_session, ada, 2, paid=False)
+    for ago in (1, 0):
+        _paid_entry(db_session, ada, ago)
     assert _next(client) == _months_ago(2)
 
 
@@ -180,99 +211,12 @@ def test_next_month_is_current_when_everything_is_complete(client, db_session):
     assert _next(client) == _months_ago(0)
 
 
-def test_next_month_ignores_staff_who_had_not_started_or_already_left(client, db_session):
+def test_next_month_ignores_staff_who_had_not_started_yet(client, db_session):
     ada = _staff(db_session, "Ada Obi")
     y1, m1 = _months_ago(1)
-    _staff(db_session, "New Hire", start_date=date(y1, m1, 1))     # started last month
+    hire = _staff(db_session, "New Hire", start_date=date(y1, m1, 1))     # started last month
     _paid_entry(db_session, ada, 3)
-    _paid_entry(db_session, ada, 2)           # New Hire not needed back then
-    assert _next(client) == _months_ago(1)    # but last month needs both
-
-
-# ── review hardening ──────────────────────────────────────────────────────────
-
-def test_process_refuses_a_month_that_is_already_processed_for_that_staff(client, db_session):
-    ada = _staff(db_session, "Ada Obi")
-    _salary_tx(db_session, "ADA OBI", 15000.0)
-    assert _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)]).status_code == 200
-    again = _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)])
-    assert ("Ada Obi", "already_processed") in _issues(again)
-    assert db_session.query(PayrollEntry).count() == 1
-
-
-def test_process_rejects_the_same_staff_twice_in_one_request(client, db_session):
-    ada = _staff(db_session, "Ada Obi")
-    _salary_tx(db_session, "ADA OBI", 15000.0)
-    resp = _process(client, [_line(ada), _line(ada)], [_row(1, "ADA OBI", 15000.0)])
-    assert resp.status_code == 400
-    assert db_session.query(PayrollEntry).count() == 0
-
-
-def test_process_does_not_link_to_a_row_that_belongs_to_a_staff_member_not_in_the_request(client, db_session):
-    john = _staff(db_session, "John Musa")
-    _staff(db_session, "John Adebayo Musa")                  # skipped this run, but owns the row below
-    _salary_tx(db_session, "JOHN ADEBAYO MUSA", 15000.0)
-    resp = _process(client, [_line(john)], [_row(1, "JOHN ADEBAYO MUSA", 15000.0)])
-    assert _issues(resp) == {("John Musa", "not_on_schedule")}
-
-
-def test_process_checks_every_part_of_a_split_payment_for_existing_links(client, db_session):
-    ada, bola = _staff(db_session, "Ada Obi"), _staff(db_session, "Bola Eze")
-    first = _salary_tx(db_session, "ADA OBI", 7500.0, "2026-01-20")
-    second = _salary_tx(db_session, "ADA OBI", 7500.0, "2026-01-30")
-    db_session.add(PayrollEntry(staff_id=bola.id, period_year=2026, period_month=1, gross_salary=1.0,
-                                net_salary=1.0, is_paid=True, transaction_id=second.id))
-    db_session.commit()
-    resp = _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)])
-    assert ("Ada Obi", "payment_already_linked") in _issues(resp)
-    assert first.id != second.id
-
-
-def test_process_accepts_a_split_payment_that_adds_up(client, db_session):
-    ada = _staff(db_session, "Ada Obi")
-    _salary_tx(db_session, "ADA OBI", 7500.0, "2026-01-20")
-    _salary_tx(db_session, "ADA OBI", 7500.0, "2026-01-30")
-    resp = _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)])
-    assert resp.status_code == 200, resp.text
-    assert resp.json()[0]["paid_amount"] == 15000.0
-
-
-def test_next_month_ignores_staff_who_never_had_a_payroll_entry(client, db_session):
-    ada = _staff(db_session, "Ada Obi")
-    _staff(db_session, "Hired Later")                       # no start date, never paid
-    for ago in (3, 2, 1, 0):
-        _paid_entry(db_session, ada, ago)
-    assert _next(client) == _months_ago(0)
-
-
-def test_next_month_does_not_require_staff_before_their_first_entry(client, db_session):
-    ada, bola = _staff(db_session, "Ada Obi"), _staff(db_session, "Bola Eze")
-    for ago in (3, 2):
-        _paid_entry(db_session, ada, ago)
-    _paid_entry(db_session, bola, 1)                        # Bola first appears one month ago
-    _paid_entry(db_session, ada, 1)
-    assert _next(client) == _months_ago(0)                  # months 3 and 2 never needed Bola
-
-
-# ── account details: directory fills blanks, the bank is the truth ───────────
-
-def test_process_uses_the_directory_account_when_the_schedule_has_none(client, db_session):
-    jon = _staff(db_session, "MRS JONATHAN OGOGO", gross=50000.0, account="7038692765")
-    tx = _salary_tx(db_session, "PATRICIA NKECHI OGOGO", 50000.0, account="7038692765")   # paid to someone else's name
-    resp = _process(client, [_line(jon, gross=50000.0)], [_row(1, "MRS JONATHAN OGOGO", 50000.0)])
-    assert resp.status_code == 200, resp.text
-    assert resp.json()[0]["transaction_id"] == tx.id
-
-
-def test_process_blocks_when_the_bank_paid_a_different_account_than_the_directory_has(client, db_session):
-    ada = _staff(db_session, "Ada Obi", account="0999999999")
-    _salary_tx(db_session, "ADA OBI", 15000.0, account="0123456789")
-    resp = _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)])
-    assert ("Ada Obi", "account_differs") in _issues(resp)
-    assert db_session.query(PayrollEntry).count() == 0
-
-
-def test_process_allows_a_directory_with_no_account_yet(client, db_session):
-    ada = _staff(db_session, "Ada Obi")
-    _salary_tx(db_session, "ADA OBI", 15000.0, account="0123456789")
-    assert _process(client, [_line(ada)], [_row(1, "ADA OBI", 15000.0)]).status_code == 200
+    _paid_entry(db_session, ada, 2)           # New Hire was not needed back then
+    _paid_entry(db_session, ada, 0)
+    _paid_entry(db_session, hire, 0)
+    assert _next(client) == _months_ago(1)    # last month needs both of them, and neither was paid

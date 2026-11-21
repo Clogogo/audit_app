@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Payroll } from './Payroll';
-import { computePayroll, createTeacherBonus, getBonusTypes, getNextPayrollMonth, getTerms, listStaffMembers, processPayroll, reconcilePayroll, updateStaffMember } from '../api/client';
+import { addOtherDeduction, computePayroll, createTeacherBonus, getSavedReconciliation, getBonusTypes, getNextPayrollMonth, getTerms, listStaffMembers, processPayroll, reconcilePayroll, updateStaffMember } from '../api/client';
 import type { BonusType, PayrollLine, PayrollReconcileLine, PayrollReconcileResult, StaffMember } from '../api/types';
 
 vi.mock('../api/client', () => ({
   computePayroll: vi.fn(),
+  getSavedReconciliation: vi.fn(),
+  addOtherDeduction: vi.fn(),
   getNextPayrollMonth: vi.fn(),
   processPayroll: vi.fn(),
   resetPayroll: vi.fn(),
@@ -63,9 +65,11 @@ describe('Payroll page', () => {
     vi.mocked(computePayroll).mockResolvedValue([staffLine(1, 'Ada Obi', 15000), staffLine(2, 'Bola Eze', 20000)]);
     vi.mocked(processPayroll).mockReset();
     vi.mocked(reconcilePayroll).mockReset();
+    vi.mocked(getSavedReconciliation).mockReset().mockResolvedValue(null);
+    vi.mocked(addOtherDeduction).mockReset().mockResolvedValue({ staff_id: 1, other_deductions: 2000, net_salary: 13000 });
   });
 
-  it('opens on the first month whose payroll is not complete', async () => {
+  it('opens on the latest month whose payroll is not fully processed', async () => {
     render(<Payroll />);
     expect(await screen.findByText('March 2026 Payroll')).toBeInTheDocument();
     expect(computePayroll).toHaveBeenCalledTimes(1);
@@ -110,7 +114,26 @@ describe('Payroll page', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('blocks processing while a teacher is underpaid, or the payroll total differs from the schedule', async () => {
+  it('tells the user when the bank paid a different amount, without adjusting anything', async () => {
+    vi.mocked(reconcilePayroll).mockResolvedValue(result([scheduleLine(1, 'Ada Obi', 15000), scheduleLine(2, 'Bola Eze', 20000)]));
+    vi.mocked(processPayroll).mockResolvedValue([
+      { id: 1, staff_id: 1, full_name: 'Ada Obi', net_salary: 15000, paid_amount: 15018.6, bonus: 0 },
+      { id: 2, staff_id: 2, full_name: 'Bola Eze', net_salary: 20000, paid_amount: 20000, bonus: 0 },
+    ] as never);
+    render(<Payroll />);
+    await screen.findByText('March 2026 Payroll');
+    await loadSchedule();
+    const button = await processButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+
+    const notice = await screen.findByText(/Ada Obi: bank paid/);
+    expect(notice).toHaveTextContent('18.60 more than the computed net');
+    expect(screen.queryByText(/Bola Eze: bank paid/)).not.toBeInTheDocument();   // exact payment: no notice
+    expect(screen.queryByText(/added to Bonus/)).not.toBeInTheDocument();
+  });
+
+  it('still allows processing when a payment or the payroll total differs, and says it will be noted', async () => {
     vi.mocked(reconcilePayroll).mockResolvedValue(result([
       scheduleLine(1, 'Ada Obi', 15000, { status: 'underpaid', paid_amount: 12000 }),
       scheduleLine(2, 'Bola Eze', 18000),   // bank agrees with the schedule, the directory says 20,000
@@ -121,7 +144,18 @@ describe('Payroll page', () => {
 
     expect(await screen.findByText('Underpaid (₦12,000.00)')).toBeInTheDocument();
     expect(screen.getByText(/Total differs by/)).toBeInTheDocument();
-    expect(screen.getByText(/2 staff need attention before processing/)).toBeInTheDocument();
+    expect(screen.getByText(/2 staff differ from the schedule .* saved as a note/)).toBeInTheDocument();
+    expect(await processButton()).toBeEnabled();
+  });
+
+  it('still blocks processing when nobody was paid', async () => {
+    vi.mocked(reconcilePayroll).mockResolvedValue(result([
+      scheduleLine(1, 'Ada Obi', 15000, { status: 'not_paid', paid_amount: 0 }), scheduleLine(2, 'Bola Eze', 20000),
+    ]));
+    render(<Payroll />);
+    await screen.findByText('March 2026 Payroll');
+    await loadSchedule();
+    expect(await screen.findByText(/1 staff need attention before processing/)).toBeInTheDocument();
     expect(await processButton()).toBeDisabled();
   });
 
@@ -196,56 +230,58 @@ describe('Payroll page', () => {
     });
   });
 
-  describe('using the bank\'s account', () => {
-    const jonathan = { id: 1, full_name: 'Ada Obi', role: null, bank_name: null, account_number: null, monthly_gross: 15000,
-      start_date: null, end_date: null, is_active: true, notes: null, created_at: '', updated_at: '' } as StaffMember;
+  describe('saved schedule and adjustments', () => {
+    const gap = (net_difference: number) => result([scheduleLine(1, 'Ada Obi', 15000 - net_difference, {
+      computed_net: 15000, net_difference, in_sync: false, status: 'matched',
+    })]);
 
+    it('reopens the schedule saved for the month without uploading anything', async () => {
+      vi.mocked(getSavedReconciliation).mockResolvedValue({ ...gap(0), saved_at: '2026-03-30T10:00:00' });
+      render(<Payroll />);
+      expect(await screen.findByText(/Schedule vs bank — March 2026/)).toHaveTextContent('saved');
+      expect(getSavedReconciliation).toHaveBeenCalledWith(2026, 3);
+      expect(reconcilePayroll).not.toHaveBeenCalled();
+    });
+
+    it('adds the gap as an other deduction after confirming, then re-compares', async () => {
+      vi.mocked(getSavedReconciliation).mockResolvedValue(gap(2000));
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      render(<Payroll />);
+      fireEvent.click(await screen.findByRole('button', { name: /Deduct ₦2,000/ }));
+      await waitFor(() => expect(addOtherDeduction).toHaveBeenCalledWith(2026, 3, 1, 2000));
+      expect(confirm.mock.calls[0][0]).toContain('Ada Obi');
+      await waitFor(() => expect(getSavedReconciliation).toHaveBeenCalledTimes(2));
+      expect(computePayroll).toHaveBeenCalledTimes(2);
+    });
+
+    it('does nothing when the deduction is not confirmed, and reports a failure', async () => {
+      vi.mocked(getSavedReconciliation).mockResolvedValue(gap(2000));
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      render(<Payroll />);
+      fireEvent.click(await screen.findByRole('button', { name: /Deduct ₦2,000/ }));
+      expect(addOtherDeduction).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true);
+      vi.mocked(addOtherDeduction).mockRejectedValue(new Error('boom'));
+      fireEvent.click(screen.getByRole('button', { name: /Deduct ₦2,000/ }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not add the deduction for Ada Obi');
+    });
+  });
+
+  describe('bank account details are read only in reconciliation', () => {
     const withMismatch = () => result([scheduleLine(1, 'Ada Obi', 15000, {
       account_check: 'missing', paid_account: '7038692765', paid_bank: 'OPay', paid_to: 'PATRICIA NKECHI OGOGO',
     }), scheduleLine(2, 'Bola Eze', 20000)]);
 
-    beforeEach(() => {
-      vi.mocked(listStaffMembers).mockReset().mockResolvedValue([jonathan]);
-      vi.mocked(updateStaffMember).mockReset().mockResolvedValue({ ...jonathan, account_number: '7038692765' });
+    it('shows the bank-paid account without offering to update the directory', async () => {
       vi.mocked(reconcilePayroll).mockResolvedValue(withMismatch());
-    });
-
-    it('saves the bank account to the directory after confirming, then re-reconciles', async () => {
-      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      vi.mocked(updateStaffMember).mockReset();
       render(<Payroll />);
       await screen.findByText('March 2026 Payroll');
       await loadSchedule();
-      fireEvent.click(await screen.findByRole('button', { name: /Use the bank's account for Ada Obi/ }));
-
-      await waitFor(() => expect(updateStaffMember).toHaveBeenCalledWith(1, expect.objectContaining({ account_number: '7038692765', bank_name: 'OPay' })));
-      // the prompt shows exactly what changes and warns about an unrelated account holder
-      const message = confirm.mock.calls[0][0] as string;
-      expect(message).toContain('Account: none → 7038692765');
-      expect(message).toContain('Bank: none → OPay');
-      expect(message).toContain('WARNING: that name does not look like Ada Obi');
-      await waitFor(() => expect(reconcilePayroll).toHaveBeenCalledTimes(2));
-    });
-
-    it('warns when the account is already saved for another staff member', async () => {
-      const other = { ...jonathan, id: 9, full_name: 'Bola Eze', account_number: '7038692765' } as StaffMember;
-      vi.mocked(listStaffMembers).mockResolvedValue([jonathan, other]);
-      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-      render(<Payroll />);
-      await screen.findByText('March 2026 Payroll');
-      await loadSchedule();
-      fireEvent.click(await screen.findByRole('button', { name: /Use the bank's account for Ada Obi/ }));
-      await waitFor(() => expect(confirm).toHaveBeenCalled());
-      expect(confirm.mock.calls[0][0]).toContain('WARNING: this account is already saved for Bola Eze');
-    });
-
-    it('changes nothing when the confirmation is cancelled', async () => {
-      vi.spyOn(window, 'confirm').mockReturnValue(false);
-      render(<Payroll />);
-      await screen.findByText('March 2026 Payroll');
-      await loadSchedule();
-      fireEvent.click(await screen.findByRole('button', { name: /Use the bank's account for Ada Obi/ }));
+      expect(screen.getByText(/the bank paid/)).toHaveTextContent('PATRICIA NKECHI OGOGO');
+      expect(screen.getByText(/the bank paid/)).toHaveTextContent('7038692765');
+      expect(screen.queryByRole('button', { name: /account.*directory|directory.*account/i })).not.toBeInTheDocument();
       expect(updateStaffMember).not.toHaveBeenCalled();
-      expect(reconcilePayroll).toHaveBeenCalledTimes(1);
     });
   });
 

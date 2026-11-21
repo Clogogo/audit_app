@@ -403,7 +403,7 @@ Use null for missing fields."""
                         "content": prompt,
                     }
                 ],
-                max_tokens=500,
+                max_tokens=1500,
             )
             data = json.loads(response_text)
 
@@ -590,7 +590,7 @@ Return ONLY valid JSON. If a field is not found, use null."""
                         ],
                     }
                 ],
-                max_tokens=500,
+                max_tokens=1500,
             )
             data = json.loads(response_text)
 

@@ -209,11 +209,10 @@ def test_process_payroll_caps_deduction_against_the_submitted_lines_own_earnings
     assert resp.status_code == 200, resp.text
     entry = resp.json()[0]
     assert entry["loan_deduction"] == 20000.0
-    # The cap held (no negative net), and the bank still actually paid
-    # 20000 — that real payment is captured as bonus_excess so the entry
-    # reflects what left the account instead of a fictional ₦0 net.
-    assert entry["bonus_excess"] == 20000.0
-    assert entry["net_salary"] == 20000.0
+    # The cap held (no negative net). The bank paid 20000 anyway; that is reported
+    # as paid_amount but not folded into the bonus — the user adjusts it manually.
+    assert entry["bonus"] == 0.0
+    assert entry["net_salary"] == 0.0
     assert entry["paid_amount"] == 20000.0
 
 
