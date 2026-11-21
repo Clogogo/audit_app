@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { PayrollReconcileResult, ReconcileStatus } from '../../api/types';
+import type { StaffMember } from '../../api/types';
 import { formatCurrency } from '../../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 
@@ -40,6 +42,7 @@ export interface AccountUpdate {
 
 interface ReconcileResultsProps {
   result: PayrollReconcileResult;
+  staffMembers?: StaffMember[];
   /** when given, account problems get a button that saves the bank's account to the staff directory */
   onUseAccount?: (update: AccountUpdate) => void;
   /** the schedule pays more than the directory expects: record the difference as a bonus */
@@ -48,7 +51,8 @@ interface ReconcileResultsProps {
   onAddDeduction?: (staffId: number, amount: number) => void;
 }
 
-export function ReconcileResults({ result, onUseAccount, onAddBonus, onAddDeduction }: ReconcileResultsProps) {
+export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAddBonus, onAddDeduction }: ReconcileResultsProps) {
+  const [selectedStaffByRow, setSelectedStaffByRow] = useState<Record<number, number | ''>>({});
   const { summary, lines } = result;
   const problemRows = result.skipped_rows.filter((r) => !r.ignored);
   const ignoredRows = result.skipped_rows.filter((r) => r.ignored);
@@ -177,7 +181,46 @@ export function ReconcileResults({ result, onUseAccount, onAddBonus, onAddDeduct
                     <td className="py-2 pr-3"><StatusBadge status={l.status} /></td>
                     <td className="py-2 pr-3 text-xs">
                       {l.staff_id == null ? (
-                        <span className="text-amber-600">Not in staff directory</span>
+                        <div className="space-y-2">
+                          <span className="text-amber-600">Not in staff directory</span>
+                          {l.paid_account && onUseAccount && staffMembers.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select
+                                aria-label={`Choose staff member for row ${l.row_number}`}
+                                className="max-w-48 rounded border border-input bg-background px-2 py-1 text-xs"
+                                value={selectedStaffByRow[l.row_number] ?? ''}
+                                onChange={(e) => setSelectedStaffByRow((current) => ({
+                                  ...current,
+                                  [l.row_number]: e.target.value ? Number(e.target.value) : '',
+                                }))}
+                              >
+                                <option value="">Choose staff member</option>
+                                {staffMembers.map((member) => (
+                                  <option key={member.id} value={member.id}>{member.full_name}</option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                className="underline text-primary disabled:opacity-50"
+                                disabled={!selectedStaffByRow[l.row_number]}
+                                onClick={() => {
+                                  const staffId = selectedStaffByRow[l.row_number];
+                                  const member = staffMembers.find((candidate) => candidate.id === staffId);
+                                  if (!staffId || !member || !l.paid_account) return;
+                                  onUseAccount({
+                                    staffId,
+                                    staffName: member.full_name,
+                                    account: l.paid_account,
+                                    bank: l.paid_bank,
+                                    holder: l.paid_to,
+                                  });
+                                }}
+                              >
+                                Save paid account to directory
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       ) : l.in_sync ? (
                         <span className="text-green-700">In sync</span>
                       ) : (

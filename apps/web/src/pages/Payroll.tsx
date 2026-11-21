@@ -65,6 +65,7 @@ export function Payroll() {
   const [processIssues, setProcessIssues] = useState<PayrollProcessIssue[]>([]);
   // The month's payroll schedule reconciled with the bank payments; processing is validated against it
   const [reconcile, setReconcile] = useState<PayrollReconcileResult | null>(null);
+  const [staffDirectory, setStaffDirectory] = useState<StaffMember[]>([]);
   // The page opens on the latest month whose payroll is not fully processed; nothing loads until that is known
   const [startResolved, setStartResolved] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
@@ -138,6 +139,16 @@ export function Payroll() {
   }, [year, month, startResolved]);
 
   const refreshReconcile = () => getSavedReconciliation(year, month).then(setReconcile).catch(() => undefined);
+
+  useEffect(() => {
+    if (!reconcile) {
+      setStaffDirectory([]);
+      return;
+    }
+    Promise.resolve(listStaffMembers())
+      .then((members) => setStaffDirectory(members ?? []))
+      .catch(() => setStaffDirectory([]));
+  }, [reconcile]);
 
   // Heads-up when an entry's real bank amount differs from the computed net. Nothing is
   // adjusted automatically, in either direction: the user adjusts the figures themselves.
@@ -380,7 +391,7 @@ export function Payroll() {
       </div>
 
       <SchedulePanel year={year} month={month} monthLabel={`${MONTHS[month - 1]} ${year}`} onResult={setReconcile} />
-      {reconcile && <ReconcileResults result={reconcile} onUseAccount={useBankAccount} onAddBonus={openBonusForm} onAddDeduction={deductFromReconcile} />}
+      {reconcile && <ReconcileResults result={reconcile} staffMembers={staffDirectory} onUseAccount={useBankAccount} onAddBonus={openBonusForm} onAddDeduction={deductFromReconcile} />}
 
       {error && (
         <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-2">
