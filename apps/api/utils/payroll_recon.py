@@ -12,7 +12,7 @@ import math
 import re
 import zipfile
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from io import BytesIO, StringIO
 from typing import Any, Optional, Sequence
@@ -443,14 +443,21 @@ def _name_variants(name: str) -> list[str]:
     return list(dict.fromkeys(p.strip() for p in parts if p.strip()))
 
 
-def _candidates(row: ScheduleRow, transactions: Sequence[Any]) -> list[Any]:
-    """Transactions plausibly paying this row — account number wins over name."""
+def _candidates(row: ScheduleRow, transactions: Sequence[Any]) -> tuple[list[Any], list[Any]]:
+    """(payments to the row's account number, payments whose name matches the row).
+    Kept apart so a stale or shared account number can never hide a payment that
+    the name on the transfer identifies."""
+    by_account: list[Any] = []
     if row.account_number:
-        by_account = [t for t in transactions if _has_account(_tx_text(t), row.account_number)]
-        if by_account:
-            return by_account
+        key = _account_key(row.account_number)
+        by_account = [
+            t for t in transactions
+            if _has_account(_tx_text(t), row.account_number)
+            or (key is not None and _account_key(parse_payment_recipient(t.description)[2]) == key)
+        ]
     variants = _name_variants(row.name)
-    return [t for t in transactions if any(_name_matches_text(v, _tx_text(t)) for v in variants)]
+    by_name = [t for t in transactions if any(_name_matches_text(v, _tx_text(t)) for v in variants)]
+    return by_account, by_name
 
 
 def _status(difference_cents: int, any_paid: bool) -> str:
@@ -461,7 +468,39 @@ def _status(difference_cents: int, any_paid: bool) -> str:
     return "underpaid" if difference_cents < 0 else "overpaid"
 
 
-def _build_line(row: ScheduleRow, chosen: Sequence[Any], note: Optional[str], extras: Sequence[Any] = ()) -> dict[str, Any]:
+def parse_payment_recipient(description: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """(name, bank, account) from a bank narration such as
+    'Transfer to PATRICIA OGOGO | OPay | 7038692765 | August Salary'.
+    Masked (955****234) or placeholder accounts come back as None."""
+    parts = [p.strip() for p in (description or "").split("|")]
+    if len(parts) < 3 or not parts[0].lower().startswith("transfer to "):
+        return None, None, None
+    account = parts[2] if re.fullmatch(r"\d+", parts[2]) and _account_key(parts[2]) else None
+    return parts[0][len("transfer to "):].strip() or None, parts[1] or None, account
+
+
+def check_account(directory_account: Optional[str], paid_account: Optional[str]) -> Optional[str]:
+    """The bank is the truth: compare the account it paid with the directory's.
+    None when we cannot read the paid account; 'missing' / 'differs' / 'ok' otherwise."""
+    if not paid_account:
+        return None
+    directory = _account_key(directory_account)
+    if directory is None:
+        return "missing"
+    return "ok" if directory == _account_key(paid_account) else "differs"
+
+
+def _suggestion(tx: Any) -> dict[str, Any]:
+    _, bank, account = parse_payment_recipient(tx.description)
+    return {"id": tx.id, "date": tx.date.isoformat(), "amount": round(tx.amount, 2), "vendor": tx.vendor,
+            "account": account, "bank": bank}
+
+
+def _build_line(
+    row: ScheduleRow, chosen: Sequence[Any], note: Optional[str], extras: Sequence[Any] = (),
+    suggestions: Sequence[Any] = (),
+) -> dict[str, Any]:
+    _, paid_bank, paid_account = parse_payment_recipient(chosen[0].description) if chosen else (None, None, None)
     paid_cents = sum(_cents(t.amount) for t in chosen)
     diff_cents = paid_cents - _cents(row.amount)
     return {
@@ -480,14 +519,20 @@ def _build_line(row: ScheduleRow, chosen: Sequence[Any], note: Optional[str], ex
         # row that is already paid and still has these may have been paid twice.
         "extra_payment_ids": [t.id for t in extras],
         "extra_paid_amount": sum(_cents(t.amount) for t in extras) / 100,
+        # What the bank actually paid (the truth for account number and bank)
+        "paid_account": paid_account,
+        "paid_bank": paid_bank,
+        # Unpaid row + an unclaimed payment of about the same amount: maybe this one
+        "suggested_payments": [_suggestion(t) for t in suggestions],
     }
 
 
 def _tx_summary(tx: Any) -> dict[str, Any]:
     day: date = tx.date
+    _, bank, account = parse_payment_recipient(tx.description)
     return {
         "id": tx.id, "date": day.isoformat(), "amount": round(tx.amount, 2),
-        "description": tx.description, "vendor": tx.vendor,
+        "description": tx.description, "vendor": tx.vendor, "account": account, "bank": bank,
     }
 
 
@@ -500,20 +545,28 @@ def _assign(
     within the ₦100 tolerance (the closest one wins). Pass 2 handles partial/split payments on what is left, but only
     gives a payment to a row when no other unresolved row could claim it; a
     contested payment is left unassigned and flagged instead of guessed."""
-    candidates = [_candidates(row, ordered) for row in rows]
+    hits = [_candidates(row, ordered) for row in rows]
+    candidates = [sorted({t.id: t for t in by_acct + by_name}.values(), key=lambda t: (t.date, t.id)) for by_acct, by_name in hits]
     assigned: dict[int, list[Any]] = {i: [] for i in range(len(rows))}
     used: set[int] = set()
 
-    # Rows with an account number go first: that match is stronger than a name
-    # match, so a looser name-only row can't take their payment.
-    for i in sorted(range(len(rows)), key=lambda k: 0 if rows[k].account_number else 1):
+    def take(i: int, pool: list[Any]) -> None:
         row = rows[i]
-        gap = lambda t: abs(_cents(t.amount) - _cents(row.amount))  # noqa: E731
-        near = [t for t in candidates[i] if t.id not in used and within_tolerance(_cents(t.amount) - _cents(row.amount))]
-        if near:
-            best = min(near, key=lambda t: (gap(t), t.date, t.id))
+        near = [t for t in pool if t.id not in used and within_tolerance(_cents(t.amount) - _cents(row.amount))]
+        if near and not assigned[i]:
+            best = min(near, key=lambda t: (abs(_cents(t.amount) - _cents(row.amount)), t.date, t.id))
             assigned[i] = [best]
             used.add(best.id)
+
+    # Rows with an account number go first so a looser name-only row can't take
+    # their payment. First the payments whose NAME matches (a payment that names
+    # Bob is Bob's even if Alice shares his account number), then payments to the
+    # row's account under another name (staff paid into a relative's account).
+    order = sorted(range(len(rows)), key=lambda k: 0 if rows[k].account_number else 1)
+    for i in order:
+        take(i, hits[i][1])
+    for i in order:
+        take(i, hits[i][0])
 
     unresolved = [i for i in assigned if not assigned[i]]
     open_candidates = {i: [t for t in candidates[i] if t.id not in used] for i in unresolved}
@@ -534,11 +587,26 @@ def reconcile(rows: Sequence[ScheduleRow], transactions: Sequence[Any]) -> dict[
     ordered = sorted(transactions, key=lambda t: (t.date, t.id))
     assigned, notes, candidates = _assign(rows, ordered)
     used = {t.id for txs in assigned.values() for t in txs}
+    leftovers = [t for t in ordered if t.id not in used]
+
+    def fits(t: Any, row: ScheduleRow) -> bool:
+        return within_tolerance(_cents(t.amount) - _cents(row.amount))
+
+    # A payment is only suggested when exactly one unpaid row could take it,
+    # otherwise the user could save the same account onto the wrong person.
+    unpaid_rows = [row for i, row in enumerate(rows) if not assigned[i]]
+    fit_counts = Counter(t.id for t in leftovers for row in unpaid_rows if fits(t, row))
+
+    def suggestions(i: int, row: ScheduleRow) -> list[Any]:
+        if assigned[i]:
+            return []
+        return [t for t in leftovers if fits(t, row) and fit_counts[t.id] == 1][:3]
+
     lines = [
-        _build_line(row, assigned[i], notes.get(i), [t for t in candidates[i] if t.id not in used] if assigned[i] else [])
+        _build_line(row, assigned[i], notes.get(i),
+                    [t for t in candidates[i] if t.id not in used] if assigned[i] else [], suggestions(i, row))
         for i, row in enumerate(rows)
     ]
-    leftovers = [t for t in ordered if t.id not in used]
     count = lambda status: sum(1 for ln in lines if ln["status"] == status)  # noqa: E731
     summary = {
         "rows": len(lines),
@@ -559,7 +627,8 @@ def reconcile(rows: Sequence[ScheduleRow], transactions: Sequence[Any]) -> dict[
 def _account_key(value: Optional[str]) -> Optional[str]:
     """Digits only, leading zeros dropped (Excel loses them), or None if too short."""
     digits = re.sub(r"\D", "", value or "")
-    return digits.lstrip("0") if len(digits) >= MIN_ACCOUNT_DIGITS else None
+    # an all-zero number is a placeholder, not an account
+    return (digits.lstrip("0") or None) if len(digits) >= MIN_ACCOUNT_DIGITS else None
 
 
 def _link_unambiguous(candidates: dict[int, list[ScheduleRow]], links: dict[int, ScheduleRow], used: set[int]) -> None:
@@ -607,3 +676,27 @@ def link_staff_to_rows(staff: Sequence[Any], rows: Sequence[ScheduleRow]) -> dic
     fuzzy = {s.id: [r for r in open_rows() if _names_match(s.full_name, r.name)] for s in pending()}
     _link_unambiguous(fuzzy, links, used)
     return links
+
+
+def link_and_fill(
+    rows: Sequence[ScheduleRow], staff: Sequence[Any],
+) -> tuple[list[ScheduleRow], dict[int, ScheduleRow], dict[int, str]]:
+    """Link staff to rows, then give a row that has no account number the one in
+    the staff directory, so its bank payment can be found even when the name on
+    the transfer is someone else's. Returns (rows with accounts filled,
+    staff id -> row, row number -> 'sheet' | 'directory')."""
+    links = link_staff_to_rows(staff, rows)
+    owner = {row.row_number: s for s in staff if (row := links.get(s.id)) is not None}
+    filled: list[ScheduleRow] = []
+    sources: dict[int, str] = {}
+    for row in rows:
+        directory = re.sub(r"\D", "", getattr(owner.get(row.row_number), "account_number", None) or "")
+        if row.account_number:
+            sources[row.row_number] = "sheet"
+            filled.append(row)
+        elif _account_key(directory):
+            sources[row.row_number] = "directory"
+            filled.append(replace(row, account_number=directory))
+        else:
+            filled.append(row)
+    return filled, links, sources

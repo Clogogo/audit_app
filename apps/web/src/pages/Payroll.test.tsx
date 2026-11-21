@@ -1,14 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Payroll } from './Payroll';
-import { computePayroll, getNextPayrollMonth, processPayroll, reconcilePayroll } from '../api/client';
-import type { PayrollLine, PayrollReconcileLine, PayrollReconcileResult } from '../api/types';
+import { computePayroll, getNextPayrollMonth, listStaffMembers, processPayroll, reconcilePayroll, updateStaffMember } from '../api/client';
+import type { PayrollLine, PayrollReconcileLine, PayrollReconcileResult, StaffMember } from '../api/types';
 
 vi.mock('../api/client', () => ({
   computePayroll: vi.fn(),
   getNextPayrollMonth: vi.fn(),
   processPayroll: vi.fn(),
   resetPayroll: vi.fn(),
+  listStaffMembers: vi.fn(),
+  updateStaffMember: vi.fn(),
   reconcilePayroll: vi.fn(),
 }));
 
@@ -21,7 +23,7 @@ const staffLine = (id: number, name: string, gross: number): PayrollLine => ({
 const scheduleLine = (id: number, name: string, amount: number, over: Partial<PayrollReconcileLine> = {}): PayrollReconcileLine => ({
   row_number: id, name, account_number: null, expected_amount: amount, paid_amount: amount, difference: 0,
   status: 'matched', transaction_ids: [id], paid_to: name, paid_date: '2026-03-30', note: null,
-  extra_payment_ids: [], extra_paid_amount: 0,
+  extra_payment_ids: [], extra_paid_amount: 0, paid_account: null, paid_bank: null, suggested_payments: [], account_source: null, directory_account: null, account_check: null,
   staff_id: id, staff_name: name, computed_net: amount, net_difference: 0, in_sync: true, ...over,
 });
 
@@ -151,5 +153,95 @@ describe('Payroll page', () => {
     expect(alert).toHaveTextContent('Cannot process payroll');
     expect(alert).toHaveTextContent('Ada Obi');
     expect(alert).toHaveTextContent('3,000.00 less than the schedule');
+  });
+
+  describe('deactivating staff who are no longer employed', () => {
+    const member = { id: 1, full_name: 'Ada Obi', role: null, bank_name: null, account_number: null, monthly_gross: 15000,
+      start_date: null, end_date: null, is_active: true, notes: null, created_at: '', updated_at: '' } as StaffMember;
+
+    beforeEach(() => {
+      vi.mocked(listStaffMembers).mockReset().mockResolvedValue([member]);
+      vi.mocked(updateStaffMember).mockReset().mockResolvedValue({ ...member, is_active: false });
+    });
+
+    it('deactivates in the directory after confirming, then reloads the month', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      fireEvent.click((await screen.findAllByRole('button', { name: 'Deactivate' }))[0]);
+
+      await waitFor(() => expect(updateStaffMember).toHaveBeenCalledWith(1, expect.objectContaining({ full_name: 'Ada Obi', is_active: false })));
+      await waitFor(() => expect(computePayroll).toHaveBeenCalledTimes(2));
+    });
+
+    it('does nothing when the confirmation is cancelled', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(false);
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      fireEvent.click((await screen.findAllByRole('button', { name: 'Deactivate' }))[0]);
+      expect(updateStaffMember).not.toHaveBeenCalled();
+    });
+
+    it('reports a failure instead of silently continuing', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      vi.mocked(updateStaffMember).mockRejectedValue(new Error('boom'));
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      fireEvent.click((await screen.findAllByRole('button', { name: 'Deactivate' }))[0]);
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not deactivate Ada Obi');
+    });
+  });
+
+  describe('using the bank\'s account', () => {
+    const jonathan = { id: 1, full_name: 'Ada Obi', role: null, bank_name: null, account_number: null, monthly_gross: 15000,
+      start_date: null, end_date: null, is_active: true, notes: null, created_at: '', updated_at: '' } as StaffMember;
+
+    const withMismatch = () => result([scheduleLine(1, 'Ada Obi', 15000, {
+      account_check: 'missing', paid_account: '7038692765', paid_bank: 'OPay', paid_to: 'PATRICIA NKECHI OGOGO',
+    }), scheduleLine(2, 'Bola Eze', 20000)]);
+
+    beforeEach(() => {
+      vi.mocked(listStaffMembers).mockReset().mockResolvedValue([jonathan]);
+      vi.mocked(updateStaffMember).mockReset().mockResolvedValue({ ...jonathan, account_number: '7038692765' });
+      vi.mocked(reconcilePayroll).mockResolvedValue(withMismatch());
+    });
+
+    it('saves the bank account to the directory after confirming, then re-reconciles', async () => {
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      await loadSchedule();
+      fireEvent.click(await screen.findByRole('button', { name: /Use the bank's account for Ada Obi/ }));
+
+      await waitFor(() => expect(updateStaffMember).toHaveBeenCalledWith(1, expect.objectContaining({ account_number: '7038692765', bank_name: 'OPay' })));
+      // the prompt shows exactly what changes and warns about an unrelated account holder
+      const message = confirm.mock.calls[0][0] as string;
+      expect(message).toContain('Account: none → 7038692765');
+      expect(message).toContain('Bank: none → OPay');
+      expect(message).toContain('WARNING: that name does not look like Ada Obi');
+      await waitFor(() => expect(reconcilePayroll).toHaveBeenCalledTimes(2));
+    });
+
+    it('warns when the account is already saved for another staff member', async () => {
+      const other = { ...jonathan, id: 9, full_name: 'Bola Eze', account_number: '7038692765' } as StaffMember;
+      vi.mocked(listStaffMembers).mockResolvedValue([jonathan, other]);
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      await loadSchedule();
+      fireEvent.click(await screen.findByRole('button', { name: /Use the bank's account for Ada Obi/ }));
+      await waitFor(() => expect(confirm).toHaveBeenCalled());
+      expect(confirm.mock.calls[0][0]).toContain('WARNING: this account is already saved for Bola Eze');
+    });
+
+    it('changes nothing when the confirmation is cancelled', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(false);
+      render(<Payroll />);
+      await screen.findByText('March 2026 Payroll');
+      await loadSchedule();
+      fireEvent.click(await screen.findByRole('button', { name: /Use the bank's account for Ada Obi/ }));
+      expect(updateStaffMember).not.toHaveBeenCalled();
+      expect(reconcilePayroll).toHaveBeenCalledTimes(1);
+    });
   });
 });

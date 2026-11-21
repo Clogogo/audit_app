@@ -29,12 +29,30 @@ function SummaryTile({ label, value, tone }: { label: string; value: string; ton
 }
 
 /** The reconciliation of a payroll schedule with the bank payments; collapsed to a one-line summary. */
-export function ReconcileResults({ result }: { result: PayrollReconcileResult }) {
+export interface AccountUpdate {
+  staffId: number;
+  staffName: string;
+  account: string;
+  bank: string | null;
+  /** the name the bank paid (the account holder as the bank shows it) */
+  holder: string | null;
+}
+
+interface ReconcileResultsProps {
+  result: PayrollReconcileResult;
+  /** when given, account problems get a button that saves the bank's account to the staff directory */
+  onUseAccount?: (update: AccountUpdate) => void;
+}
+
+export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps) {
   const { summary, lines } = result;
   const problemRows = result.skipped_rows.filter((r) => !r.ignored);
   const ignoredRows = result.skipped_rows.filter((r) => r.ignored);
   const attention = summary.underpaid + summary.overpaid + summary.not_paid;
   const outOfSync = lines.filter((l) => l.in_sync === false).length;
+  const accountFixes = lines.filter((l) => l.staff_id != null && l.paid_account && (l.account_check === 'missing' || l.account_check === 'differs'));
+  const suggestions = lines.filter((l) => l.staff_id != null && l.status === 'not_paid' && l.suggested_payments.some((p) => p.account));
+  const toConfirm = accountFixes.length + suggestions.length;
   const duplicates = lines.filter((l) => l.extra_payment_ids.length > 0).length;
   const gap = summary.paid_total - summary.expected_total;
 
@@ -43,6 +61,7 @@ export function ReconcileResults({ result }: { result: PayrollReconcileResult })
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
         Schedule vs bank — {MONTHS[result.month - 1]} {result.year}: {summary.matched} of {summary.rows} matched
         {attention > 0 && ` · ${attention} need attention`}
+        {toConfirm > 0 && ` · ${toConfirm} account${toConfirm === 1 ? '' : 's'} to confirm`}
         {duplicates > 0 && ` · ${duplicates} possible duplicate payment${duplicates === 1 ? '' : 's'}`}
         {outOfSync > 0 && ` · ${outOfSync} total${outOfSync === 1 ? '' : 's'} differ from the staff directory`}
         {result.unlinked_staff.length > 0 && ` · ${result.unlinked_staff.length} staff not on the schedule`}
@@ -73,6 +92,41 @@ export function ReconcileResults({ result }: { result: PayrollReconcileResult })
             Ignored {ignoredRows.length} row{ignoredRows.length === 1 ? '' : 's'} that look like labels or totals:{' '}
             {ignoredRows.map((r) => `row ${r.row_number} “${r.label}”`).join(', ')}. Check none of them is a person.
           </p>
+        )}
+
+        {toConfirm > 0 && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200 space-y-2">
+            <p className="font-medium">Confirm account details — the bank's account is treated as the truth:</p>
+            <ul className="space-y-2 text-xs">
+              {accountFixes.map((l) => (
+                <li key={`fix-${l.row_number}`} className="flex flex-wrap items-center gap-2">
+                  <span>
+                    <strong>{l.staff_name}</strong>: the bank paid {l.paid_to} ({l.paid_bank ?? 'bank'} {l.paid_account});
+                    the directory has {l.directory_account ?? 'no account number'}.
+                  </span>
+                  {onUseAccount && (
+                    <button type="button" className="underline text-primary"
+                      onClick={() => onUseAccount({ staffId: l.staff_id as number, staffName: l.staff_name ?? '', account: l.paid_account as string, bank: l.paid_bank, holder: l.paid_to })}>
+                      Use the bank's account for {l.staff_name}
+                    </button>
+                  )}
+                </li>
+              ))}
+              {suggestions.map((l) => l.suggested_payments.filter((p) => p.account).map((p) => (
+                <li key={`sug-${l.row_number}-${p.id}`} className="flex flex-wrap items-center gap-2">
+                  <span>
+                    <strong>{l.staff_name}</strong> shows not paid, but {formatCurrency(p.amount)} on {p.date} went to {p.vendor ?? 'someone'} ({p.bank ?? 'bank'} {p.account}) and is unclaimed.
+                  </span>
+                  {onUseAccount && (
+                    <button type="button" className="underline text-primary"
+                      onClick={() => onUseAccount({ staffId: l.staff_id as number, staffName: l.staff_name ?? '', account: p.account as string, bank: p.bank, holder: p.vendor })}>
+                      That is {l.staff_name}'s account
+                    </button>
+                  )}
+                </li>
+              )))}
+            </ul>
+          </div>
         )}
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
