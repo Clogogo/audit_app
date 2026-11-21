@@ -60,7 +60,7 @@ describe('ReconcileResults', () => {
     expect(screen.getByRole('note')).toHaveTextContent('using column I as the amount to pay');
   });
 
-  describe('account details to confirm', () => {
+  describe('bank account details', () => {
     const withAccounts = (): PayrollReconcileResult => ({
       ...RESULT,
       lines: [
@@ -71,22 +71,12 @@ describe('ReconcileResults', () => {
       ],
     });
 
-    it('offers to save the bank\'s account for a mismatch and for an unclaimed payment', () => {
-      const onUseAccount = vi.fn();
-      render(<ReconcileResults result={withAccounts()} onUseAccount={onUseAccount} />);
-      expect(screen.getByText(/2 accounts to confirm/)).toBeInTheDocument();
-      expect(screen.getByText(/the directory has 0999999999/)).toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: /Use the bank's account for Ngozi Williams/ }));
-      expect(onUseAccount).toHaveBeenCalledWith({ staffId: 1, staffName: 'Ngozi Williams', account: '7038692765', bank: 'OPay', holder: 'PATRICIA NKECHI OGOGO' });
-
-      fireEvent.click(screen.getByRole('button', { name: /That is Jonathan Ogogo's account/ }));
-      expect(onUseAccount).toHaveBeenLastCalledWith({ staffId: 12, staffName: 'Jonathan Ogogo', account: '7038692765', bank: 'OPay', holder: 'PATRICIA NKECHI OGOGO' });
-    });
-
-    it('shows the problems but no buttons when nothing can be saved', () => {
+    it('shows the bank account as the source of truth without offering to update the directory', () => {
       render(<ReconcileResults result={withAccounts()} />);
-      expect(screen.getByText(/Confirm account details/)).toBeInTheDocument();
+      expect(screen.getByText(/Bank payment details — the bank record is the source of truth/)).toBeInTheDocument();
+      expect(screen.getByText(/the directory has 0999999999/)).toBeInTheDocument();
+      expect(screen.getByText(/shows not paid, but/)).toHaveTextContent('Jonathan Ogogo');
+      expect(screen.getByText(/shows not paid, but/)).toHaveTextContent('7038692765');
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
   });
