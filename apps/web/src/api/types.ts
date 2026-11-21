@@ -1175,3 +1175,113 @@ export interface TeacherBonusIn {
   term_id?: number | null;
   notes?: string | null;
 }
+
+// ── Payroll reconciliation ────────────────────────────────────────────────────
+
+export type ReconcileStatus = 'matched' | 'underpaid' | 'overpaid' | 'not_paid';
+
+export interface PayrollReconcileLine {
+  row_number: number;
+  name: string;
+  account_number: string | null;
+  expected_amount: number;
+  paid_amount: number;
+  difference: number;
+  status: ReconcileStatus;
+  transaction_ids: number[];
+  paid_to: string | null;
+  paid_date: string | null;
+  note: string | null;
+  /** other bank payments that look like this person's but were not used — a possible duplicate */
+  extra_payment_ids: number[];
+  extra_paid_amount: number;
+  /** what the bank actually paid: the truth for account number and bank */
+  paid_account: string | null;
+  paid_bank: string | null;
+  /** unpaid row + an unclaimed payment of about the same amount */
+  suggested_payments: PayrollSuggestedPayment[];
+  account_source: 'sheet' | 'directory' | null;
+  directory_account: string | null;
+  account_check: 'ok' | 'missing' | 'differs' | null;
+  // Staff-directory cross-check; null when the row could not be linked to a staff member
+  staff_id: number | null;
+  staff_name: string | null;
+  computed_net: number | null;
+  net_difference: number | null;
+  in_sync: boolean | null;
+}
+
+export interface PayrollSuggestedPayment {
+  id: number;
+  date: string;
+  amount: number;
+  vendor: string | null;
+  account: string | null;
+  bank: string | null;
+}
+
+export interface PayrollReconcileUnlinkedStaff {
+  staff_id: number;
+  full_name: string;
+  computed_net: number;
+}
+
+export interface PayrollReconcileSkippedRow {
+  row_number: number;
+  reason: string;
+  ignored: boolean;
+  label: string;
+}
+
+export interface PayrollReconcileUnmatched {
+  id: number;
+  date: string;
+  amount: number;
+  description: string;
+  vendor: string | null;
+}
+
+export interface PayrollReconcileSummary {
+  rows: number;
+  matched: number;
+  underpaid: number;
+  overpaid: number;
+  not_paid: number;
+  expected_total: number;
+  paid_total: number;
+  unmatched_payments: number;
+  unmatched_total: number;
+}
+
+export interface PayrollReconcileResult {
+  year: number;
+  month: number;
+  lines: PayrollReconcileLine[];
+  skipped_rows: PayrollReconcileSkippedRow[];
+  notes: string[];
+  unlinked_staff: PayrollReconcileUnlinkedStaff[];
+  unmatched_transactions: PayrollReconcileUnmatched[];
+  summary: PayrollReconcileSummary;
+}
+
+export interface PayrollScheduleLineIn {
+  row_number: number;
+  name: string;
+  amount: number;
+  account_number: string | null;
+}
+
+export interface PayrollProcessIssue {
+  staff_id: number;
+  full_name: string;
+  kind: string;
+  message: string;
+  expected: number | null;
+  paid: number | null;
+  computed: number | null;
+}
+
+export interface NextPayrollMonth {
+  year: number;
+  month: number;
+}

@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth import require_permission
 from utils.idempotency import IdempotencyKeyHeader, reserve_idempotency_key
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from rapidfuzz import fuzz
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -224,10 +224,22 @@ class PayrollLineOut(BaseModel):
     paid_amount: Optional[float] = None   # actual amount of the linked transaction
 
 
+class ScheduleLineIn(BaseModel):
+    """One row of the reconciled payroll schedule (echoed back from /payroll/reconcile)."""
+    row_number: int = Field(ge=1)
+    name: str = Field(min_length=1, max_length=200)
+    amount: float = Field(gt=0, lt=1e13)
+    account_number: Optional[str] = Field(default=None, max_length=50)
+
+
 class ProcessRequest(BaseModel):
     year: int
     month: int
     lines: list[PayrollLineIn]
+    # When present, processing is validated against the reconciliation of this
+    # schedule with the bank payments (see routers/payroll_schedule.py) instead
+    # of fuzzy-matching the staff directory to transactions.
+    schedule: Optional[list[ScheduleLineIn]] = Field(default=None, max_length=2000)
 
 
 class PayrollEntryOut(BaseModel):
@@ -432,6 +444,48 @@ def compute_payroll(year: int, month: int, db: Session = Depends(get_db)):
     return result
 
 
+def upsert_payroll_entry(
+    db: Session, line: PayrollLineIn, staff: Staff, year: int, month: int, *,
+    bonus: float, loan_ded: float, advance_ded: float, net: float, transaction_id: int,
+) -> PayrollEntry:
+    """Create or update the (staff, year, month) entry as paid, and recover any
+    advance deduction. Flushes (never commits) so a whole batch stays atomic."""
+    entry: Optional[PayrollEntry] = (
+        db.query(PayrollEntry)
+        .filter(
+            PayrollEntry.staff_id == line.staff_id,
+            PayrollEntry.period_year == year,
+            PayrollEntry.period_month == month,
+        )
+        .first()
+    )
+    if not entry:
+        entry = PayrollEntry(staff_id=line.staff_id, period_year=year, period_month=month)
+        db.add(entry)
+
+    entry.gross_salary = line.gross_salary
+    entry.bonus = bonus
+    entry.loan_deduction = loan_ded
+    entry.advance_deduction = advance_ded
+    entry.other_deductions = line.other_deductions
+    entry.net_salary = net
+    entry.notes = line.notes
+    entry.transaction_id = transaction_id
+    entry.is_paid = True
+    entry.paid_date = date(year, month, calendar.monthrange(year, month)[1])
+    entry.updated_at = datetime.utcnow()
+
+    _recover_advances_for_month(staff, year, month, advance_ded, db)
+
+    # flush (not commit) — every line lands in ONE transaction with the
+    # idempotency key reserved by the caller, so a failure partway through a
+    # multi-staff batch rolls back everything already processed instead of
+    # leaving it committed with the key consumed and no way to safely retry.
+    db.flush()
+    db.refresh(entry)
+    return entry
+
+
 @router.post("/process", response_model=list[PayrollEntryOut])
 def process_payroll(
     req: ProcessRequest, db: Session = Depends(get_db),
@@ -448,6 +502,10 @@ def process_payroll(
     # an exact duplicate submission (double click, retried request) would
     # double-drain an advance even though the PayrollEntry itself looks fine.
     reserve_idempotency_key(db, idempotency_key)
+
+    if req.schedule is not None:
+        from routers.payroll_schedule import process_with_schedule
+        return process_with_schedule(req, db)
 
     month_start = date(req.year, req.month, 1)
     month_end   = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
@@ -609,7 +667,6 @@ def process_payroll(
         loan_ded = loan_ded_by_staff[line.staff_id]
         advance_ded = advance_ded_by_staff[line.staff_id]
         net = net_by_staff[line.staff_id]
-        pay_date = date(req.year, req.month, calendar.monthrange(req.year, req.month)[1])
 
         # Capture the REAL amount paid from the linked bank transaction. When
         # the bank paid more than the computed net (extra allowance, rounding,
@@ -631,44 +688,10 @@ def process_payroll(
                 net = round(net + diff, 2)
         excess_by_staff[line.staff_id] = excess
 
-        entry: Optional[PayrollEntry] = (
-            db.query(PayrollEntry)
-            .filter(
-                PayrollEntry.staff_id == line.staff_id,
-                PayrollEntry.period_year == req.year,
-                PayrollEntry.period_month == req.month,
-            )
-            .first()
+        entry = upsert_payroll_entry(
+            db, line, staff, req.year, req.month,
+            bonus=bonus, loan_ded=loan_ded, advance_ded=advance_ded, net=net, transaction_id=tx_map[line.staff_id],
         )
-        if not entry:
-            entry = PayrollEntry(
-                staff_id=line.staff_id,
-                period_year=req.year,
-                period_month=req.month,
-            )
-            db.add(entry)
-
-        entry.gross_salary   = line.gross_salary
-        entry.bonus          = bonus
-        entry.loan_deduction = loan_ded
-        entry.advance_deduction = advance_ded
-        entry.other_deductions = line.other_deductions
-        entry.net_salary     = net
-        entry.notes          = line.notes
-        entry.transaction_id = tx_map[line.staff_id]
-        entry.is_paid        = True
-        entry.paid_date      = pay_date
-        entry.updated_at     = datetime.utcnow()
-
-        _recover_advances_for_month(staff, req.year, req.month, advance_ded, db)
-
-        # flush (not commit) — every line lands in ONE transaction with the
-        # idempotency key reserved at the top of this function, so a failure
-        # partway through a multi-staff batch rolls back everything already
-        # processed instead of leaving it committed with the key consumed
-        # and no way to safely retry under the same key.
-        db.flush()
-        db.refresh(entry)
         saved.append(entry)
 
     db.commit()
