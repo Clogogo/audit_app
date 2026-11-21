@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Plus, Trash2, Pencil, Building2, Tag, ChevronDown, X,
-  Receipt, SlidersHorizontal, ChevronLeft, ChevronRight, Search,
+  Receipt, SlidersHorizontal, ChevronLeft, ChevronRight, Search, Sparkles,
 } from 'lucide-react';
-import { getTransactions, getSummary, getTransactionYears, createTransaction, updateTransaction, deleteTransaction, batchUpdateCategory, getTerms } from '../api/client';
+import { getTransactions, getSummary, getTransactionYears, createTransaction, updateTransaction, deleteTransaction, batchUpdateCategory, aiRecategorize, getTerms } from '../api/client';
 import type { Transaction, TransactionCreate, TransactionSummary, Term } from '../api/types';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../api/types';
 import { Button } from '../components/ui/button';
@@ -47,6 +47,9 @@ export function Transactions() {
   const [deleting, setDeleting] = useState(false);
   const [batchCategory, setBatchCategory] = useState('');
   const [batchCategoryApplying, setBatchCategoryApplying] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<{ checked: number; suggestions: { id: number; from: string; to: string }[] } | null>(null);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [summaryData, setSummaryData] = useState<TransactionSummary | null>(null);
@@ -309,6 +312,45 @@ export function Transactions() {
     }
   };
 
+  // Ask the AI about the selected rows, or every row the current filters show on this page
+  const handleAiSuggest = async () => {
+    const ids = selected.size > 0 ? [...selected] : visible.map((t) => t.id);
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      setAiResult(await aiRecategorize(ids));
+    } catch {
+      setAiError('The AI could not suggest categories right now. Please try again in a moment.');
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const handleAiApply = async () => {
+    if (!aiResult) return;
+    setAiBusy(true);
+    try {
+      const byCategory = new Map<string, number[]>();
+      aiResult.suggestions.forEach((s) => byCategory.set(s.to, [...(byCategory.get(s.to) ?? []), s.id]));
+      await Promise.all([...byCategory].map(([category, ids]) => batchUpdateCategory(ids, category)));
+      setAiResult(null);
+      load(undefined, true);
+    } catch {
+      setAiError('Some changes could not be saved. Please reload and try again.');
+      setAiResult(null);
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const aiSummary = aiResult
+    ? aiResult.suggestions.length === 0
+      ? `The AI checked ${aiResult.checked} transaction${aiResult.checked !== 1 ? 's' : ''} and suggests no changes.`
+      : `The AI suggests changing ${aiResult.suggestions.length} of ${aiResult.checked} transactions: ` +
+        [...aiResult.suggestions.reduce((m, s) => m.set(`${s.from} → ${s.to}`, (m.get(`${s.from} → ${s.to}`) ?? 0) + 1), new Map<string, number>())]
+          .map(([k, n]) => `${k} (${n})`).join(', ') + '.'
+    : '';
+
   const toggleOne = (id: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -334,6 +376,17 @@ export function Transactions() {
         onCancel={() => setConfirmOpen(false)}
       />
 
+      <ConfirmDialog
+        open={aiResult !== null}
+        title="AI category suggestions"
+        description={aiSummary}
+        confirmLabel={aiResult && aiResult.suggestions.length > 0 ? 'Apply changes' : 'OK'}
+        variant="default"
+        loading={aiBusy}
+        onConfirm={aiResult && aiResult.suggestions.length > 0 ? handleAiApply : () => setAiResult(null)}
+        onCancel={() => setAiResult(null)}
+      />
+
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
@@ -342,6 +395,11 @@ export function Transactions() {
             {loading ? 'Loading…' : `${total.toLocaleString()} transaction${total !== 1 ? 's' : ''}${hasFilters ? ' · filtered' : ''}`}
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        <Button variant="outline" onClick={handleAiSuggest} disabled={aiBusy || visible.length === 0} className="gap-1.5">
+          <Sparkles className="h-4 w-4" />
+          {aiBusy ? 'Asking AI…' : selected.size > 0 ? `AI recategorize ${selected.size}` : 'AI recategorize'}
+        </Button>
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) setSaveError(null); }}>
           <DialogTrigger asChild>
             <Button onClick={openAdd} className="gap-1.5 shadow-sm">
@@ -364,7 +422,9 @@ export function Transactions() {
             />
           </DialogContent>
         </Dialog>
+        </div>
       </div>
+      {aiError && <p className="text-sm text-destructive">{aiError}</p>}
 
       {/* ── Summary strip ──────────────────────────────────────────────────── */}
       <div className="flex items-center flex-wrap gap-x-6 gap-y-2 rounded-xl border bg-muted/30 px-4 py-2.5 text-sm">
