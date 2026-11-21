@@ -1,4 +1,5 @@
 """Chart of Accounts import, category mapping, Trial Balance, Profit & Loss and ledger endpoints."""
+import pytest
 from datetime import date
 
 from models import AccountMapping, BankAccount, ChartAccount, Transaction
@@ -232,3 +233,15 @@ def test_ai_suggest_retries_an_empty_reply_and_accepts_a_code_followed_by_its_na
     out = client.post("/accounting/mappings/ai-suggest")
     assert out.status_code == 200 and out.json()["applied"] == 1
     assert seen[0][0] >= 2000                                      # a budget big enough for reasoning models
+
+
+def test_ai_suggest_stops_starting_batches_when_the_time_budget_is_spent(client, db_session, monkeypatch):
+    import ai_worker
+    import utils.account_suggestions as sug
+    _import(client)
+    for n in range(4):
+        _tx(db_session, "expense", 10, f"Zzz {n}")
+    monkeypatch.setattr(sug, "AI_BATCH", 2)
+    monkeypatch.setattr(sug, "AI_BUDGET_SECONDS", -1)            # already over budget
+    monkeypatch.setattr(ai_worker, "call_ai_text", lambda p, *a: pytest.fail("no call should start"))
+    assert client.post("/accounting/mappings/ai-suggest").status_code == 503
