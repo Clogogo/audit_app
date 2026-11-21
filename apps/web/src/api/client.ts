@@ -71,6 +71,7 @@ import type {
   BonusTypeIn,
   TeacherBonus,
   TeacherBonusIn,
+  FinancialReport,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -721,3 +722,7 @@ export const getTrialBalance = (startDate: string, endDate: string) =>
 
 export const getLedger = (account: string, startDate: string, endDate: string) =>
   api.get<Ledger>('/accounting/ledger', { params: { account, start_date: startDate, end_date: endDate } }).then(unwrap);
+
+// Financial Reports hub
+export const getFinancialReport = (slug: string, params: { as_at?: string; start_date?: string }) =>
+  api.get<FinancialReport>(`/financial-reports/${slug}`, { params }).then(unwrap);
