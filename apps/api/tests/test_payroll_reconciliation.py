@@ -775,3 +775,22 @@ def test_other_deduction_refuses_unknown_staff_bad_amounts_and_processed_months(
     db_session.add(PayrollEntry(staff_id=s.id, period_year=2026, period_month=1, gross_salary=20000, bonus=0, net_salary=20000, is_paid=True))
     db_session.commit()
     assert client.post("/payroll/other-deduction", json=body).status_code == 409
+
+
+def test_a_bonus_added_after_a_deduction_still_reaches_the_payroll_line(client, db_session):
+    from models import TeacherBonus
+    s = _staff(db_session, gross=20000.0)
+    client.post("/payroll/other-deduction", json={"year": 2026, "month": 1, "staff_id": s.id, "amount": 1000})
+    db_session.add(TeacherBonus(staff_id=s.id, bonus_type="x", percentage=100, basis_amount=3000, frequency="onetime",
+                                period_year=2026, period_month=1, amount=3000))
+    db_session.commit()
+    line = next(p for p in client.get("/payroll/compute", params={"year": 2026, "month": 1}).json() if p["staff_id"] == s.id)
+    assert line["bonus"] == 3000.0 and line["other_deductions"] == 1000.0 and line["net_salary"] == 22000.0
+
+
+def test_a_stale_stored_bonus_on_an_unpaid_entry_is_not_shown(client, db_session):
+    s = _staff(db_session, gross=35000.0)
+    db_session.add(PayrollEntry(staff_id=s.id, period_year=2026, period_month=1, gross_salary=35000, bonus=15018.6, net_salary=50018.6, is_paid=False))
+    db_session.commit()
+    line = next(p for p in client.get("/payroll/compute", params={"year": 2026, "month": 1}).json() if p["staff_id"] == s.id)
+    assert line["bonus"] == 0.0 and line["net_salary"] == 35000.0

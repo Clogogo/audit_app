@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Calculator,
   ChevronLeft,
@@ -222,17 +222,24 @@ export function Payroll() {
   };
 
   // The schedule pays less than the directory expects: record the gap as an other deduction (saved), then re-compare.
+  const deducting = useRef(false);
   const deductFromReconcile = async (staffId: number, amount: number) => {
     const name = reconcile?.lines.find((l) => l.staff_id === staffId)?.staff_name ?? 'this staff member';
     if (!window.confirm(`Deduct ${formatCurrency(amount)} from ${name}'s ${MONTHS[month - 1]} ${year} pay as an other deduction?`)) return;
+    if (deducting.current) return; // a second click while the first is saving would deduct twice
+    deducting.current = true;
     setError(null);
     try {
-      await addOtherDeduction(year, month, staffId, amount);
+      const saved = await addOtherDeduction(year, month, staffId, amount);
+      // the row's typed override would otherwise keep the old value and be what Process sends
+      setOverrides((o) => (o[staffId] ? { ...o, [staffId]: { ...o[staffId], other: saved.other_deductions } } : o));
       setSuccess(`${formatCurrency(amount)} was added to ${name}'s other deductions.`);
       await Promise.all([load(true), refreshReconcile()]);
     } catch (e) {
       const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
       setError(typeof detail === 'string' ? detail : `Could not add the deduction for ${name}.`);
+    } finally {
+      deducting.current = false;
     }
   };
 
