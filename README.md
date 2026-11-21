@@ -1,6 +1,6 @@
 # FinanceAudit
 
-A finance and payroll audit application: transaction tracking, bank statement reconciliation, AI-assisted receipt parsing, staff payroll (with loans and one-off salary advances), tax reporting, and audit logging.
+A finance and payroll audit application: transaction tracking, bank statement reconciliation, AI summaries and AI-assisted bank-statement parsing, staff payroll (with loans and one-off salary advances), tax reporting, and audit logging.
 
 - **Backend:** FastAPI (Python 3.13) + SQLAlchemy 2.0 — `apps/api/`
 - **Frontend:** React 18 + Vite + TypeScript + Tailwind CSS — `apps/web/`
@@ -42,7 +42,7 @@ After every `staging → main` merge, the [Sync main → staging](.github/workfl
 ### Prerequisites
 - Node.js 22, npm
 - Python 3.13 (a venv at `apps/api/.venv` is expected — Homebrew Python on macOS is externally managed and won't allow global `pip install`)
-- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) (`brew install tesseract` on macOS) — required for receipt OCR
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) (`brew install tesseract` on macOS) — used for OCR of scanned PDF bank statements
 
 ### Setup
 
@@ -109,7 +109,7 @@ CI runs the backend suite against a real Postgres service container (not SQLite)
 
 - Transaction CRUD with full audit logging
 - Bank statement import (CSV/Excel/PDF) with a reconciliation engine
-- AI receipt upload: Tesseract OCR + `pdfplumber` → LLM (via OpenRouter) to pre-fill the transaction form
+- AI features (OpenRouter free model router): dashboard and staff summaries, AI bank-statement parsing, optional AI category suggestions (`ENABLE_AI_CATEGORIZATION`)
 - Staff Loans — installment-based, recovery driven by recorded `StaffLoanPayment` entries (not a formula)
 - Advance Payment (IOU) — one-off salary advances, fully recovered from the next payroll run processed after they're issued
 - Payroll — computes net pay per staff member per period, factoring in loan and advance deductions (capped together so they can never exceed a line's earnings) and other deductions

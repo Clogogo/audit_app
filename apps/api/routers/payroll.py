@@ -261,9 +261,6 @@ class PayrollEntryOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     paid_amount: Optional[float] = None  # actual amount of the linked transaction
-    # Amount added to bonus because the linked transaction paid more than the
-    # computed net — transient per-process info so the UI can notify the user.
-    bonus_excess: float = 0.0
 
     class Config:
         from_attributes = True
@@ -659,7 +656,6 @@ def process_payroll(
     # ── Phase 2: all transactions verified — upsert payroll entries ───────────
     saved: list[PayrollEntry] = []
 
-    excess_by_staff: dict[int, float] = {}
     paid_amount_by_staff: dict[int, float] = {}
 
     for line in req.lines:
@@ -668,29 +664,16 @@ def process_payroll(
         advance_ded = advance_ded_by_staff[line.staff_id]
         net = net_by_staff[line.staff_id]
 
-        # Capture the REAL amount paid from the linked bank transaction. When
-        # the bank paid more than the computed net (extra allowance, rounding,
-        # or a hand-picked transaction), fold the excess into bonus so the
-        # payroll entry reflects what actually left the account — net then
-        # equals the transaction amount. Underpayments are never auto-adjusted
-        # (we can't guess which deduction explains the gap); the UI surfaces
-        # them via paid_amount instead.
+        # Report the REAL amount the bank paid (paid_amount). A difference from the
+        # computed net is never adjusted automatically in either direction; the
+        # user adjusts the figures themselves.
         linked_tx = db.get(Transaction, tx_map[line.staff_id])
-        paid_amount = round(linked_tx.amount, 2) if linked_tx else None
-        bonus = line.bonus
-        excess = 0.0
-        if paid_amount is not None:
-            paid_amount_by_staff[line.staff_id] = paid_amount
-            diff = round(paid_amount - net, 2)
-            if diff > 0.01:
-                excess = diff
-                bonus = round(line.bonus + diff, 2)
-                net = round(net + diff, 2)
-        excess_by_staff[line.staff_id] = excess
+        if linked_tx:
+            paid_amount_by_staff[line.staff_id] = round(linked_tx.amount, 2)
 
         entry = upsert_payroll_entry(
             db, line, staff, req.year, req.month,
-            bonus=bonus, loan_ded=loan_ded, advance_ded=advance_ded, net=net, transaction_id=tx_map[line.staff_id],
+            bonus=line.bonus, loan_ded=loan_ded, advance_ded=advance_ded, net=net, transaction_id=tx_map[line.staff_id],
         )
         saved.append(entry)
 
@@ -721,7 +704,6 @@ def process_payroll(
             created_at=e.created_at,
             updated_at=e.updated_at,
             paid_amount=paid_amount_by_staff.get(e.staff_id),
-            bonus_excess=excess_by_staff.get(e.staff_id, 0.0),
         ))
     return result
 
