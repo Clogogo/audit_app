@@ -15,7 +15,6 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { BonusFormModal } from '../components/BonusFormModal';
 import { ReconcileResults } from '../components/payroll/ReconcileResults';
-import type { AccountUpdate } from '../components/payroll/ReconcileResults';
 import { ScheduleCells } from '../components/payroll/ScheduleCells';
 import { SchedulePanel } from '../components/payroll/SchedulePanel';
 import { checkRow, isBlocking, isNoted, scheduleLinesFor } from '../components/payroll/scheduleCheck';
@@ -65,7 +64,6 @@ export function Payroll() {
   const [processIssues, setProcessIssues] = useState<PayrollProcessIssue[]>([]);
   // The month's payroll schedule reconciled with the bank payments; processing is validated against it
   const [reconcile, setReconcile] = useState<PayrollReconcileResult | null>(null);
-  const [staffDirectory, setStaffDirectory] = useState<StaffMember[]>([]);
   // The page opens on the latest month whose payroll is not fully processed; nothing loads until that is known
   const [startResolved, setStartResolved] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
@@ -140,16 +138,6 @@ export function Payroll() {
 
   const refreshReconcile = () => getSavedReconciliation(year, month).then(setReconcile).catch(() => undefined);
 
-  useEffect(() => {
-    if (!reconcile) {
-      setStaffDirectory([]);
-      return;
-    }
-    Promise.resolve(listStaffMembers())
-      .then((members) => setStaffDirectory(members ?? []))
-      .catch(() => setStaffDirectory([]));
-  }, [reconcile]);
-
   // Heads-up when an entry's real bank amount differs from the computed net. Nothing is
   // adjusted automatically, in either direction: the user adjusts the figures themselves.
   const buildPayNotices = (entries: PayrollEntryOut[]) => {
@@ -187,37 +175,6 @@ export function Payroll() {
       load(true);
     } catch {
       setError(`Could not deactivate ${l.full_name}.`);
-    }
-  };
-
-  // The bank is the truth for account number and bank: after showing exactly what changes (and any
-  // warning signs), save what it paid to the staff directory.
-  const useBankAccount = async (u: AccountUpdate) => {
-    try {
-      const members = await listStaffMembers();
-      const member = members.find((m) => m.id === u.staffId);
-      if (!member) throw new Error('not found');
-      const digits = (v: string | null) => (v ?? '').replace(/\D/g, '');
-      const sharedWith = members
-        .filter((m) => m.id !== member.id && digits(m.account_number) !== '' && digits(m.account_number) === digits(u.account))
-        .map((m) => m.full_name);
-      const nameWords = member.full_name.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
-      const holder = u.holder?.toLowerCase() ?? '';
-      const unrelated = holder !== '' && !nameWords.some((w) => holder.includes(w));
-      const message = [
-        `Update ${member.full_name} in the Staff Directory?`,
-        `Account: ${member.account_number || 'none'} → ${u.account}`,
-        u.bank ? `Bank: ${member.bank_name || 'none'} → ${u.bank}` : `Bank: ${member.bank_name || 'none'} (unchanged, the bank statement did not name it)`,
-        u.holder ? `The bank shows the account holder as ${u.holder}.` : '',
-        unrelated ? `WARNING: that name does not look like ${member.full_name}. Continue only if this is really their account.` : '',
-        sharedWith.length ? `WARNING: this account is already saved for ${sharedWith.join(', ')}.` : '',
-      ].filter(Boolean).join('\n');
-      if (!window.confirm(message)) return;
-      await updateStaffMember(member.id, { ...member, account_number: u.account, bank_name: u.bank ?? member.bank_name });
-      setSuccess(`${u.staffName}'s account was updated to ${u.account}.`);
-      await refreshReconcile();
-    } catch {
-      setError(`Could not update ${u.staffName}'s account.`);
     }
   };
 
@@ -391,7 +348,7 @@ export function Payroll() {
       </div>
 
       <SchedulePanel year={year} month={month} monthLabel={`${MONTHS[month - 1]} ${year}`} onResult={setReconcile} />
-      {reconcile && <ReconcileResults result={reconcile} staffMembers={staffDirectory} onUseAccount={useBankAccount} onAddBonus={openBonusForm} onAddDeduction={deductFromReconcile} />}
+      {reconcile && <ReconcileResults result={reconcile} onAddBonus={openBonusForm} onAddDeduction={deductFromReconcile} />}
 
       {error && (
         <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-2">

@@ -1,6 +1,4 @@
-import { useState } from 'react';
 import type { PayrollReconcileResult, ReconcileStatus } from '../../api/types';
-import type { StaffMember } from '../../api/types';
 import { formatCurrency } from '../../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 
@@ -30,29 +28,15 @@ function SummaryTile({ label, value, tone }: { label: string; value: string; ton
   );
 }
 
-/** The reconciliation of a payroll schedule with the bank payments; collapsed to a one-line summary. */
-export interface AccountUpdate {
-  staffId: number;
-  staffName: string;
-  account: string;
-  bank: string | null;
-  /** the name the bank paid (the account holder as the bank shows it) */
-  holder: string | null;
-}
-
 interface ReconcileResultsProps {
   result: PayrollReconcileResult;
-  staffMembers?: StaffMember[];
-  /** when given, account problems get a button that saves the bank's account to the staff directory */
-  onUseAccount?: (update: AccountUpdate) => void;
   /** the schedule pays more than the directory expects: record the difference as a bonus */
   onAddBonus?: (staffId: number, amount: number) => void;
   /** the schedule pays less than the directory expects: record the difference as an other deduction */
   onAddDeduction?: (staffId: number, amount: number) => void;
 }
 
-export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAddBonus, onAddDeduction }: ReconcileResultsProps) {
-  const [selectedStaffByRow, setSelectedStaffByRow] = useState<Record<number, number | ''>>({});
+export function ReconcileResults({ result, onAddBonus, onAddDeduction }: ReconcileResultsProps) {
   const { summary, lines } = result;
   const problemRows = result.skipped_rows.filter((r) => !r.ignored);
   const ignoredRows = result.skipped_rows.filter((r) => r.ignored);
@@ -60,8 +44,6 @@ export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAd
   const outOfSync = lines.filter((l) => l.in_sync === false).length;
   const accountFixes = lines.filter((l) => l.staff_id != null && l.paid_account && (l.account_check === 'missing' || l.account_check === 'differs'));
   const suggestions = lines.filter((l) => l.status === 'not_paid' && l.suggested_payments.length > 0);
-  const suggestionsWithAccounts = suggestions.reduce((count, line) => count + line.suggested_payments.filter((payment) => payment.account).length, 0);
-  const toConfirm = accountFixes.length + suggestionsWithAccounts;
   const duplicates = lines.filter((l) => l.extra_payment_ids.length > 0).length;
   const gap = summary.paid_total - summary.expected_total;
 
@@ -70,7 +52,7 @@ export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAd
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
         Schedule vs bank — {MONTHS[result.month - 1]} {result.year}: {summary.matched} of {summary.rows} matched
         {attention > 0 && ` · ${attention} need attention`}
-        {toConfirm > 0 && ` · ${toConfirm} account${toConfirm === 1 ? '' : 's'} to confirm`}
+        {accountFixes.length > 0 && ` · ${accountFixes.length} bank account${accountFixes.length === 1 ? '' : 's'} differ from the directory`}
         {duplicates > 0 && ` · ${duplicates} possible duplicate payment${duplicates === 1 ? '' : 's'}`}
         {outOfSync > 0 && ` · ${outOfSync} total${outOfSync === 1 ? '' : 's'} differ from the staff directory`}
         {result.unlinked_staff.length > 0 && ` · ${result.unlinked_staff.length} staff not on the schedule`}
@@ -106,7 +88,7 @@ export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAd
 
         {(accountFixes.length > 0 || suggestions.length > 0) && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200 space-y-2">
-            <p className="font-medium">Confirm account details or review possible bank payments:</p>
+            <p className="font-medium">Bank payment details — the bank record is the source of truth:</p>
             <ul className="space-y-2 text-xs">
               {accountFixes.map((l) => (
                 <li key={`fix-${l.row_number}`} className="flex flex-wrap items-center gap-2">
@@ -114,12 +96,6 @@ export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAd
                     <strong>{l.staff_name}</strong>: the bank paid {l.paid_to} ({l.paid_bank ?? 'bank'} {l.paid_account});
                     the directory has {l.directory_account ?? 'no account number'}.
                   </span>
-                  {onUseAccount && (
-                    <button type="button" className="underline text-primary"
-                      onClick={() => onUseAccount({ staffId: l.staff_id as number, staffName: l.staff_name ?? '', account: l.paid_account as string, bank: l.paid_bank, holder: l.paid_to })}>
-                      Use the bank's account for {l.staff_name}
-                    </button>
-                  )}
                 </li>
               ))}
               {suggestions.map((l) => l.suggested_payments.map((p) => (
@@ -127,27 +103,6 @@ export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAd
                   <span>
                     <strong>{l.staff_name ?? l.name}</strong> shows not paid, but {formatCurrency(p.amount)} on {p.date} went to {p.vendor ?? 'someone'} ({p.bank ?? 'bank'}{p.account ? ` ${p.account}` : ''}) and is unclaimed.
                   </span>
-                  {onUseAccount && p.account && l.staff_id != null && (
-                    <button type="button" className="underline text-primary"
-                      onClick={() => onUseAccount({ staffId: l.staff_id as number, staffName: l.staff_name ?? '', account: p.account as string, bank: p.bank, holder: p.vendor })}>
-                      That is {l.staff_name}'s account
-                    </button>
-                  )}
-                  {onUseAccount && p.account && l.staff_id == null && (
-                    <button
-                      type="button"
-                      className="underline text-primary disabled:opacity-50"
-                      disabled={!selectedStaffByRow[l.row_number]}
-                      onClick={() => {
-                        const staffId = selectedStaffByRow[l.row_number];
-                        const member = staffMembers.find((candidate) => candidate.id === staffId);
-                        if (!staffId || !member) return;
-                        onUseAccount({ staffId, staffName: member.full_name, account: p.account as string, bank: p.bank, holder: p.vendor });
-                      }}
-                    >
-                      {selectedStaffByRow[l.row_number] ? 'Save this account to selected staff member' : 'Select staff in the row first'}
-                    </button>
-                  )}
                 </li>
               )))}
             </ul>
@@ -197,46 +152,7 @@ export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAd
                     <td className="py-2 pr-3"><StatusBadge status={l.status} /></td>
                     <td className="py-2 pr-3 text-xs">
                       {l.staff_id == null ? (
-                        <div className="space-y-2">
-                          <span className="text-amber-600">Not in staff directory</span>
-                          {(l.paid_account || l.suggested_payments.some((payment) => payment.account)) && onUseAccount && staffMembers.length > 0 && (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <select
-                                aria-label={`Choose staff member for row ${l.row_number}`}
-                                className="max-w-48 rounded border border-input bg-background px-2 py-1 text-xs"
-                                value={selectedStaffByRow[l.row_number] ?? ''}
-                                onChange={(e) => setSelectedStaffByRow((current) => ({
-                                  ...current,
-                                  [l.row_number]: e.target.value ? Number(e.target.value) : '',
-                                }))}
-                              >
-                                <option value="">Choose staff member</option>
-                                {staffMembers.map((member) => (
-                                  <option key={member.id} value={member.id}>{member.full_name}</option>
-                                ))}
-                              </select>
-                              {l.paid_account && <button
-                                type="button"
-                                className="underline text-primary disabled:opacity-50"
-                                disabled={!selectedStaffByRow[l.row_number]}
-                                onClick={() => {
-                                  const staffId = selectedStaffByRow[l.row_number];
-                                  const member = staffMembers.find((candidate) => candidate.id === staffId);
-                                  if (!staffId || !member || !l.paid_account) return;
-                                  onUseAccount({
-                                    staffId,
-                                    staffName: member.full_name,
-                                    account: l.paid_account,
-                                    bank: l.paid_bank,
-                                    holder: l.paid_to,
-                                  });
-                                }}
-                              >
-                                Save paid account to directory
-                              </button>}
-                            </div>
-                          )}
-                        </div>
+                        <span className="text-amber-600">Not in staff directory</span>
                       ) : l.in_sync ? (
                         <span className="text-green-700">In sync</span>
                       ) : (
