@@ -106,7 +106,7 @@ export function ReconcileResults({ result, staffMembers = [], onUseAccount, onAd
 
         {(accountFixes.length > 0 || suggestions.length > 0) && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200 space-y-2">
-            <p className="font-medium">Review possible bank payments and account details:</p>
+            <p className="font-medium">Confirm account details or review possible bank payments:</p>
             <ul className="space-y-2 text-xs">
               {accountFixes.map((l) => (
                 <li key={`fix-${l.row_number}`} className="flex flex-wrap items-center gap-2">
