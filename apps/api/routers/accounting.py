@@ -2,6 +2,7 @@
 ledger reports computed from transactions (see utils/accounting.py)."""
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -60,10 +61,14 @@ def _period(start_date: date, end_date: date) -> tuple[date, date]:
 
 
 def _combos(db: Session) -> list:
-    return (
-        db.query(Transaction.category, Transaction.type, func.count(Transaction.id).label("n"), func.sum(Transaction.amount).label("total"))
-        .filter(Transaction.type.in_(["income", "expense"])).group_by(Transaction.category, Transaction.type)        .order_by(Transaction.type, Transaction.category).all()
-    )
+    """(category, type) pairs with count and total, using the same direction rule as the reports,
+    so bank transfers appear as income or expense and can be mapped."""
+    totals: dict[tuple[str, str], list[int]] = {}
+    for e in _entries(db, date.max):
+        n, cents = totals.get((e.category, e.type), (0, 0))
+        totals[(e.category, e.type)] = [n + 1, cents + e.amount_cents]
+    return [SimpleNamespace(category=c, type=t, n=n, total=cents / 100)
+            for (c, t), (n, cents) in sorted(totals.items(), key=lambda kv: (kv[0][1], kv[0][0]))]
 
 
 def _postable_codes(db: Session) -> set[str]:

@@ -67,3 +67,34 @@ def test_delete_transaction(client):
 
     resp = client.get("/transactions", params={"type": tx["type"]})
     assert all(item["id"] != tx["id"] for item in resp.json()["items"])
+
+
+def test_ai_recategorize_suggests_only_valid_changes_and_saves_nothing(client, db_session, monkeypatch):
+    import json
+    import ai_worker
+    from datetime import date
+    from models import Transaction
+    rows = [Transaction(type="expense", amount=10, currency="NGN", category="Other", description="MTN airtime", date=date(2026, 8, 1), vendor="V"),
+            Transaction(type="expense", amount=20, currency="NGN", category="Other", description="x", date=date(2026, 8, 1), vendor="V"),
+            Transaction(type="transfer", amount=30, currency="NGN", category="Other", description="y", date=date(2026, 8, 1), vendor="V")]
+    db_session.add_all(rows)
+    db_session.commit()
+    a, b, t = (r.id for r in rows)
+    monkeypatch.setattr(ai_worker, "call_ai_text", lambda *_: json.dumps(
+        [{"id": a, "category": "Telephone"}, {"id": b, "category": "School Fees"}, {"id": t, "category": "Telephone"}]))
+    out = client.post("/transactions/ai-recategorize", json={"ids": [a, b, t]})
+    assert out.status_code == 200
+    assert out.json() == {"checked": 2, "suggestions": [{"id": a, "from": "Other", "to": "Telephone"}]}
+    db_session.expire_all()
+    assert db_session.get(Transaction, a).category == "Other"
+
+
+def test_ai_recategorize_reports_an_unavailable_ai(client, db_session, monkeypatch):
+    import ai_worker
+    from datetime import date
+    from models import Transaction
+    tx = Transaction(type="expense", amount=10, currency="NGN", category="Other", description="d", date=date(2026, 8, 1), vendor="V")
+    db_session.add(tx)
+    db_session.commit()
+    monkeypatch.setattr(ai_worker, "call_ai_text", lambda *_: "")
+    assert client.post("/transactions/ai-recategorize", json={"ids": [tx.id]}).status_code == 503
