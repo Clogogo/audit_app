@@ -13,7 +13,7 @@ from sqlalchemy import func, select as sa_select
 from database import get_db
 from llm_providers import get_llm_client
 from models import Transaction, AuditLog, BankAccount, Staff, PayrollEntry, Term
-from pydantic import BaseModel as _BaseModel, Field
+from pydantic import BaseModel as _BaseModel
 from schemas import TransactionCreate, TransactionOut, TransactionPage, TransactionUpdate, TransactionSummary, TransactionAISummary, MonthlySummary
 from routers.bank_statements import _transfer_is_income, _is_intra_account_transfer
 
@@ -21,10 +21,6 @@ from routers.bank_statements import _transfer_is_income, _is_intra_account_trans
 class _BatchCategoryUpdate(_BaseModel):
     ids: list[int]
     category: str
-
-class _AIRecategorize(_BaseModel):
-    ids: list[int] = Field(max_length=200)
-
 
 router = APIRouter(prefix="/transactions", tags=["transactions"], dependencies=[Depends(require_permission("transactions"))])
 
@@ -531,23 +527,6 @@ def update_transaction(tx_id: int, data: TransactionUpdate, db: Session = Depend
     db.commit()
     db.refresh(tx)
     return tx
-
-
-@router.post("/ai-recategorize")
-def ai_recategorize(data: _AIRecategorize, db: Session = Depends(get_db)):
-    """Suggest better categories for the given transactions. Changes nothing: the caller applies what it accepts."""
-    from utils.ai_recategorize import suggest_categories
-    txs = db.query(Transaction).filter(Transaction.id.in_(data.ids), Transaction.type.in_(["income", "expense"])).all()
-    rows = [{"id": t.id, "type": t.type, "description": (t.description or "")[:200], "vendor": (t.vendor or "")[:100], "category": t.category} for t in txs]
-    current = {t.id: t.category for t in txs}
-    suggestions, answered, asked = [], 0, 0
-    for n, found in suggest_categories(rows):
-        asked += n
-        answered += len(found)
-        suggestions += [{"id": i, "from": current[i], "to": c} for i, c in found.items() if c != current[i]]
-    if rows and answered == 0:
-        raise HTTPException(503, "The AI did not return usable suggestions. Try again in a moment.")
-    return {"checked": asked, "suggestions": suggestions}
 
 
 @router.patch("/batch-category")

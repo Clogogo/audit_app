@@ -2,15 +2,18 @@
 Category and Type Suggestion
 Smart categorization for Nigerian bank statements.
 
-Categorization is fully deterministic (keyword rules) by default and requires
-no AI/network access. An optional AI pass can be enabled for the residual
-"Other" rows by setting ENABLE_AI_CATEGORIZATION=true.
+Keyword rules run first. An AI pass then suggests a category for the residual
+"Other" rows during import (on by default; set ENABLE_AI_CATEGORIZATION=false to
+turn it off). It never blocks an import: any AI failure leaves the row as "Other".
 """
 import json
 import logging
 import os
 import re
+import time
 from typing import List, Tuple
+
+from utils.account_suggestions import EXPENSE as _EXPENSE_CATEGORIES, INCOME as _INCOME_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +22,9 @@ def ai_categorization_enabled() -> bool:
     """
     Whether the optional AI categorization pass is enabled.
 
-    Off by default so statement upload works fully offline with no AI/network
-    dependency. Enable explicitly with ENABLE_AI_CATEGORIZATION=true.
+    On by default; ENABLE_AI_CATEGORIZATION=false turns it off (offline use, tests).
     """
-    return os.getenv("ENABLE_AI_CATEGORIZATION", "false").strip().lower() in (
+    return os.getenv("ENABLE_AI_CATEGORIZATION", "true").strip().lower() in (
         "1", "true", "yes", "on",
     )
 
@@ -393,7 +395,25 @@ def suggest_category_keyword(description: str, tx_type: str) -> Tuple[str, str]:
     return "Other", default_type
 
 
+AI_BATCH = 20
+AI_BUDGET_SECONDS = 120   # an upload waits on this; rows left over simply stay "Other"
+AI_MAX_TOKENS = 3000      # free reasoning models spend much of the budget thinking
+
+
 def ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
+    """Run the AI over the "Other" rows a small batch at a time, within a time budget (updates rows in place)."""
+    if not ai_categorization_enabled():
+        return rows
+    undecided = [r for r in rows if r.get("suggested_category") == "Other"]
+    deadline = time.monotonic() + AI_BUDGET_SECONDS
+    for start in range(0, len(undecided), AI_BATCH):
+        if time.monotonic() > deadline:
+            break
+        _ai_suggest_chunk(undecided[start:start + AI_BATCH])
+    return rows
+
+
+def _ai_suggest_chunk(rows: list[dict]) -> list[dict]:
     """
     For rows whose keyword-based category is still "Other", ask the AI to
     suggest a category and type in a single batch request.
@@ -450,7 +470,7 @@ def ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
     )
 
     try:
-        raw = ai_worker._call_ai_text(prompt)
+        raw = ai_worker._call_ai_text(prompt, AI_MAX_TOKENS)
         raw = ai_worker._clean_json(raw)
         arr_match = re.search(r"\[[\s\S]*\]", raw)
         if not arr_match:
@@ -465,10 +485,6 @@ def ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
                 continue
             cat = str(s.get("category", "Other")).strip()
             typ = str(s.get("type", "")).strip().lower()
-            # Validate category against known list to reject malformed values
-            # like "Bills & Utilities / expense" that the AI sometimes returns
-            if cat in VALID_CATEGORIES and cat != "Other":
-                rows[idx]["suggested_category"] = cat
             if typ in ("expense", "income", "transfer"):
                 # Guard: don't let AI reclassify a received-from-person credit as
                 # "transfer". Only honour type=transfer when the description clearly
@@ -478,6 +494,13 @@ def ai_suggest_categories_batch(rows: list[dict]) -> list[dict]:
                     if not any(p in desc_lower for p in OWN_ACCOUNT_PATTERNS):
                         # Fall back to direction-based default
                         typ = "income" if rows[idx]["transaction_type"] == "credit" else "expense"
+            final_type = typ if typ in ("expense", "income", "transfer") else rows[idx].get("suggested_type")
+            # Validate category against known list to reject malformed values like "Bills & Utilities / expense",
+            # and it must suit the FINAL direction: an income-only one on an expense row would break its account mapping
+            allowed = {"income": _INCOME_CATEGORIES, "expense": _EXPENSE_CATEGORIES}.get(final_type)
+            if cat in VALID_CATEGORIES and cat != "Other" and (allowed is None or cat in allowed):
+                rows[idx]["suggested_category"] = cat
+            if typ in ("expense", "income", "transfer"):
                 rows[idx]["suggested_type"] = typ
     except Exception as e:
         logger.warning(f"AI batch categorization failed: {e}")
