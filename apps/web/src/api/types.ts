@@ -1348,3 +1348,23 @@ export interface Ledger {
   start_date: string;
   end_date: string;
 }
+
+// ── Financial Reports hub ────────────────────────────────────────────────────
+export type ReportColumnKind = 'text' | 'money' | 'date' | 'pct';
+export interface FinancialReport {
+  slug: string;
+  title: string;
+  subtitle: string;
+  estimate: boolean;
+  assumptions: string[];
+  start_date: string;
+  as_at: string;
+  summary: { label: string; value: number | string; kind: ReportColumnKind }[];
+  sections: {
+    title: string;
+    note: string | null;
+    columns: { key: string; label: string; kind: ReportColumnKind }[];
+    rows: Record<string, string | number | boolean>[];
+    total: Record<string, string | number> | null;
+  }[];
+}

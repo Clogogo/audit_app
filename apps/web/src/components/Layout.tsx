@@ -34,7 +34,6 @@ import {
   FileBarChart,
   Gift,
   BookOpen,
-  Scale,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
@@ -46,13 +45,13 @@ import { ThemeToggle } from './ThemeToggle';
 const topNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/transactions', icon: ArrowLeftRight, label: 'Transactions' },
+  { to: '/financial-reports', icon: BarChart3, label: 'Financial Reports' },
 ];
 
 const bankingSubItems = [
   { to: '/banks', icon: Building2, label: 'Bank Accounts' },
   { to: '/upload', icon: Upload, label: 'Import Statement' },
   { to: '/reconciliation', icon: GitMerge, label: 'Reconciliation' },
-  { to: '/reports', icon: BarChart3, label: 'Reports' },
   { to: '/bank-reports', icon: Wallet, label: 'Bank Reports' },
 ];
 
@@ -62,10 +61,7 @@ const bottomNavItems = [
 
 const taxSubItems = [
   { to: '/tax', icon: Calculator, label: 'CIT (Nigeria)' },
-  { to: '/tax/financial-statements', icon: Building, label: 'Financial Statements' },
   { to: '/tax/chart-of-accounts', icon: BookOpen, label: 'Chart of Accounts' },
-  { to: '/tax/accounting-reports', icon: Scale, label: 'Accounting Reports' },
-  { to: '/tax/assets', icon: Package, label: 'Asset Register' },
   { to: '/tax/school-loans', icon: HandCoins, label: 'School Loans' },
   { to: '/tax/calendar', icon: CalendarClock, label: 'Tax Calendar' },
 ];
@@ -106,7 +102,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const schoolLogo = schoolProfile?.logo ?? null;
 
   const visibleTopNavItems = topNavItems.filter(
-    ({ to }) => to === '/' || hasPermission(user, 'transactions')
+    ({ to }) => to === '/' || hasPermission(user, to === '/financial-reports' ? 'tax' : 'transactions')
   );
 
   const canManageUsers = hasPermission(user, 'user_management');
@@ -114,7 +110,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isTaxActive = location.pathname.startsWith('/tax');
   const isStaffActive = location.pathname.startsWith('/staff');
-  const isBankingActive = ['/banks', '/upload', '/reconciliation', '/reports', '/bank-reports'].some(
+  const isBankingActive = ['/banks', '/upload', '/reconciliation', '/bank-reports'].some(
     (p) => location.pathname === p
   );
   const isAccessActive = ['/school-profile', '/user-management', '/role-management'].includes(location.pathname);

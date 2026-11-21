@@ -12,7 +12,7 @@ import models  # noqa: ensure all models are registered before create_all
 from utils.rate_limit import limiter
 
 from routers import transactions, bank_statements, bank_accounts, reconciliation, reports, audit_log, llm_bank_statements, duplicates, auth
-from routers import accounting, tax, financial_statements, assets, staff_loans, staff_directory, payroll, payroll_reconciliation, payroll_schedule, terms, school_loans, advance_payments, users, roles, inventory, school_profile, teacher_bonuses
+from routers import financial_reports, accounting, tax, financial_statements, assets, staff_loans, staff_directory, payroll, payroll_reconciliation, payroll_schedule, terms, school_loans, advance_payments, users, roles, inventory, school_profile, teacher_bonuses
 
 if __name__ != "__pytest_main__":
     # Ensure local SQLite DB is initialized when running the app normally.
@@ -78,6 +78,7 @@ app.include_router(assets.router)
 app.include_router(staff_loans.router)
 app.include_router(staff_directory.router)
 app.include_router(accounting.router)
+app.include_router(financial_reports.router)
 app.include_router(payroll.router)
 app.include_router(payroll_reconciliation.router)
 app.include_router(payroll_schedule.router)
