@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { PayrollReconcileResult, ReconcileStatus } from '../../api/types';
+import type { StaffMemberIn } from '../../api/types';
 import { formatCurrency } from '../../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 
@@ -30,13 +32,19 @@ function SummaryTile({ label, value, tone }: { label: string; value: string; ton
 
 interface ReconcileResultsProps {
   result: PayrollReconcileResult;
+  /** Create a staff record for a matched schedule row that is not linked to the directory. */
+  onAddStaff?: (staff: StaffMemberIn) => Promise<void>;
   /** the schedule pays more than the directory expects: record the difference as a bonus */
   onAddBonus?: (staffId: number, amount: number) => void;
   /** the schedule pays less than the directory expects: record the difference as an other deduction */
   onAddDeduction?: (staffId: number, amount: number) => void;
 }
 
-export function ReconcileResults({ result, onAddBonus, onAddDeduction }: ReconcileResultsProps) {
+export function ReconcileResults({ result, onAddStaff, onAddBonus, onAddDeduction }: ReconcileResultsProps) {
+  const [staffToAdd, setStaffToAdd] = useState<StaffMemberIn | null>(null);
+  const [scheduleName, setScheduleName] = useState('');
+  const [staffError, setStaffError] = useState<string | null>(null);
+  const [savingStaff, setSavingStaff] = useState(false);
   const { summary, lines } = result;
   const problemRows = result.skipped_rows.filter((r) => !r.ignored);
   const ignoredRows = result.skipped_rows.filter((r) => r.ignored);
@@ -47,7 +55,38 @@ export function ReconcileResults({ result, onAddBonus, onAddDeduction }: Reconci
   const duplicates = lines.filter((l) => l.extra_payment_ids.length > 0).length;
   const gap = summary.paid_total - summary.expected_total;
 
+  const prepareStaff = (line: PayrollReconcileResult['lines'][number]) => {
+    setScheduleName(line.name);
+    setStaffError(null);
+    setStaffToAdd({
+      full_name: line.paid_to?.trim() || line.name,
+      role: '',
+      bank_name: line.paid_bank ?? '',
+      account_number: line.paid_account ?? '',
+      monthly_gross: 0,
+      start_date: null,
+      end_date: null,
+      is_active: true,
+      notes: '',
+    });
+  };
+
+  const saveStaff = async () => {
+    if (!staffToAdd || !onAddStaff || !staffToAdd.full_name.trim() || (staffToAdd.monthly_gross ?? 0) <= 0) return;
+    setSavingStaff(true);
+    setStaffError(null);
+    try {
+      await onAddStaff({ ...staffToAdd, full_name: staffToAdd.full_name.trim() });
+      setStaffToAdd(null);
+    } catch (error) {
+      setStaffError(error instanceof Error ? error.message : 'Could not add staff member.');
+    } finally {
+      setSavingStaff(false);
+    }
+  };
+
   return (
+    <>
     <details className="rounded-lg border bg-card">
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
         Schedule vs bank — {MONTHS[result.month - 1]} {result.year}: {summary.matched} of {summary.rows} matched
@@ -152,7 +191,14 @@ export function ReconcileResults({ result, onAddBonus, onAddDeduction }: Reconci
                     <td className="py-2 pr-3"><StatusBadge status={l.status} /></td>
                     <td className="py-2 pr-3 text-xs">
                       {l.staff_id == null ? (
-                        <span className="text-amber-600">Not in staff directory</span>
+                        <div className="space-y-1">
+                          <span className="text-amber-600">Not in staff directory</span>
+                          {l.status === 'matched' && onAddStaff && (
+                            <button type="button" className="block underline text-primary" onClick={() => prepareStaff(l)}>
+                              Add to Staff Directory
+                            </button>
+                          )}
+                        </div>
                       ) : l.in_sync ? (
                         <span className="text-green-700">In sync</span>
                       ) : (
@@ -226,5 +272,68 @@ export function ReconcileResults({ result, onAddBonus, onAddDeduction }: Reconci
         )}
       </div>
     </details>
+    {staffToAdd && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <section role="dialog" aria-modal="true" aria-labelledby="add-matched-staff-title" className="w-full max-w-md space-y-4 rounded-xl border border-border bg-card p-6 shadow-xl">
+          <div>
+            <h2 id="add-matched-staff-title" className="text-lg font-semibold">Add Staff Directory Record</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Bank payment matched schedule row “{scheduleName}”. Confirm the bank name and enter the staff member’s monthly gross salary.
+            </p>
+          </div>
+          {staffError && <p role="alert" className="text-sm text-destructive">{staffError}</p>}
+          <div className="space-y-3">
+            <label className="block text-xs font-medium">Name in the bank payment
+              <input
+                autoFocus
+                value={staffToAdd.full_name}
+                onChange={(e) => setStaffToAdd((current) => current ? { ...current, full_name: e.target.value } : current)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block text-xs font-medium">Role / Designation
+              <input
+                value={staffToAdd.role ?? ''}
+                onChange={(e) => setStaffToAdd((current) => current ? { ...current, role: e.target.value } : current)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block text-xs font-medium">Monthly Gross Salary *
+              <input
+                type="number"
+                min="1"
+                step="0.01"
+                value={staffToAdd.monthly_gross || ''}
+                onChange={(e) => setStaffToAdd((current) => current ? { ...current, monthly_gross: Number(e.target.value) || 0 } : current)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs font-medium">Bank Name
+                <input
+                  value={staffToAdd.bank_name ?? ''}
+                  onChange={(e) => setStaffToAdd((current) => current ? { ...current, bank_name: e.target.value } : current)}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="block text-xs font-medium">Account Number
+                <input
+                  value={staffToAdd.account_number ?? ''}
+                  onChange={(e) => setStaffToAdd((current) => current ? { ...current, account_number: e.target.value } : current)}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" disabled={savingStaff} onClick={() => setStaffToAdd(null)} className="rounded-md border border-input px-3 py-2 text-sm disabled:opacity-50">Cancel</button>
+            <button type="button" disabled={savingStaff || !staffToAdd.full_name.trim() || (staffToAdd.monthly_gross ?? 0) <= 0} onClick={() => void saveStaff()} className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">
+              {savingStaff ? 'Saving…' : 'Add Staff'}
+            </button>
+          </div>
+        </section>
+      </div>
+    )}
+    </>
   );
 }
