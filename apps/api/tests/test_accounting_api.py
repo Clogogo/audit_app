@@ -260,3 +260,19 @@ def test_ai_suggest_stops_starting_batches_when_the_time_budget_is_spent(client,
     monkeypatch.setattr(sug, "AI_BUDGET_SECONDS", -1)            # already over budget
     monkeypatch.setattr(ai_worker, "call_ai_text", lambda p, *a: pytest.fail("no call should start"))
     assert client.post("/accounting/mappings/ai-suggest").status_code == 503
+
+
+def test_bank_transfers_appear_in_the_mapping_list_so_they_can_be_mapped(client, db_session):
+    _import(client)
+    acct = BankAccount(bank_name="GTB", opening_balance=0.0)
+    db_session.add(acct)
+    db_session.commit()
+    db_session.add(Transaction(type="transfer", amount=700, currency="NGN", category="Internal Transfer", description="Payment to supplier",
+                               date=date(2026, 8, 10), vendor="V", bank_account_id=acct.id))
+    db_session.commit()
+    rows = client.get("/accounting/mappings").json()["rows"]
+    row = next(r for r in rows if r["category"] == "Internal Transfer")
+    assert row["type"] in ("income", "expense") and row["tx_count"] == 1 and row["suggested_code"] == "1.2.5.5"
+    assert client.post("/accounting/mappings/apply-suggestions").json()["applied"] >= 1
+    pl = client.get("/accounting/profit-and-loss", params=PERIOD).json()
+    assert pl["unmapped_income"] + pl["unmapped_expense"] == 0
