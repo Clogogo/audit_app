@@ -162,6 +162,11 @@ class BankStatement(Base):
     file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # Only PDFs are saved to disk
     file_type: Mapped[str] = mapped_column(String(20))  # csv | excel | pdf
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | reconciled
+    # The bank's own summary block, when the file has one (used to check the import against the account record)
+    opening_balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closing_balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    total_debit: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    total_credit: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     bank_account: Mapped[Optional["BankAccount"]] = relationship("BankAccount", back_populates="statements")

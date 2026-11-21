@@ -77,7 +77,7 @@ def _fake_model(monkeypatch, reply):
     seen = {}
     monkeypatch.setenv("ENABLE_AI_CATEGORIZATION", "true")
 
-    def fake(prompt):
+    def fake(prompt, *_):
         seen["prompt"] = prompt
         return reply if isinstance(reply, str) else _json.dumps(reply)
     monkeypatch.setattr(ai_worker, "_call_ai_text", fake)
@@ -115,7 +115,30 @@ def test_ai_pass_still_rejects_categories_outside_the_chart(monkeypatch):
 
 def test_ai_pass_does_nothing_when_off_or_when_the_model_returns_nothing(monkeypatch):
     from parsers.category_suggester import ai_suggest_categories_batch
-    monkeypatch.delenv("ENABLE_AI_CATEGORIZATION", raising=False)
+    monkeypatch.setenv("ENABLE_AI_CATEGORIZATION", "false")
     assert [r["suggested_category"] for r in ai_suggest_categories_batch(_ai_rows())] == ["Other"] * 3
     _fake_model(monkeypatch, "")
     assert [r["suggested_category"] for r in ai_suggest_categories_batch(_ai_rows())] == ["Other"] * 3
+
+
+def test_ai_pass_works_in_batches_and_rejects_a_category_of_the_wrong_direction(monkeypatch):
+    import json as _json
+    import ai_worker
+    from parsers import category_suggester as cs
+    monkeypatch.setenv("ENABLE_AI_CATEGORIZATION", "true")
+    monkeypatch.setattr(cs, "AI_BATCH", 2)
+    calls = []
+
+    def fake(prompt, *_):
+        calls.append(prompt)
+        return _json.dumps([{"i": 0, "category": "School Fees", "type": "expense"}, {"i": 1, "category": "Telephone", "type": "expense"}])
+    monkeypatch.setattr(ai_worker, "_call_ai_text", fake)
+    out = cs.ai_suggest_categories_batch(_ai_rows())
+    assert len(calls) == 2   # 3 rows, 2 per batch
+    assert [r["suggested_category"] for r in out] == ["Other", "Telephone", "Other"]   # School Fees is income-only
+
+
+def test_ai_pass_is_on_by_default(monkeypatch):
+    from parsers.category_suggester import ai_categorization_enabled
+    monkeypatch.delenv("ENABLE_AI_CATEGORIZATION", raising=False)
+    assert ai_categorization_enabled()

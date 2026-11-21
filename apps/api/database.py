@@ -89,6 +89,12 @@ def initialize_database() -> None:
         "staff_loan_payments": [
             "transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL",
         ],
+        "bank_statements": [
+            "opening_balance REAL",
+            "closing_balance REAL",
+            "total_debit REAL",
+            "total_credit REAL",
+        ],
         "bank_accounts": [
             "opening_balance REAL",
             "opening_balance_date DATE",
