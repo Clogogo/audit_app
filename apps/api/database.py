@@ -34,6 +34,7 @@ logger.info(f"Using database engine: {DATABASE_URL.split('://')[0]}")  # never l
 engine = create_engine(
     DATABASE_URL,
     connect_args=connect_args,
+    pool_pre_ping=True,  # Neon drops idle connections; test each pooled one before use and reconnect if dead
     echo=os.getenv("SQL_ECHO", "False") == "True",
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
