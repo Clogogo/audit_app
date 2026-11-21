@@ -67,3 +67,20 @@ def test_delete_transaction(client):
 
     resp = client.get("/transactions", params={"type": tx["type"]})
     assert all(item["id"] != tx["id"] for item in resp.json()["items"])
+
+
+def test_summary_leaves_internal_transfers_out_of_income_and_expense_but_keeps_the_balance(client, db_session):
+    from datetime import date
+    from models import Transaction
+    def add(type_, amount, category):
+        db_session.add(Transaction(type=type_, amount=amount, currency="NGN", category=category, description="d", date=date(2026, 8, 1), vendor="V"))
+    add("income", 1000, "School Fees")
+    add("expense", 300, "Telephone")
+    add("income", 500, "Internal Transfer")    # money arriving from the school's other account
+    add("expense", 200, "Internal Transfer")
+    db_session.commit()
+    s = client.get("/transactions/summary").json()
+    assert (s["total_income"], s["total_expenses"]) == (1000.0, 300.0)
+    assert "Internal Transfer" not in s["income_by_category"] and "Internal Transfer" not in s["expense_by_category"]
+    assert s["monthly"][0]["income"] == 1000.0
+    assert s["balance"] == 1000.0 - 300.0 + 500.0 - 200.0   # the balance still counts every movement

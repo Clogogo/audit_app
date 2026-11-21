@@ -18,6 +18,9 @@ from schemas import TransactionCreate, TransactionOut, TransactionPage, Transact
 from routers.bank_statements import _transfer_is_income, _is_intra_account_transfer
 
 
+INTERNAL_TRANSFER = "Internal Transfer"
+
+
 class _BatchCategoryUpdate(_BaseModel):
     ids: list[int]
     category: str
@@ -102,21 +105,35 @@ def get_summary(
     if vendor:
         base_conds.append(Transaction.vendor.ilike(f"%{vendor}%"))
 
+    # Money moved between the school's own accounts (category "Internal Transfer") is neither income nor
+    # expense: it is left out of every total and chart below. It still moves the headline balance (see
+    # internal_net), so that balance keeps reconciling with Bank Account Reports' book balance.
+    shown_conds = [*base_conds, Transaction.category != INTERNAL_TRANSFER]
+
     # Total income / expense via SQL SUM — no full ORM load
     income_total: float = db.execute(
         sa_select(func.coalesce(func.sum(Transaction.amount), 0.0))
-        .where(Transaction.type == "income", *base_conds)
+        .where(Transaction.type == "income", *shown_conds)
     ).scalar() or 0.0
 
     expense_total: float = db.execute(
         sa_select(func.coalesce(func.sum(Transaction.amount), 0.0))
-        .where(Transaction.type == "expense", *base_conds)
+        .where(Transaction.type == "expense", *shown_conds)
     ).scalar() or 0.0
+
+    internal_net: float = sum(
+        (total if tx_type == "income" else -total)
+        for tx_type, total in db.execute(
+            sa_select(Transaction.type, func.sum(Transaction.amount))
+            .where(Transaction.type.in_(["income", "expense"]), Transaction.category == INTERNAL_TRANSFER, *base_conds)
+            .group_by(Transaction.type)
+        ).all()
+    )
 
     # Category breakdowns via GROUP BY (transfers handled separately below)
     cat_rows = db.execute(
         sa_select(Transaction.type, Transaction.category, func.sum(Transaction.amount).label("total"))
-        .where(Transaction.type != "transfer", *base_conds)
+        .where(Transaction.type != "transfer", *shown_conds)
         .group_by(Transaction.type, Transaction.category)
     ).all()
 
@@ -141,7 +158,7 @@ def get_summary(
             Transaction.type,
             func.sum(Transaction.amount).label("total"),
         )
-        .where(Transaction.type != "transfer", *base_conds)
+        .where(Transaction.type != "transfer", *shown_conds)
         .group_by("yr", "mo", Transaction.type)
         .order_by("yr", "mo")
     ).all()
@@ -169,6 +186,9 @@ def get_summary(
     for t in transfers:
         if not t.bank_account or _is_intra_account_transfer(t):
             continue
+        if t.category == INTERNAL_TRANSFER:
+            internal_net += t.amount if _transfer_is_income(t, t.bank_account.bank_name, db) else -t.amount
+            continue
         ym = t.date.strftime("%Y-%m")
         if ym not in monthly_map:
             monthly_map[ym] = {"month": t.date.strftime("%b %Y"), "income": 0.0, "expenses": 0.0}
@@ -195,7 +215,7 @@ def get_summary(
     return TransactionSummary(
         total_income=income_total,
         total_expenses=expense_total,
-        balance=total_opening_balance + income_total - expense_total,
+        balance=total_opening_balance + income_total - expense_total + internal_net,
         by_category=dict(by_category),
         expense_by_category=dict(expense_by_category),
         income_by_category=dict(income_by_category),

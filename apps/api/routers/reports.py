@@ -156,7 +156,8 @@ def export_audit_report(
     PAGE_W = A4[0] - 2 * 1.8 * cm
 
     # ── data ─────────────────────────────────────────────────────────────────
-    q = db.query(Transaction).filter(Transaction.type != "transfer")
+    # Money moved between the school's own accounts is neither income nor expenditure
+    q = db.query(Transaction).filter(Transaction.type != "transfer", Transaction.category != "Internal Transfer")
     if start_date:
         q = q.filter(Transaction.date >= start_date)
     if end_date:
