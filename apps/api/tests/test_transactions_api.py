@@ -81,7 +81,7 @@ def test_ai_recategorize_suggests_only_valid_changes_and_saves_nothing(client, d
     db_session.commit()
     a, b, t = (r.id for r in rows)
     monkeypatch.setattr(ai_worker, "call_ai_text", lambda *_: json.dumps(
-        [{"id": a, "category": "Telephone"}, {"id": b, "category": "Not A Category"}, {"id": t, "category": "Telephone"}]))
+        [{"id": a, "category": "Telephone"}, {"id": b, "category": "School Fees"}, {"id": t, "category": "Telephone"}]))
     out = client.post("/transactions/ai-recategorize", json={"ids": [a, b, t]})
     assert out.status_code == 200
     assert out.json() == {"checked": 2, "suggestions": [{"id": a, "from": "Other", "to": "Telephone"}]}

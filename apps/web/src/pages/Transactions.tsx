@@ -314,7 +314,7 @@ export function Transactions() {
 
   // Ask the AI about the selected rows, or every row the current filters show on this page
   const handleAiSuggest = async () => {
-    const ids = selected.size > 0 ? [...selected] : visible.map((t) => t.id);
+    const ids = (selected.size > 0 ? [...selected] : visible.map((t) => t.id)).slice(0, 200); // the API accepts at most 200
     setAiBusy(true);
     setAiError(null);
     try {
@@ -333,12 +333,11 @@ export function Transactions() {
       const byCategory = new Map<string, number[]>();
       aiResult.suggestions.forEach((s) => byCategory.set(s.to, [...(byCategory.get(s.to) ?? []), s.id]));
       await Promise.all([...byCategory].map(([category, ids]) => batchUpdateCategory(ids, category)));
-      setAiResult(null);
-      load(undefined, true);
     } catch {
-      setAiError('Some changes could not be saved. Please reload and try again.');
-      setAiResult(null);
+      setAiError('Some changes could not be saved. The list has been reloaded: check it and try again.');
     } finally {
+      setAiResult(null);
+      load(undefined, true); // always reload: some categories may already have been saved
       setAiBusy(false);
     }
   };

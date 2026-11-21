@@ -538,15 +538,16 @@ def ai_recategorize(data: _AIRecategorize, db: Session = Depends(get_db)):
     """Suggest better categories for the given transactions. Changes nothing: the caller applies what it accepts."""
     from utils.ai_recategorize import suggest_categories
     txs = db.query(Transaction).filter(Transaction.id.in_(data.ids), Transaction.type.in_(["income", "expense"])).all()
-    rows = [{"id": t.id, "type": t.type, "description": (t.description or "")[:200], "vendor": t.vendor or "", "category": t.category} for t in txs]
+    rows = [{"id": t.id, "type": t.type, "description": (t.description or "")[:200], "vendor": (t.vendor or "")[:100], "category": t.category} for t in txs]
     current = {t.id: t.category for t in txs}
-    suggestions, answered = [], 0
-    for found in suggest_categories(rows):
+    suggestions, answered, asked = [], 0, 0
+    for n, found in suggest_categories(rows):
+        asked += n
         answered += len(found)
         suggestions += [{"id": i, "from": current[i], "to": c} for i, c in found.items() if c != current[i]]
     if rows and answered == 0:
         raise HTTPException(503, "The AI did not return usable suggestions. Try again in a moment.")
-    return {"checked": len(rows), "suggestions": suggestions}
+    return {"checked": asked, "suggestions": suggestions}
 
 
 @router.patch("/batch-category")
