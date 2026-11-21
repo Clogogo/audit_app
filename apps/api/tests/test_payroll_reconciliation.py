@@ -8,7 +8,7 @@ from io import BytesIO
 import pytest
 from openpyxl import Workbook
 
-from models import Transaction
+from models import PayrollEntry, PayrollReconciliation, Transaction
 from utils.payroll_recon import (
     ScheduleError, ScheduleRow, SkippedRow, link_staff_to_rows, parse_payment_recipient, parse_schedule,
     parse_schedule_full, parse_schedule_with_skips, reconcile,
@@ -207,7 +207,7 @@ def test_endpoint_reconciles_month_and_ignores_other_months_and_categories(clien
     assert body["year"] == 2026 and body["month"] == 1
 
 
-def test_endpoint_does_not_write_anything(client, db_session):
+def test_endpoint_does_not_touch_transactions(client, db_session):
     _tx(db_session, "NGOZI WILLIAMS", 15000.0)
     before = db_session.query(Transaction).count()
     _post(client, _xlsx([["Name", "Amount"], ["Ngozi Williams", 15000]]))
@@ -729,3 +729,49 @@ def test_a_payment_is_not_suggested_to_two_unpaid_rows(db_session):
     rows = [ScheduleRow(1, "Alice Ade", 50000.0, None), ScheduleRow(2, "Bob Bello", 50000.0, None)]
     lines = reconcile(rows, db_session.query(Transaction).all())["lines"]
     assert [l["suggested_payments"] for l in lines] == [[], []]
+
+
+# ── saved schedule + adjustments from the reconciliation ─────────────────────
+
+def _staff(db_session, name="Ngozi Williams", gross=20000.0):
+    from models import Staff
+    s = Staff(full_name=name, monthly_gross=gross, is_active=True)
+    db_session.add(s)
+    db_session.commit()
+    return s
+
+
+def test_the_schedule_is_saved_for_the_month_and_reopened_against_current_data(client, db_session):
+    assert client.get("/payroll/reconcile/saved", params={"year": 2026, "month": 1}).json() is None
+    assert _post(client, _xlsx([["Name", "Amount"], ["Ngozi Williams", 15000]])).json()["saved_at"]
+    assert db_session.query(PayrollReconciliation).count() == 1
+    _tx(db_session, "NGOZI WILLIAMS", 15000.0)                                   # paid after the schedule was saved
+    again = client.get("/payroll/reconcile/saved", params={"year": 2026, "month": 1}).json()
+    assert again["lines"][0]["status"] == "matched" and again["lines"][0]["name"] == "Ngozi Williams"
+    _post(client, _xlsx([["Name", "Amount"], ["Chidi Okoro", 9000]]))            # a new upload replaces it
+    assert db_session.query(PayrollReconciliation).count() == 1
+    assert client.get("/payroll/reconcile/saved", params={"year": 2026, "month": 1}).json()["lines"][0]["name"] == "Chidi Okoro"
+    assert client.get("/payroll/reconcile/saved", params={"year": 2026, "month": 2}).json() is None
+
+
+def test_other_deduction_lowers_the_net_until_it_matches_the_schedule(client, db_session):
+    _staff(db_session, gross=20000.0)
+    _post(client, _xlsx([["Name", "Amount"], ["Ngozi Williams", 15000]]))
+    line = client.get("/payroll/reconcile/saved", params={"year": 2026, "month": 1}).json()["lines"][0]
+    assert line["in_sync"] is False and line["net_difference"] == 5000.0         # directory expects 5,000 more
+    resp = client.post("/payroll/other-deduction", json={"year": 2026, "month": 1, "staff_id": line["staff_id"], "amount": 5000})
+    assert resp.status_code == 200 and resp.json()["net_salary"] == 15000.0
+    line = client.get("/payroll/reconcile/saved", params={"year": 2026, "month": 1}).json()["lines"][0]
+    assert line["in_sync"] is True
+    client.post("/payroll/other-deduction", json={"year": 2026, "month": 1, "staff_id": line["staff_id"], "amount": 1000})
+    assert db_session.query(PayrollEntry).one().other_deductions == 6000.0       # adds to what is there
+
+
+def test_other_deduction_refuses_unknown_staff_bad_amounts_and_processed_months(client, db_session):
+    s = _staff(db_session)
+    body = {"year": 2026, "month": 1, "staff_id": s.id, "amount": 100}
+    assert client.post("/payroll/other-deduction", json={**body, "staff_id": 999}).status_code == 404
+    assert client.post("/payroll/other-deduction", json={**body, "amount": 0}).status_code == 422
+    db_session.add(PayrollEntry(staff_id=s.id, period_year=2026, period_month=1, gross_salary=20000, bonus=0, net_salary=20000, is_paid=True))
+    db_session.commit()
+    assert client.post("/payroll/other-deduction", json=body).status_code == 409

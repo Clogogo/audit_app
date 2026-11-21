@@ -623,3 +623,16 @@ class AccountMapping(Base):
     tx_type: Mapped[str] = mapped_column(String(10))               # income | expense
     account_code: Mapped[str] = mapped_column(String(30))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PayrollReconciliation(Base):
+    """The payroll schedule last reconciled for a month, kept for reference. Only the schedule is stored
+    (rows as JSON); the comparison with the bank and the staff directory is recomputed whenever it is opened."""
+    __tablename__ = "payroll_reconciliations"
+    __table_args__ = (UniqueConstraint("period_year", "period_month", name="uq_payroll_reconciliation_period"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    period_year: Mapped[int] = mapped_column(Integer)
+    period_month: Mapped[int] = mapped_column(Integer)
+    schedule_json: Mapped[str] = mapped_column(Text)   # {"rows": [...], "skipped": [...], "notes": [...]}
+    saved_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

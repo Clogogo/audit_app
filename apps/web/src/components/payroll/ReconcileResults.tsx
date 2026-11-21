@@ -42,9 +42,13 @@ interface ReconcileResultsProps {
   result: PayrollReconcileResult;
   /** when given, account problems get a button that saves the bank's account to the staff directory */
   onUseAccount?: (update: AccountUpdate) => void;
+  /** the schedule pays more than the directory expects: record the difference as a bonus */
+  onAddBonus?: (staffId: number, amount: number) => void;
+  /** the schedule pays less than the directory expects: record the difference as an other deduction */
+  onAddDeduction?: (staffId: number, amount: number) => void;
 }
 
-export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps) {
+export function ReconcileResults({ result, onUseAccount, onAddBonus, onAddDeduction }: ReconcileResultsProps) {
   const { summary, lines } = result;
   const problemRows = result.skipped_rows.filter((r) => !r.ignored);
   const ignoredRows = result.skipped_rows.filter((r) => r.ignored);
@@ -65,6 +69,7 @@ export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps
         {duplicates > 0 && ` · ${duplicates} possible duplicate payment${duplicates === 1 ? '' : 's'}`}
         {outOfSync > 0 && ` · ${outOfSync} total${outOfSync === 1 ? '' : 's'} differ from the staff directory`}
         {result.unlinked_staff.length > 0 && ` · ${result.unlinked_staff.length} staff not on the schedule`}
+        {result.saved_at && <span className="font-normal text-muted-foreground"> · saved {new Date(result.saved_at + 'Z').toLocaleString()}</span>}
       </summary>
       <div className="space-y-4 px-4 pb-4">
         {result.notes.length > 0 && (
@@ -178,6 +183,18 @@ export function ReconcileResults({ result, onUseAccount }: ReconcileResultsProps
                       ) : (
                         <span className="text-amber-600">
                           Total {formatCurrency(l.computed_net ?? 0)} ({l.net_difference && l.net_difference > 0 ? '+' : ''}{formatCurrency(l.net_difference ?? 0)})
+                          {l.net_difference != null && l.net_difference < 0 && onAddBonus && (
+                            <button type="button" className="ml-2 underline text-primary"
+                              onClick={() => onAddBonus(l.staff_id as number, Math.abs(l.net_difference as number))}>
+                              Add {formatCurrency(Math.abs(l.net_difference))} as bonus
+                            </button>
+                          )}
+                          {l.net_difference != null && l.net_difference > 0 && onAddDeduction && (
+                            <button type="button" className="ml-2 underline text-primary"
+                              onClick={() => onAddDeduction(l.staff_id as number, l.net_difference as number)}>
+                              Deduct {formatCurrency(l.net_difference)}
+                            </button>
+                          )}
                         </span>
                       )}
                     </td>

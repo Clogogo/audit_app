@@ -22,12 +22,10 @@ interface SchedulePanelProps {
   month: number;
   monthLabel: string;
   onResult: (result: PayrollReconcileResult | null) => void;
-  /** bump to re-run the reconciliation with the same file/paste (e.g. after the directory was updated) */
-  rerunToken?: number;
 }
 
 /** Upload or paste the month's payroll schedule and reconcile it with the bank payments. */
-export function SchedulePanel({ year, month, monthLabel, onResult, rerunToken = 0 }: SchedulePanelProps) {
+export function SchedulePanel({ year, month, monthLabel, onResult }: SchedulePanelProps) {
   const [mode, setMode] = useState<InputMode>('file');
   const [file, setFile] = useState<File | null>(null);
   const [pasted, setPasted] = useState('');
@@ -69,10 +67,6 @@ export function SchedulePanel({ year, month, monthLabel, onResult, rerunToken = 
       if (id === requestId.current) setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (rerunToken > 0) void run();
-  }, [rerunToken]);
 
   return (
     <Card>
@@ -130,7 +124,7 @@ export function SchedulePanel({ year, month, monthLabel, onResult, rerunToken = 
             A header row is optional. Without one, the leftmost text column is the name, the last money column is the
             net pay, and a long digit column is the account number. Pasted data must be tab-separated, as copied
             straight from Excel or Sheets. Only Salary and Wages bank payments for {monthLabel} are compared.
-            A payment within ₦100 of the schedule counts as paid. Nothing is saved.
+            A payment within ₦100 of the schedule counts as paid. The schedule is saved for the month, so you can reopen it later.
           </p>
         </div>
 

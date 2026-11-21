@@ -90,4 +90,20 @@ describe('ReconcileResults', () => {
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
   });
+
+  it('offers a deduction when the schedule pays less, and a bonus when it pays more', () => {
+    const onAddBonus = vi.fn();
+    const onAddDeduction = vi.fn();
+    const more = { ...lines[1], row_number: 5, name: 'Kemi Ala', staff_id: 3, staff_name: 'Kemi Ala', computed_net: 10000, net_difference: -5000 };
+    render(<ReconcileResults result={{ ...RESULT, lines: [lines[1], more] }} onAddBonus={onAddBonus} onAddDeduction={onAddDeduction} />);
+    fireEvent.click(screen.getByRole('button', { name: /Deduct ₦2,000/ }));
+    expect(onAddDeduction).toHaveBeenCalledWith(2, 2000);
+    fireEvent.click(screen.getByRole('button', { name: /Add ₦5,000.00 as bonus/ }));
+    expect(onAddBonus).toHaveBeenCalledWith(3, 5000);
+  });
+
+  it('shows when the schedule was saved', () => {
+    render(<ReconcileResults result={{ ...RESULT, saved_at: '2026-01-31T10:00:00' }} />);
+    expect(screen.getByText(/Schedule vs bank — January 2026/)).toHaveTextContent('saved');
+  });
 });
