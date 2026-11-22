@@ -171,7 +171,15 @@ export function Dashboard() {
   const end   = selectedTerm ? selectedTerm.end_date   : `${selectedYear}-12-31`;
   const aiSummary = useAISummary(start, end, selectedTerm?.id);
 
-  useEffect(() => { getTerms().then(setTerms); }, []);
+  // Open on the term that contains today; with no current term, fall back to the full year.
+  useEffect(() => {
+    getTerms().then((list) => {
+      setTerms(list);
+      const d = new Date();
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      setSelectedTerm(list.find((t) => t.start_date <= today && today <= t.end_date) ?? null);
+    });
+  }, []);
 
   useEffect(() => {
     setLoading(true);
