@@ -16,9 +16,8 @@ from models import Transaction, AuditLog, BankAccount, Staff, PayrollEntry, Term
 from pydantic import BaseModel as _BaseModel
 from schemas import TransactionCreate, TransactionOut, TransactionPage, TransactionUpdate, TransactionSummary, TransactionAISummary, MonthlySummary
 from routers.bank_statements import _transfer_is_income, _is_intra_account_transfer
+from utils.account_suggestions import NON_TRADING
 
-
-INTERNAL_TRANSFER = "Internal Transfer"
 
 
 class _BatchCategoryUpdate(_BaseModel):
@@ -105,10 +104,10 @@ def get_summary(
     if vendor:
         base_conds.append(Transaction.vendor.ilike(f"%{vendor}%"))
 
-    # Money moved between the school's own accounts (category "Internal Transfer") is neither income nor
-    # expense: it is left out of every total and chart below. It still moves the headline balance (see
+    # Money moved between the school's own accounts, or held for someone else (NON_TRADING categories), is neither
+    # income nor expense: it is left out of every total and chart below. It still moves the headline balance (see
     # internal_net), so that balance keeps reconciling with Bank Account Reports' book balance.
-    shown_conds = [*base_conds, Transaction.category != INTERNAL_TRANSFER]
+    shown_conds = [*base_conds, Transaction.category.notin_(list(NON_TRADING))]
 
     # Total income / expense via SQL SUM — no full ORM load
     income_total: float = db.execute(
@@ -125,7 +124,7 @@ def get_summary(
         (total if tx_type == "income" else -total)
         for tx_type, total in db.execute(
             sa_select(Transaction.type, func.sum(Transaction.amount))
-            .where(Transaction.type.in_(["income", "expense"]), Transaction.category == INTERNAL_TRANSFER, *base_conds)
+            .where(Transaction.type.in_(["income", "expense"]), Transaction.category.in_(list(NON_TRADING)), *base_conds)
             .group_by(Transaction.type)
         ).all()
     )
@@ -186,7 +185,7 @@ def get_summary(
     for t in transfers:
         if not t.bank_account or _is_intra_account_transfer(t):
             continue
-        if t.category == INTERNAL_TRANSFER:
+        if t.category in NON_TRADING:
             internal_net += t.amount if _transfer_is_income(t, t.bank_account.bank_name, db) else -t.amount
             continue
         ym = t.date.strftime("%Y-%m")
