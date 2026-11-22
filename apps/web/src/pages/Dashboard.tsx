@@ -155,13 +155,30 @@ function buildNiceAxis(maxVal: number): { domainMax: number; ticks: number[] } {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
+function todayLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Loads terms first so the dashboard opens on the term containing today (else the full
+// year) without a wasted full-year fetch/AI call or a late term load overriding the user.
 export function Dashboard() {
+  const [terms, setTerms] = useState<Term[] | null>(null);
+  useEffect(() => {
+    getTerms().then(setTerms).catch(() => setTerms([]));
+  }, []);
+  if (terms === null) return null;
+  const today = todayLocal();
+  const current = terms.find((t) => t.start_date <= today && today <= t.end_date) ?? null;
+  return <DashboardView terms={terms} initialTerm={current} />;
+}
+
+function DashboardView({ terms, initialTerm }: { terms: Term[]; initialTerm: Term | null }) {
   const currentYear = new Date().getFullYear();
 
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [availableYears, setAvailableYears] = useState<number[]>([currentYear]);
-  const [terms, setTerms] = useState<Term[]>([]);
-  const [selectedTerm, setSelectedTerm] = useState<Term | null>(null);
+  const [selectedTerm, setSelectedTerm] = useState<Term | null>(initialTerm);
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
   const [recent, setRecent] = useState<Transaction[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
@@ -171,9 +188,8 @@ export function Dashboard() {
   const end   = selectedTerm ? selectedTerm.end_date   : `${selectedYear}-12-31`;
   const aiSummary = useAISummary(start, end, selectedTerm?.id);
 
-  useEffect(() => { getTerms().then(setTerms); }, []);
-
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     Promise.all([
       getSummary({ start_date: start, end_date: end }),
@@ -182,12 +198,14 @@ export function Dashboard() {
       getTransactionYears(),
     ])
       .then(([s, tx, staffList, years]) => {
+        if (cancelled) return;
         setSummary(s);
         setRecent(tx.items ?? []);
         setStaff(staffList);
         if (years.length > 0) setAvailableYears(years);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [selectedYear, selectedTerm, start, end]);
 
   const totalIncome   = summary?.total_income   ?? 0;
