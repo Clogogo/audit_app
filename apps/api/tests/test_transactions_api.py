@@ -84,3 +84,17 @@ def test_summary_leaves_internal_transfers_out_of_income_and_expense_but_keeps_t
     assert "Internal Transfer" not in s["income_by_category"] and "Internal Transfer" not in s["expense_by_category"]
     assert s["monthly"][0]["income"] == 1000.0
     assert s["balance"] == 1000.0 - 300.0 + 500.0 - 200.0   # the balance still counts every movement
+
+
+def test_suspense_refunds_payable_is_not_income_or_expense_and_maps_to_a_liability(client, db_session):
+    from datetime import date
+    from models import Transaction
+    from utils.account_suggestions import suggest_account
+    for type_, amount in (("income", 700), ("expense", 200), ("income", 1000)):
+        category = "School Fees" if amount == 1000 else "Suspense / Refunds payable"
+        db_session.add(Transaction(type=type_, amount=amount, currency="NGN", category=category, description="d", date=date(2026, 8, 1), vendor="V"))
+    db_session.commit()
+    s = client.get("/transactions/summary").json()
+    assert (s["total_income"], s["total_expenses"]) == (1000.0, 0.0)
+    assert s["balance"] == 1000.0 + 700.0 - 200.0   # the cash still moved
+    assert suggest_account("Suspense / Refunds payable", "income") == suggest_account("Suspense / Refunds payable", "expense") == "2.2.4.4"

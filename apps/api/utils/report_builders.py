@@ -5,13 +5,14 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from utils.account_suggestions import NON_TRADING
 from models import Asset, AdvancePayment, PayrollEntry, SchoolLoan, StaffLoan, Transaction
 
 MONEY, TEXT, DATE, PCT = "money", "text", "date", "pct"
 AGE_BUCKETS = ((30, "0–30 days"), (60, "31–60 days"), (90, "61–90 days"), (10**9, "Over 90 days"))
 # Money moving in or out that is not trading: left out of the sales and expense reports
-NOT_SALES = {"Fund from Director", "Director's Loan", "Internal Transfer", "Loans"}
-NOT_EXPENSE = {"Internal Transfer", "Loans"}
+NOT_SALES = {"Fund from Director", "Director's Loan", "Loans", *NON_TRADING}
+NOT_EXPENSE = {"Loans", *NON_TRADING}
 
 
 def col(key: str, label: str, kind: str = TEXT) -> dict:

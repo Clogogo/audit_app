@@ -44,6 +44,7 @@ _INCOME_TO_SECTOR: dict[str, str] = {
     # Non-revenue — director capital injection
     "Fund from Director": None,
     "Internal Transfer":  None,
+    "Suspense / Refunds payable": None,   # held for someone else, not revenue
     "Other":         "Others",
 }
 
@@ -129,6 +130,7 @@ _EXPENSE_MAP: dict[str, tuple[str, bool]] = {
     "Travel Expenses":                             ("Travel Expenses", False),
     "Other":                                       ("Others", False),
     "Internal Transfer":                           None,  # type: ignore[assignment]
+    "Suspense / Refunds payable":                  None,  # type: ignore[assignment]
 }
 
 # ── Expense categories that should never appear — flag for user review ────────

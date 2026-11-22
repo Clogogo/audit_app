@@ -8,13 +8,17 @@ the same account). "Other" is deliberately never guessed.
 import time
 from typing import Iterator
 
+# Held for someone else, not earned or spent: kept out of income and expense totals everywhere
+SUSPENSE = "Suspense / Refunds payable"
+NON_TRADING = {"Internal Transfer", SUSPENSE}
+
 # Money coming in (income transactions)
 INCOME = {
     "School Fees": "4.1.1.3.2", "Exam": "4.1.1.3.3", "Stationery": "4.1.1.1", "Books": "4.1.1.1", "Uniform": "4.1.1.1",
     "Software": "4.1.1.4", "Business": "4.1.1.1", "Freelance": "4.1.1.3.1", "Investment": "4.2.1.1",
     "Gift": "4.2.2.9", "Refund": "4.2.2.9", "Other": "4.2.2.9",
     "Loans": "2.2.7.3", "Fund from Director": "2.2.7.3", "Director's Loan": "2.1.1.4",
-    "Internal Transfer": "1.2.5.5",
+    "Internal Transfer": "1.2.5.5", SUSPENSE: "2.2.4.4",   # 2.2.4.4 = Refunds and Sales Returns Liability
 }
 
 # Money going out (expense transactions)
@@ -50,6 +54,7 @@ EXPENSE = {
     "Interest Expense": "5.3.1.1", "Bank Charges": "5.3.2.1", "Service Charge": "5.3.2.1", "Realized Foreign Exchange Loss": "5.3.3.1",
     # balance sheet items
     "Capital Project": "1.1.1.12", "Investment": "1.1.5.1", "Internal Transfer": "1.2.5.5",
+    SUSPENSE: "2.2.4.4",
 }
 
 # Categories that must never fall back to the other direction's account

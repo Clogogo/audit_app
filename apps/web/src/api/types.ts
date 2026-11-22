@@ -302,6 +302,7 @@ export const EXPENSE_CATEGORIES = [
   'Exam',
   // System
   'Internal Transfer',
+  'Suspense / Refunds payable',
   'Other',
 ];
 
@@ -321,6 +322,7 @@ export const INCOME_CATEGORIES = [
   'Gift',
   'Refund',
   'Internal Transfer',
+  'Suspense / Refunds payable',
   'Other',
 ];
 // ── LLM Bank Statement Parsing ────────────────────────────────────────────────
