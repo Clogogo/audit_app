@@ -17,6 +17,7 @@ from database import get_db
 from models import Transaction, Asset, StaffLoan
 from routers.assets import calc_accumulated, calc_period_dep
 from routers.staff_loans import _outstanding as _staff_loan_outstanding
+from utils.account_suggestions import NON_TRADING
 
 router = APIRouter(prefix="/financial-statements", tags=["financial-statements"], dependencies=[Depends(require_permission("tax"))])
 
@@ -288,10 +289,10 @@ _INCOME_LABEL: dict[str, str] = {
     "Refund": "Other Income — Refunds",
 }
 _NON_OPERATING = {"Investment", "Gift", "Refund"}
-_IGNORE_INCOME = {"Fund from Director", "Director's Loan", "Internal Transfer"}
+_IGNORE_INCOME = {"Fund from Director", "Director's Loan", *NON_TRADING}
 _FINANCE_COST_CATS = {"Interest Expense", "Bank Charges"}
 # Loan repayments reduce a balance sheet liability — excluded from P&L entirely (same as CIT treatment)
-_IGNORE_EXPENSE = {"Internal Transfer", "Loans"}
+_IGNORE_EXPENSE = {"Loans", *NON_TRADING}
 
 
 def _run_computation(db: Session, start_date: str, end_date: str, company: str) -> dict:

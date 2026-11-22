@@ -8,11 +8,12 @@ enabled for residual "Other" rows via ENABLE_AI_CATEGORIZATION=true.
 import json
 import logging
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from utils.auth import require_permission
 from sqlalchemy import func
@@ -23,6 +24,7 @@ from models import AuditLog, BankAccount, BankStatement, BankTransaction, Transa
 from parsers.category_suggester import ai_suggest_categories_batch, suggest_category_keyword, is_self_transfer
 from utils import get_or_404, AuditLogger, TransactionQueryBuilder
 from parsers.file_parsers import detect_file_type, parse_csv, parse_excel, parse_pdf
+from parsers.statement_summary import extract_summary
 from parsers.statement_parser import (
     find_header_row_index,
     normalize_dataframe,
@@ -256,7 +258,7 @@ async def upload_bank_statement(
 
     # Pass 2 (optional): AI refinement for rows still marked "Other".
     # No-op unless ENABLE_AI_CATEGORIZATION=true, so upload stays AI-free by default.
-    rows = ai_suggest_categories_batch(rows)
+    rows = await run_in_threadpool(ai_suggest_categories_batch, rows)   # blocking AI calls: keep the event loop free
 
     # Find or create bank account
     from sqlalchemy import func
@@ -290,6 +292,7 @@ async def upload_bank_statement(
         file_path=str(stored_path) if stored_path else None,
         file_type=file_type,
         status="pending",
+        **extract_summary(contents, file_type, str(stored_path) if stored_path else None),
     )
     db.add(stmt)
     db.flush()
@@ -380,6 +383,66 @@ class _ValidationReport(_PydanticBase):
     error_count: int
     warning_count: int
     checks: list[_ValidationCheck]
+
+
+_BALANCE_TOLERANCE = 0.01
+
+
+def _balance_checks(stmt: BankStatement, txs: list[BankTransaction], db: Session) -> list[_ValidationCheck]:
+    """Compare the opening/closing balance and totals printed on the statement with its rows and with the
+    account record in the app. Nothing is checked (and nothing is reported) when the file has no summary."""
+    parsed_debit = round(sum(t.amount for t in txs if t.transaction_type == "debit"), 2)
+    parsed_credit = round(sum(t.amount for t in txs if t.transaction_type == "credit"), 2)
+    checks: list[_ValidationCheck] = []
+
+    if stmt.total_debit is not None and stmt.total_credit is not None:
+        if abs(parsed_debit - stmt.total_debit) <= _BALANCE_TOLERANCE and abs(parsed_credit - stmt.total_credit) <= _BALANCE_TOLERANCE:
+            checks.append(_ValidationCheck(name="Statement Totals", status="pass",
+                                           message=f"Rows add up to the statement totals (debit ₦{parsed_debit:,.2f}, credit ₦{parsed_credit:,.2f})."))
+        else:
+            checks.append(_ValidationCheck(
+                name="Statement Totals", status="warn",
+                message=(f"Rows add up to debit ₦{parsed_debit:,.2f} / credit ₦{parsed_credit:,.2f}, but the statement says "
+                         f"debit ₦{stmt.total_debit:,.2f} / credit ₦{stmt.total_credit:,.2f}. Some rows may be missing or misread.")))
+
+    if stmt.opening_balance is not None and stmt.closing_balance is not None:
+        debit = stmt.total_debit if stmt.total_debit is not None else parsed_debit
+        credit = stmt.total_credit if stmt.total_credit is not None else parsed_credit
+        expected = round(stmt.opening_balance + credit - debit, 2)
+        if abs(expected - stmt.closing_balance) <= _BALANCE_TOLERANCE:
+            checks.append(_ValidationCheck(name="Statement Balance", status="pass",
+                                           message=f"Opening ₦{stmt.opening_balance:,.2f} + credits − debits = closing ₦{stmt.closing_balance:,.2f}."))
+        else:
+            checks.append(_ValidationCheck(
+                name="Statement Balance", status="warn",
+                message=(f"Opening ₦{stmt.opening_balance:,.2f} + credits − debits is ₦{expected:,.2f}, "
+                         f"but the statement closes at ₦{stmt.closing_balance:,.2f}.")))
+
+    account, dates = stmt.bank_account, [t.date for t in txs if t.date]
+    # The app's balance is only known from its anchor date, so a statement starting before it can't be compared
+    anchored_after = account is not None and account.opening_balance_date is not None and bool(dates) and account.opening_balance_date >= min(dates)
+    if stmt.opening_balance is not None and account is not None and dates and not anchored_after:
+        if account.opening_balance is None:
+            checks.append(_ValidationCheck(
+                name="Account Record", status="warn",
+                message=f"The statement opens at ₦{stmt.opening_balance:,.2f}, but {account.bank_name} has no opening balance recorded in the app to compare with."))
+        else:
+            before = (
+                TransactionQueryBuilder(db).filter_bank_account(account.id)
+                .filter_date_range(account.opening_balance_date, min(dates) - timedelta(days=1)).build().all()
+            )
+            income, expense = _sum_income_expense(before, account.bank_name, db)
+            book = round(account.opening_balance + income - expense, 2)
+            if abs(book - stmt.opening_balance) <= _BALANCE_TOLERANCE:
+                checks.append(_ValidationCheck(name="Account Record", status="pass",
+                                               message=f"The statement's opening balance (₦{stmt.opening_balance:,.2f}) matches the app's book balance for {account.bank_name}."))
+            else:
+                checks.append(_ValidationCheck(
+                    name="Account Record", status="warn",
+                    message=(f"The statement opens at ₦{stmt.opening_balance:,.2f}, but the app's book balance for {account.bank_name} "
+                             f"just before {min(dates)} is ₦{book:,.2f} (difference ₦{stmt.opening_balance - book:,.2f}). "
+                             "They should match: transactions may be missing or the opening balance may need correcting.")))
+    return checks
 
 
 @router.get("/{stmt_id}/validate", response_model=_ValidationReport)
@@ -564,6 +627,8 @@ def validate_bank_statement(stmt_id: int, db: Session = Depends(get_db)):
         ),
         count=len(uncategorized),
     ))
+
+    checks.extend(_balance_checks(stmt, txs, db))
 
     # ── Aggregate ─────────────────────────────────────────────────────────────
     error_count = sum(1 for c in checks if c.status == "fail")

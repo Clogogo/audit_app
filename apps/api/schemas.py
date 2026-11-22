@@ -322,6 +322,10 @@ class BankStatementOut(BaseModel):
     file_path: Optional[str]  # None for CSV/Excel (parsed from memory)
     file_type: str
     status: str
+    opening_balance: Optional[float] = None
+    closing_balance: Optional[float] = None
+    total_debit: Optional[float] = None
+    total_credit: Optional[float] = None
     created_at: datetime
     transaction_count: Optional[int] = None
     matched_count: Optional[int] = None

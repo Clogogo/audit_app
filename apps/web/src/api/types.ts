@@ -302,6 +302,7 @@ export const EXPENSE_CATEGORIES = [
   'Exam',
   // System
   'Internal Transfer',
+  'Suspense / Refunds payable',
   'Other',
 ];
 
@@ -321,6 +322,7 @@ export const INCOME_CATEGORIES = [
   'Gift',
   'Refund',
   'Internal Transfer',
+  'Suspense / Refunds payable',
   'Other',
 ];
 // ── LLM Bank Statement Parsing ────────────────────────────────────────────────
@@ -1347,4 +1349,25 @@ export interface Ledger {
   total_credit: number;
   start_date: string;
   end_date: string;
+}
+
+// ── Financial Reports hub ────────────────────────────────────────────────────
+export type ReportColumnKind = 'text' | 'money' | 'date' | 'pct';
+export interface FinancialReport {
+  slug: string;
+  title: string;
+  subtitle: string;
+  estimate: boolean;
+  current_only: boolean;   // shows today's balances whatever date is picked
+  assumptions: string[];
+  start_date: string;
+  as_at: string;
+  summary: { label: string; value: number | string; kind: ReportColumnKind }[];
+  sections: {
+    title: string;
+    note: string | null;
+    columns: { key: string; label: string; kind: ReportColumnKind }[];
+    rows: Record<string, string | number | boolean>[];
+    total: Record<string, string | number> | null;
+  }[];
 }

@@ -142,6 +142,7 @@ def export_audit_report(
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_JUSTIFY
 
     from routers.school_profile import get_branding
+    from utils.account_suggestions import NON_TRADING
     school_name, logo_bytes = get_branding(db)
     SCHOOL = school_name or "Marvellous Lite Schools Ltd"
     NAVY   = colors.HexColor("#1e3a5f")
@@ -156,7 +157,8 @@ def export_audit_report(
     PAGE_W = A4[0] - 2 * 1.8 * cm
 
     # ── data ─────────────────────────────────────────────────────────────────
-    q = db.query(Transaction).filter(Transaction.type != "transfer")
+    # Money moved between the school's own accounts is neither income nor expenditure
+    q = db.query(Transaction).filter(Transaction.type != "transfer", Transaction.category.notin_(list(NON_TRADING)))
     if start_date:
         q = q.filter(Transaction.date >= start_date)
     if end_date:

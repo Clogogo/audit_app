@@ -71,6 +71,7 @@ import type {
   BonusTypeIn,
   TeacherBonus,
   TeacherBonusIn,
+  FinancialReport,
 } from './types';
 
 // In production VITE_API_URL points to the Render backend (e.g. https://financeaudit-api.onrender.com)
@@ -136,10 +137,6 @@ export const deleteTransaction = (id: number) =>
 
 export const batchUpdateCategory = (ids: number[], category: string) =>
   api.patch<{ updated: number }>('/transactions/batch-category', { ids, category }).then(unwrap);
-
-export const aiRecategorize = (ids: number[]) =>
-  api.post<{ checked: number; suggestions: { id: number; from: string; to: string }[] }>(
-    '/transactions/ai-recategorize', { ids }, { timeout: 300000 }).then(unwrap);
 
 // Bank Statements
 export const uploadBankStatement = (file: File, bankName: string, accountHolderName?: string) => {
@@ -725,3 +722,7 @@ export const getTrialBalance = (startDate: string, endDate: string) =>
 
 export const getLedger = (account: string, startDate: string, endDate: string) =>
   api.get<Ledger>('/accounting/ledger', { params: { account, start_date: startDate, end_date: endDate } }).then(unwrap);
+
+// Financial Reports hub
+export const getFinancialReport = (slug: string, params: { as_at?: string; start_date?: string }) =>
+  api.get<FinancialReport>(`/financial-reports/${slug}`, { params }).then(unwrap);

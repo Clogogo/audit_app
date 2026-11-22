@@ -69,32 +69,32 @@ def test_delete_transaction(client):
     assert all(item["id"] != tx["id"] for item in resp.json()["items"])
 
 
-def test_ai_recategorize_suggests_only_valid_changes_and_saves_nothing(client, db_session, monkeypatch):
-    import json
-    import ai_worker
+def test_summary_leaves_internal_transfers_out_of_income_and_expense_but_keeps_the_balance(client, db_session):
     from datetime import date
     from models import Transaction
-    rows = [Transaction(type="expense", amount=10, currency="NGN", category="Other", description="MTN airtime", date=date(2026, 8, 1), vendor="V"),
-            Transaction(type="expense", amount=20, currency="NGN", category="Other", description="x", date=date(2026, 8, 1), vendor="V"),
-            Transaction(type="transfer", amount=30, currency="NGN", category="Other", description="y", date=date(2026, 8, 1), vendor="V")]
-    db_session.add_all(rows)
+    def add(type_, amount, category):
+        db_session.add(Transaction(type=type_, amount=amount, currency="NGN", category=category, description="d", date=date(2026, 8, 1), vendor="V"))
+    add("income", 1000, "School Fees")
+    add("expense", 300, "Telephone")
+    add("income", 500, "Internal Transfer")    # money arriving from the school's other account
+    add("expense", 200, "Internal Transfer")
     db_session.commit()
-    a, b, t = (r.id for r in rows)
-    monkeypatch.setattr(ai_worker, "call_ai_text", lambda *_: json.dumps(
-        [{"id": a, "category": "Telephone"}, {"id": b, "category": "School Fees"}, {"id": t, "category": "Telephone"}]))
-    out = client.post("/transactions/ai-recategorize", json={"ids": [a, b, t]})
-    assert out.status_code == 200
-    assert out.json() == {"checked": 2, "suggestions": [{"id": a, "from": "Other", "to": "Telephone"}]}
-    db_session.expire_all()
-    assert db_session.get(Transaction, a).category == "Other"
+    s = client.get("/transactions/summary").json()
+    assert (s["total_income"], s["total_expenses"]) == (1000.0, 300.0)
+    assert "Internal Transfer" not in s["income_by_category"] and "Internal Transfer" not in s["expense_by_category"]
+    assert s["monthly"][0]["income"] == 1000.0
+    assert s["balance"] == 1000.0 - 300.0 + 500.0 - 200.0   # the balance still counts every movement
 
 
-def test_ai_recategorize_reports_an_unavailable_ai(client, db_session, monkeypatch):
-    import ai_worker
+def test_suspense_refunds_payable_is_not_income_or_expense_and_maps_to_a_liability(client, db_session):
     from datetime import date
     from models import Transaction
-    tx = Transaction(type="expense", amount=10, currency="NGN", category="Other", description="d", date=date(2026, 8, 1), vendor="V")
-    db_session.add(tx)
+    from utils.account_suggestions import suggest_account
+    for type_, amount in (("income", 700), ("expense", 200), ("income", 1000)):
+        category = "School Fees" if amount == 1000 else "Suspense / Refunds payable"
+        db_session.add(Transaction(type=type_, amount=amount, currency="NGN", category=category, description="d", date=date(2026, 8, 1), vendor="V"))
     db_session.commit()
-    monkeypatch.setattr(ai_worker, "call_ai_text", lambda *_: "")
-    assert client.post("/transactions/ai-recategorize", json={"ids": [tx.id]}).status_code == 503
+    s = client.get("/transactions/summary").json()
+    assert (s["total_income"], s["total_expenses"]) == (1000.0, 0.0)
+    assert s["balance"] == 1000.0 + 700.0 - 200.0   # the cash still moved
+    assert suggest_account("Suspense / Refunds payable", "income") == suggest_account("Suspense / Refunds payable", "expense") == "2.2.4.4"

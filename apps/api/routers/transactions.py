@@ -13,18 +13,16 @@ from sqlalchemy import func, select as sa_select
 from database import get_db
 from llm_providers import get_llm_client
 from models import Transaction, AuditLog, BankAccount, Staff, PayrollEntry, Term
-from pydantic import BaseModel as _BaseModel, Field
+from pydantic import BaseModel as _BaseModel
 from schemas import TransactionCreate, TransactionOut, TransactionPage, TransactionUpdate, TransactionSummary, TransactionAISummary, MonthlySummary
 from routers.bank_statements import _transfer_is_income, _is_intra_account_transfer
+from utils.account_suggestions import NON_TRADING
+
 
 
 class _BatchCategoryUpdate(_BaseModel):
     ids: list[int]
     category: str
-
-class _AIRecategorize(_BaseModel):
-    ids: list[int] = Field(max_length=200)
-
 
 router = APIRouter(prefix="/transactions", tags=["transactions"], dependencies=[Depends(require_permission("transactions"))])
 
@@ -106,21 +104,35 @@ def get_summary(
     if vendor:
         base_conds.append(Transaction.vendor.ilike(f"%{vendor}%"))
 
+    # Money moved between the school's own accounts, or held for someone else (NON_TRADING categories), is neither
+    # income nor expense: it is left out of every total and chart below. It still moves the headline balance (see
+    # internal_net), so that balance keeps reconciling with Bank Account Reports' book balance.
+    shown_conds = [*base_conds, Transaction.category.notin_(list(NON_TRADING))]
+
     # Total income / expense via SQL SUM — no full ORM load
     income_total: float = db.execute(
         sa_select(func.coalesce(func.sum(Transaction.amount), 0.0))
-        .where(Transaction.type == "income", *base_conds)
+        .where(Transaction.type == "income", *shown_conds)
     ).scalar() or 0.0
 
     expense_total: float = db.execute(
         sa_select(func.coalesce(func.sum(Transaction.amount), 0.0))
-        .where(Transaction.type == "expense", *base_conds)
+        .where(Transaction.type == "expense", *shown_conds)
     ).scalar() or 0.0
+
+    internal_net: float = sum(
+        (total if tx_type == "income" else -total)
+        for tx_type, total in db.execute(
+            sa_select(Transaction.type, func.sum(Transaction.amount))
+            .where(Transaction.type.in_(["income", "expense"]), Transaction.category.in_(list(NON_TRADING)), *base_conds)
+            .group_by(Transaction.type)
+        ).all()
+    )
 
     # Category breakdowns via GROUP BY (transfers handled separately below)
     cat_rows = db.execute(
         sa_select(Transaction.type, Transaction.category, func.sum(Transaction.amount).label("total"))
-        .where(Transaction.type != "transfer", *base_conds)
+        .where(Transaction.type != "transfer", *shown_conds)
         .group_by(Transaction.type, Transaction.category)
     ).all()
 
@@ -145,7 +157,7 @@ def get_summary(
             Transaction.type,
             func.sum(Transaction.amount).label("total"),
         )
-        .where(Transaction.type != "transfer", *base_conds)
+        .where(Transaction.type != "transfer", *shown_conds)
         .group_by("yr", "mo", Transaction.type)
         .order_by("yr", "mo")
     ).all()
@@ -173,6 +185,9 @@ def get_summary(
     for t in transfers:
         if not t.bank_account or _is_intra_account_transfer(t):
             continue
+        if t.category in NON_TRADING:
+            internal_net += t.amount if _transfer_is_income(t, t.bank_account.bank_name, db) else -t.amount
+            continue
         ym = t.date.strftime("%Y-%m")
         if ym not in monthly_map:
             monthly_map[ym] = {"month": t.date.strftime("%b %Y"), "income": 0.0, "expenses": 0.0}
@@ -199,7 +214,7 @@ def get_summary(
     return TransactionSummary(
         total_income=income_total,
         total_expenses=expense_total,
-        balance=total_opening_balance + income_total - expense_total,
+        balance=total_opening_balance + income_total - expense_total + internal_net,
         by_category=dict(by_category),
         expense_by_category=dict(expense_by_category),
         income_by_category=dict(income_by_category),
@@ -531,23 +546,6 @@ def update_transaction(tx_id: int, data: TransactionUpdate, db: Session = Depend
     db.commit()
     db.refresh(tx)
     return tx
-
-
-@router.post("/ai-recategorize")
-def ai_recategorize(data: _AIRecategorize, db: Session = Depends(get_db)):
-    """Suggest better categories for the given transactions. Changes nothing: the caller applies what it accepts."""
-    from utils.ai_recategorize import suggest_categories
-    txs = db.query(Transaction).filter(Transaction.id.in_(data.ids), Transaction.type.in_(["income", "expense"])).all()
-    rows = [{"id": t.id, "type": t.type, "description": (t.description or "")[:200], "vendor": (t.vendor or "")[:100], "category": t.category} for t in txs]
-    current = {t.id: t.category for t in txs}
-    suggestions, answered, asked = [], 0, 0
-    for n, found in suggest_categories(rows):
-        asked += n
-        answered += len(found)
-        suggestions += [{"id": i, "from": current[i], "to": c} for i, c in found.items() if c != current[i]]
-    if rows and answered == 0:
-        raise HTTPException(503, "The AI did not return usable suggestions. Try again in a moment.")
-    return {"checked": asked, "suggestions": suggestions}
 
 
 @router.patch("/batch-category")
