@@ -73,18 +73,19 @@ def who_owes_you(db: Session, start: date, end: date) -> dict:
 
 
 def who_you_owe(db: Session, start: date, end: date) -> dict:
-    from routers.school_loans import _outstanding, _outstanding_interest   # the Loans page's own figures (today's balances)
+    from routers.school_loans import _outstanding, _outstanding_interest, _total_paid   # the Loans page's own figures (today's balances)
     end = date.today()
     rows = []
     for loan in db.query(SchoolLoan).filter(SchoolLoan.is_active == True, SchoolLoan.collected_date <= end):  # noqa: E712
         principal, interest = _outstanding(loan), _outstanding_interest(loan)
         if principal + interest > 0.005:
             rows.append({"name": loan.lender_name, "kind": "Loan", "since": loan.collected_date.isoformat(),
-                         "principal": money(principal), "interest": money(interest), "outstanding": money(principal + interest),
+                         "amount": money(loan.loan_amount), "paid": money(_total_paid(loan)), "principal": money(principal), "interest": money(interest), "outstanding": money(principal + interest),
                          "age": _bucket((end - loan.collected_date).days)})
     rows.sort(key=lambda r: -r["outstanding"])
     total = money(sum(r["outstanding"] for r in rows))
-    cols = [col("name", "Who"), col("kind", "What"), col("since", "Since", DATE), col("principal", "Principal", MONEY),
+    cols = [col("name", "Who"), col("kind", "What"), col("since", "Since", DATE), col("amount", "Borrowed", MONEY),
+            col("paid", "Already paid", MONEY), col("principal", "Principal", MONEY),
             col("interest", "Interest due", MONEY), col("outstanding", "Still owed", MONEY), col("age", "Age")]
     return report("Who You Owe", f"Loans the school still has to repay, balances as at today ({end})",
                   [("Total you owe", total, MONEY), *_aging_summary(rows)], current_only=True, sections=[
