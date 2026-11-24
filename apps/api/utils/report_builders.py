@@ -73,14 +73,15 @@ def who_owes_you(db: Session, start: date, end: date) -> dict:
 
 
 def who_you_owe(db: Session, start: date, end: date) -> dict:
-    from routers.school_loans import _outstanding, _outstanding_interest, _total_paid   # the Loans page's own figures (today's balances)
+    from routers.school_loans import _outstanding, _outstanding_interest, _total_interest_paid, _total_principal_paid   # the Loans page's own figures (today's balances)
     end = date.today()
     rows = []
     for loan in db.query(SchoolLoan).filter(SchoolLoan.is_active == True, SchoolLoan.collected_date <= end):  # noqa: E712
         principal, interest = _outstanding(loan), _outstanding_interest(loan)
         if principal + interest > 0.005:
             rows.append({"name": loan.lender_name, "kind": "Loan", "since": loan.collected_date.isoformat(),
-                         "amount": money(loan.loan_amount), "paid": money(_total_paid(loan)), "principal": money(principal), "interest": money(interest), "outstanding": money(principal + interest),
+                         "amount": money(loan.loan_amount), "paid": money(_total_principal_paid(loan) + _total_interest_paid(loan)),
+                         "principal": money(principal), "interest": money(interest), "outstanding": money(principal + interest),
                          "age": _bucket((end - loan.collected_date).days)})
     rows.sort(key=lambda r: -r["outstanding"])
     total = money(sum(r["outstanding"] for r in rows))
