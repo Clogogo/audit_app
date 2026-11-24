@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from models import AdvancePayment, Asset, PayrollEntry, SchoolLoan, Staff, StaffLoan, StaffLoanPayment, Transaction
+from models import AdvancePayment, Asset, PayrollEntry, SchoolLoan, Staff, StaffLoan, SchoolLoanPayment, StaffLoanPayment, Transaction
 
 AS_AT = {"as_at": "2026-11-21", "start_date": "2026-01-01"}
 
@@ -47,6 +47,16 @@ def test_who_you_owe_lists_loans_only_and_says_balances_are_current(client, db_s
     out = _get(client, "who-you-owe", as_at="2026-04-01")
     assert [(r["name"], r["outstanding"]) for r in out["sections"][0]["rows"]] == [("Bank A", 2100.0)]
     assert out["current_only"] is True
+
+
+def test_who_you_owe_already_paid_excludes_misc_fees(client, db_session):
+    loan = SchoolLoan(lender_name="Bank B", loan_amount=1000, total_interest_due=100, collected_date=date(2026, 3, 1))
+    db_session.add(loan)
+    db_session.flush()
+    db_session.add(SchoolLoanPayment(loan_id=loan.id, amount_paid=350, interest_amount=50, misc_amount=50, paid_date=date(2026, 4, 1)))
+    db_session.commit()
+    row = _get(client, "who-you-owe")["sections"][0]["rows"][0]
+    assert (row["amount"], row["paid"], row["principal"], row["interest"]) == (1000.0, 300.0, 750.0, 50.0)
 
 
 def test_payroll_summary_and_paye_estimate(client, db_session):
